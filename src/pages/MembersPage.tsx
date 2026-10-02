@@ -37,6 +37,8 @@ import {
   Check,
   QrCode,
   Share2,
+  BarChart2,
+  PieChart as PieChartIcon,
 } from 'lucide-react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useChurchData } from '../contexts/ChurchDataContext';
@@ -49,6 +51,7 @@ import { RecordMemberGivingModal } from '../components/members/RecordMemberGivin
 import { MemberIdCardModal } from '../components/members/MemberIdCardModal';
 import { AddEditMemberModal } from '../components/members/AddEditMemberModal';
 import { ArchiveMemberModal } from '../components/members/ArchiveMemberModal';
+import { MemberDemographicsSection } from '../components/members/MemberDemographicsSection';
 import {
   clusterHouseholds,
   buildFamilyBlessingWhatsAppUrl,
@@ -112,6 +115,44 @@ export const MembersPage: React.FC = () => {
   const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [memberToArchive, setMemberToArchive] = useState<Member | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);
+
+  // Demographics Visual Dashboard collapsible state
+  const [isDemographicsOpen, setIsDemographicsOpen] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('gwcc_member_demographics_open');
+      return stored !== null ? stored === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const handleToggleDemographics = () => {
+    setIsDemographicsOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('gwcc_member_demographics_open', String(next));
+      } catch {
+        // Ignore
+      }
+      return next;
+    });
+  };
+
+  const handleApplyDemographicFilter = (
+    filterType: 'gender' | 'status' | 'age_group' | 'baptism',
+    value: string
+  ) => {
+    if (filterType === 'gender') {
+      setGenderFilter(value);
+      success(`Filtered by gender: ${value === 'female' ? 'Female' : 'Male'}`);
+    } else if (filterType === 'status') {
+      setStatusFilter(value);
+      success(`Filtered members by status: ${value.replace('_', ' ')}`);
+    } else if (filterType === 'age_group') {
+      setSearchTerm(value);
+      success(`Filtered by demographic group: ${value}`);
+    }
+  };
 
   // Detect members celebrating birthdays in the current month
   const currentMonth = new Date().getMonth() + 1; // 1-12
@@ -660,6 +701,21 @@ export const MembersPage: React.FC = () => {
                 </button>
               </div>
 
+              {/* Demographics Dashboard Toggle Button */}
+              <button
+                type="button"
+                onClick={handleToggleDemographics}
+                className={`px-3 py-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition shadow-2xs ${
+                  isDemographicsOpen
+                    ? 'bg-teal-900 text-white border-teal-900 shadow-xs'
+                    : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300'
+                }`}
+                title={isDemographicsOpen ? 'Collapse demographic visual analytics' : 'Expand demographic visual analytics'}
+              >
+                <BarChart2 className="w-3.5 h-3.5 text-teal-400" />
+                <span>Demographics</span>
+              </button>
+
               <button
                 onClick={() => handleExportCSV(false)}
                 className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-2xs"
@@ -678,6 +734,15 @@ export const MembersPage: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* VISUAL DEMOGRAPHICS & ANALYTICS DASHBOARD */}
+          <MemberDemographicsSection
+            members={members}
+            filteredMembers={filteredMembers}
+            onApplyFilter={handleApplyDemographicFilter}
+            isOpen={isDemographicsOpen}
+            onToggleOpen={handleToggleDemographics}
+          />
 
           {/* Birthday Celebrations Banner (if celebrants exist this month) */}
           {birthdayCelebrants.length > 0 && (
@@ -1432,7 +1497,7 @@ export const MembersPage: React.FC = () => {
 
               {/* Households Grid */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {households.map((household) => {
+                {households.map((household, hIdx) => {
                   const isMulti = household.totalMembers > 1;
                   const waUrl = household.primaryPhone
                     ? buildFamilyBlessingWhatsAppUrl(
@@ -1444,7 +1509,7 @@ export const MembersPage: React.FC = () => {
 
                   return (
                     <div
-                      key={household.id}
+                      key={household.id || `hh-${household.headOfHousehold.id}-${hIdx}`}
                       className={`bg-white rounded-2xl border p-5 shadow-xs transition-all duration-200 flex flex-col justify-between ${
                         isMulti
                           ? 'border-slate-200 hover:border-teal-400 hover:shadow-md'

@@ -335,7 +335,7 @@ export function clusterHouseholds(members: Member[]): ChurchHousehold[] {
     );
 
     households.push({
-      id: `hh-${head.id.slice(0, 8)}`,
+      id: `hh-${head.id}`,
       name,
       headOfHousehold: head,
       members: cluster,
