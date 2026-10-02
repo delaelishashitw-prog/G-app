@@ -22,8 +22,38 @@ import {
 const STORAGE_KEY_URL = 'gwcc_supabase_url';
 const STORAGE_KEY_ANON = 'gwcc_supabase_anon_key';
 
-// Retrieve credentials from Vite env or LocalStorage
-export function getStoredSupabaseConfig(): { url: string; anonKey: string; source: 'env' | 'storage' | 'none' } {
+export const DEFAULT_SUPABASE_URL = 'https://noskcrmvnancdyhvzfin.supabase.co';
+export const DEFAULT_SUPABASE_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vc2tjcm12bmFuY2R5aHZ6ZmluIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAzMDEwNTMsImV4cCI6MjEwNTg3NzA1M30.0zBwp0uW9hvpjTBI0hS6btOdEjD2lQh13TUf4EBpEHo';
+
+// Retrieve credentials from Vite env, LocalStorage, or default project configuration
+export function getStoredSupabaseConfig(): { url: string; anonKey: string; source: 'env' | 'storage' | 'default' | 'none' } {
+  try {
+    const isExplicitlyDisabled = localStorage.getItem('gwcc_supabase_disabled') === 'true';
+    if (isExplicitlyDisabled) {
+      return { url: '', anonKey: '', source: 'none' };
+    }
+
+    const savedUrl = (localStorage.getItem(STORAGE_KEY_URL) || '').trim().replace(/\/+$/, '');
+    const savedKey = (localStorage.getItem(STORAGE_KEY_ANON) || '').trim();
+
+    // If targeted at GWCC project or empty in storage, enforce the verified active credentials
+    if (!savedUrl || savedUrl.includes('noskcrmvnancdyhvzfin')) {
+      if (savedKey !== DEFAULT_SUPABASE_ANON_KEY || savedUrl !== DEFAULT_SUPABASE_URL) {
+        localStorage.setItem(STORAGE_KEY_URL, DEFAULT_SUPABASE_URL);
+        localStorage.setItem(STORAGE_KEY_ANON, DEFAULT_SUPABASE_ANON_KEY);
+      }
+      return { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY, source: 'default' };
+    }
+
+    // Other custom Supabase project
+    if (savedUrl && savedKey) {
+      return { url: savedUrl, anonKey: savedKey, source: 'storage' };
+    }
+  } catch {
+    // LocalStorage unavailable
+  }
+
   const envUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
   const envKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
 
@@ -37,14 +67,9 @@ export function getStoredSupabaseConfig(): { url: string; anonKey: string; sourc
     return { url: envUrl, anonKey: envKey, source: 'env' };
   }
 
-  try {
-    const savedUrl = (localStorage.getItem(STORAGE_KEY_URL) || '').trim();
-    const savedKey = (localStorage.getItem(STORAGE_KEY_ANON) || '').trim();
-    if (savedUrl && savedKey) {
-      return { url: savedUrl, anonKey: savedKey, source: 'storage' };
-    }
-  } catch {
-    // LocalStorage unavailable
+  // Active default for Greater Works City Church live database
+  if (DEFAULT_SUPABASE_URL && DEFAULT_SUPABASE_ANON_KEY) {
+    return { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY, source: 'default' };
   }
 
   return { url: '', anonKey: '', source: 'none' };
@@ -114,17 +139,24 @@ export const supabase = getSupabaseClient();
 export function saveSupabaseCredentials(url: string, anonKey: string): { success: boolean; message: string } {
   try {
     const cleanUrl = url.trim().replace(/\/+$/, '');
-    const cleanKey = anonKey.trim();
+    let cleanKey = anonKey.trim();
 
     if (!cleanUrl.startsWith('https://')) {
       return { success: false, message: 'Supabase URL must start with https://' };
     }
+
+    // If connecting to the official GWCC project and the key is mismatched, use the verified key
+    if (cleanUrl.includes('noskcrmvnancdyhvzfin') && cleanKey !== DEFAULT_SUPABASE_ANON_KEY) {
+      cleanKey = DEFAULT_SUPABASE_ANON_KEY;
+    }
+
     if (cleanKey.length < 20) {
       return { success: false, message: 'Invalid Supabase Anon key provided.' };
     }
 
     localStorage.setItem(STORAGE_KEY_URL, cleanUrl);
     localStorage.setItem(STORAGE_KEY_ANON, cleanKey);
+    localStorage.removeItem('gwcc_supabase_disabled');
 
     const configKey = `${cleanUrl}:${cleanKey}`;
     const existingGlobalClient = getGlobalSupabaseClient();
@@ -157,6 +189,7 @@ export function clearSupabaseCredentials(): void {
   try {
     localStorage.removeItem(STORAGE_KEY_URL);
     localStorage.removeItem(STORAGE_KEY_ANON);
+    localStorage.setItem('gwcc_supabase_disabled', 'true');
   } catch {
     // Ignore
   }
@@ -246,7 +279,11 @@ export async function testSupabaseConnection(
       }
 
       // If invalid API key / JWT
-      if (settingsError.message?.toLowerCase().includes('jwt') || settingsError.message?.toLowerCase().includes('apikey')) {
+      if (
+        settingsError.message?.toLowerCase().includes('jwt') ||
+        settingsError.message?.toLowerCase().includes('apikey') ||
+        settingsError.message?.toLowerCase().includes('api key')
+      ) {
         return {
           success: false,
           latencyMs,
@@ -1124,17 +1161,37 @@ export async function pullAllDataFromSupabase(): Promise<{
   data: Partial<ChurchAllData>;
   errors: string[];
 }> {
-  const client = getSupabaseClient();
+  let client = getSupabaseClient();
   if (!client) {
     return { success: false, data: {}, errors: ['Supabase not configured.'] };
   }
 
   const result: Partial<ChurchAllData> = {};
-  const errors: string[] = [];
+  let errors: string[] = [];
 
-  const fetchTable = async (table: string, key: keyof ChurchAllData) => {
+  const tableList: Array<{ table: string; key: keyof ChurchAllData }> = [
+    { table: 'settings', key: 'settings' },
+    { table: 'members', key: 'members' },
+    { table: 'visitors', key: 'visitors' },
+    { table: 'services', key: 'services' },
+    { table: 'attendance', key: 'attendance' },
+    { table: 'headcounts', key: 'headcounts' },
+    { table: 'giving', key: 'giving' },
+    { table: 'expenses', key: 'expenses' },
+    { table: 'pledge_campaigns', key: 'campaigns' },
+    { table: 'pledges', key: 'pledges' },
+    { table: 'ministries', key: 'ministries' },
+    { table: 'small_groups', key: 'smallGroups' },
+    { table: 'events', key: 'events' },
+    { table: 'pastoral_care', key: 'pastoralCare' },
+    { table: 'prayer_requests', key: 'prayerRequests' },
+    { table: 'communications', key: 'communications' },
+    { table: 'audit_logs', key: 'auditLogs' },
+  ];
+
+  const fetchTable = async (targetClient: SupabaseClient, table: string, key: keyof ChurchAllData) => {
     try {
-      const { data, error } = await client.from(table).select('*');
+      const { data, error } = await targetClient.from(table).select('*');
       if (error) {
         if (!isTableNotFoundError(error)) {
           errors.push(`${table}: ${error.message}`);
@@ -1155,25 +1212,37 @@ export async function pullAllDataFromSupabase(): Promise<{
     }
   };
 
-  await Promise.allSettled([
-    fetchTable('settings', 'settings'),
-    fetchTable('members', 'members'),
-    fetchTable('visitors', 'visitors'),
-    fetchTable('services', 'services'),
-    fetchTable('attendance', 'attendance'),
-    fetchTable('headcounts', 'headcounts'),
-    fetchTable('giving', 'giving'),
-    fetchTable('expenses', 'expenses'),
-    fetchTable('pledge_campaigns', 'campaigns'),
-    fetchTable('pledges', 'pledges'),
-    fetchTable('ministries', 'ministries'),
-    fetchTable('small_groups', 'smallGroups'),
-    fetchTable('events', 'events'),
-    fetchTable('pastoral_care', 'pastoralCare'),
-    fetchTable('prayer_requests', 'prayerRequests'),
-    fetchTable('communications', 'communications'),
-    fetchTable('audit_logs', 'auditLogs'),
-  ]);
+  await Promise.allSettled(tableList.map((t) => fetchTable(client, t.table, t.key)));
+
+  // Self-healing recovery: If any table returned "Invalid API key", the active client was using an invalid/stale key.
+  // Re-run with the verified DEFAULT_SUPABASE credentials!
+  const hasInvalidKeyError = errors.some(
+    (e) => e.toLowerCase().includes('invalid api key') || e.toLowerCase().includes('apikey')
+  );
+
+  if (hasInvalidKeyError) {
+    console.warn('Supabase query rejected credentials with Invalid API key. Applying verified project key recovery...');
+    localStorage.setItem(STORAGE_KEY_URL, DEFAULT_SUPABASE_URL);
+    localStorage.setItem(STORAGE_KEY_ANON, DEFAULT_SUPABASE_ANON_KEY);
+    localStorage.removeItem('gwcc_supabase_disabled');
+
+    const verifiedClient = createClient(DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY, {
+      auth: {
+        storageKey: 'gwcc-church-auth-token',
+        persistSession: true,
+        autoRefreshToken: true,
+      },
+    });
+
+    cachedClient = verifiedClient;
+    currentConfigKey = `${DEFAULT_SUPABASE_URL}:${DEFAULT_SUPABASE_ANON_KEY}`;
+    (globalThis as typeof globalThis & { [GLOBAL_SUPABASE_CLIENT_KEY]?: SupabaseClient })[
+      GLOBAL_SUPABASE_CLIENT_KEY
+    ] = verifiedClient;
+
+    errors = [];
+    await Promise.allSettled(tableList.map((t) => fetchTable(verifiedClient, t.table, t.key)));
+  }
 
   return {
     success: errors.length === 0,

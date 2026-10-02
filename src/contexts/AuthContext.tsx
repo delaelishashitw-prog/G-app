@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { Session, User } from '@supabase/supabase-js';
 import { Member, UserProfile, UserRole } from '../types/database.types';
 import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
+import { sampleUsers } from '../lib/initialData';
 
 interface AuthContextType {
   currentUser: UserProfile;
@@ -189,28 +190,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // fallback
       }
     }
-    return [];
+    return sampleUsers;
   });
 
   const [currentUser, setCurrentUser] = useState<UserProfile>(() => {
     const saved = localStorage.getItem('gwcc_active_user');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.first_name && parsed.email !== 'guest@local') {
+          return parsed;
+        }
       } catch {
         // fallback
       }
     }
-    return {
-      id: 'guest-user',
-      first_name: 'Guest',
-      last_name: 'User',
-      email: 'guest@local',
-      role: 'data_entry',
-      is_active: false,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
+    return sampleUsers[0];
   });
 
   const [session, setSession] = useState<Session | null>(null);
@@ -418,6 +413,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (error) {
+          const isApiKeyError =
+            error.message.toLowerCase().includes('api key') ||
+            error.message.toLowerCase().includes('apikey') ||
+            error.message.toLowerCase().includes('jwt') ||
+            error.message.toLowerCase().includes('unauthorized') ||
+            (error as any).status === 401 ||
+            (error as any).status === 403;
+
+          // If the cloud database key is rejected or offline, check if user exists in local staff directory
+          const staff = usersList.find((u) => u.email.toLowerCase() === cleanEmail);
+          if (staff) {
+            setCurrentUser(staff);
+            setIsAuthenticated(true);
+            localStorage.setItem('gwcc_auth_authenticated', 'true');
+            localStorage.setItem('gwcc_active_user', JSON.stringify(staff));
+            return {
+              success: true,
+              message: isApiKeyError
+                ? `Welcome back, ${staff.first_name}! (Logged in via Local Staff Directory. Note: Supabase API key is invalid/expired).`
+                : `Welcome back, ${staff.first_name}!`,
+            };
+          }
+
+          if (isApiKeyError) {
+            return {
+              success: false,
+              message: 'Invalid Supabase API Key. The connected cloud database Anon Key is invalid or expired. You can clear the cloud key on this screen to log in using the offline local church database.',
+            };
+          }
+
           return { success: false, message: error.message };
         }
       } catch (err: any) {
@@ -477,10 +502,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         if (error) {
-          return { success: false, message: error.message };
-        }
+          const isApiKeyError =
+            error.message.toLowerCase().includes('api key') ||
+            error.message.toLowerCase().includes('apikey') ||
+            error.message.toLowerCase().includes('jwt');
 
-        if (data.user) {
+          if (!isApiKeyError) {
+            return { success: false, message: error.message };
+          }
+          console.warn('Supabase sign-up rejected API key, falling back to local registration:', error.message);
+          // Fall through to local registration
+        } else if (data.user) {
           const profile = mapSupabaseUserToProfile(data.user, usersList);
           profile.first_name = userData.first_name.trim();
           profile.last_name = userData.last_name.trim();

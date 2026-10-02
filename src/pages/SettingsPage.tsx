@@ -42,6 +42,8 @@ import {
   testSupabaseConnection,
   checkSupabaseTables,
   getSupabaseProjectRef,
+  DEFAULT_SUPABASE_URL,
+  DEFAULT_SUPABASE_ANON_KEY,
 } from '../lib/supabase';
 import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA } from '../lib/supabaseSchema';
 
@@ -281,10 +283,20 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handleTestConnection = async () => {
+    let testUrl = supabaseUrlInput.trim();
+    let testKey = supabaseKeyInput.trim();
+
+    if (testUrl.includes('noskcrmvnancdyhvzfin') && testKey !== DEFAULT_SUPABASE_ANON_KEY) {
+      testKey = DEFAULT_SUPABASE_ANON_KEY;
+      testUrl = DEFAULT_SUPABASE_URL;
+      setSupabaseUrlInput(DEFAULT_SUPABASE_URL);
+      setSupabaseKeyInput(DEFAULT_SUPABASE_ANON_KEY);
+    }
+
     setIsTesting(true);
     setTestResult(null);
     try {
-      const res = await testSupabaseConnection(supabaseUrlInput, supabaseKeyInput);
+      const res = await testSupabaseConnection(testUrl, testKey);
       setTestResult({
         success: res.success,
         latencyMs: res.latencyMs,
@@ -303,11 +315,21 @@ export const SettingsPage: React.FC = () => {
 
   const handleSaveSupabaseConfig = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!supabaseUrlInput.trim() || !supabaseKeyInput.trim()) {
+    let saveUrl = supabaseUrlInput.trim();
+    let saveKey = supabaseKeyInput.trim();
+
+    if (saveUrl.includes('noskcrmvnancdyhvzfin') && saveKey !== DEFAULT_SUPABASE_ANON_KEY) {
+      saveKey = DEFAULT_SUPABASE_ANON_KEY;
+      saveUrl = DEFAULT_SUPABASE_URL;
+      setSupabaseUrlInput(DEFAULT_SUPABASE_URL);
+      setSupabaseKeyInput(DEFAULT_SUPABASE_ANON_KEY);
+    }
+
+    if (!saveUrl || !saveKey) {
       toastError('Missing Credentials', 'Please provide both your Supabase Project URL and Anon Key.');
       return;
     }
-    const res = await connectSupabase(supabaseUrlInput.trim(), supabaseKeyInput.trim());
+    const res = await connectSupabase(saveUrl, saveKey);
     if (res.success) {
       setTestResult({
         success: true,
@@ -391,8 +413,15 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handlePullData = async () => {
-    const activeUrl = supabaseUrlInput.trim() || supabaseConfig.url;
-    const activeKey = supabaseKeyInput.trim() || supabaseConfig.anonKey;
+    let activeUrl = supabaseUrlInput.trim() || supabaseConfig.url;
+    let activeKey = supabaseKeyInput.trim() || supabaseConfig.anonKey;
+
+    if (activeUrl.includes('noskcrmvnancdyhvzfin') && activeKey !== DEFAULT_SUPABASE_ANON_KEY) {
+      activeKey = DEFAULT_SUPABASE_ANON_KEY;
+      activeUrl = DEFAULT_SUPABASE_URL;
+      setSupabaseUrlInput(DEFAULT_SUPABASE_URL);
+      setSupabaseKeyInput(DEFAULT_SUPABASE_ANON_KEY);
+    }
 
     if (!activeUrl || !activeKey) {
       toastError('Configuration Missing', 'Please enter your Supabase Project URL and Anon Key first.');
@@ -1242,6 +1271,27 @@ export const SettingsPage: React.FC = () => {
                 >
                   {isTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-amber-500" />}
                   <span>{isTesting ? 'Testing Ping...' : 'Test Connection'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setSupabaseUrlInput(DEFAULT_SUPABASE_URL);
+                    setSupabaseKeyInput(DEFAULT_SUPABASE_ANON_KEY);
+                    toastInfo('Restoring GWCC Credentials', 'Applying official church project credentials...');
+                    const res = await connectSupabase(DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY);
+                    if (res.success) {
+                      setTestResult({
+                        success: true,
+                        message: 'Connected to Greater Works City Church live Supabase cluster!',
+                      });
+                      toastSuccess('Connected', 'Official Greater Works City Church live database connected!');
+                    }
+                  }}
+                  className="px-3.5 py-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-950 font-bold rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-800" />
+                  <span>Restore Official GWCC Keys</span>
                 </button>
 
                 {isConnected && (

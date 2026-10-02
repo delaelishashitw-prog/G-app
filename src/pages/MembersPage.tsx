@@ -19,6 +19,8 @@ import {
   Edit2,
   Trash2,
   Archive,
+  RotateCcw,
+  AlertTriangle,
   ExternalLink,
   ChevronRight,
   LayoutGrid,
@@ -46,6 +48,13 @@ import { ProfilePhotoUpload } from '../components/ProfilePhotoUpload';
 import { RecordMemberGivingModal } from '../components/members/RecordMemberGivingModal';
 import { MemberIdCardModal } from '../components/members/MemberIdCardModal';
 import { AddEditMemberModal } from '../components/members/AddEditMemberModal';
+import { ArchiveMemberModal } from '../components/members/ArchiveMemberModal';
+import {
+  clusterHouseholds,
+  buildFamilyBlessingWhatsAppUrl,
+  areSpouseMatch,
+  getMemberAgeGroup,
+} from '../lib/familyUtils';
 
 export const MembersPage: React.FC = () => {
   const {
@@ -55,6 +64,7 @@ export const MembersPage: React.FC = () => {
     addMember,
     updateMember,
     archiveMember,
+    unarchiveMember,
     giving,
     attendance,
     pledges,
@@ -66,15 +76,15 @@ export const MembersPage: React.FC = () => {
   const navigate = useNavigate();
   const { memberId } = useParams<{ memberId?: string }>();
 
-  const [viewMode, setViewMode] = useState<'cards' | 'table'>(() => {
+  const [viewMode, setViewMode] = useState<'cards' | 'table' | 'families'>(() => {
     try {
-      return (localStorage.getItem('gwcc_member_view_mode') as 'cards' | 'table') || 'cards';
+      return (localStorage.getItem('gwcc_member_view_mode') as 'cards' | 'table' | 'families') || 'cards';
     } catch {
       return 'cards';
     }
   });
 
-  const handleSetViewMode = (mode: 'cards' | 'table') => {
+  const handleSetViewMode = (mode: 'cards' | 'table' | 'families') => {
     setViewMode(mode);
     try {
       localStorage.setItem('gwcc_member_view_mode', mode);
@@ -100,6 +110,8 @@ export const MembersPage: React.FC = () => {
   const [selectedMemberForIdCard, setSelectedMemberForIdCard] = useState<Member | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
+  const [memberToArchive, setMemberToArchive] = useState<Member | null>(null);
+  const [isArchiving, setIsArchiving] = useState(false);
 
   // Detect members celebrating birthdays in the current month
   const currentMonth = new Date().getMonth() + 1; // 1-12
@@ -129,6 +141,7 @@ export const MembersPage: React.FC = () => {
       pending_baptism: nonArchived.filter((m) => !m.baptism_status).length,
       birthdays: birthdayCelebrants.length,
       unassigned_cell: nonArchived.filter((m) => !m.small_group_id).length,
+      archived: members.filter((m) => m.is_archived).length,
     };
   }, [members, birthdayCelebrants.length]);
 
@@ -156,10 +169,44 @@ export const MembersPage: React.FC = () => {
     navigate('/members');
   };
 
+  const handleConfirmArchiveMember = async () => {
+    if (!memberToArchive) return;
+    setIsArchiving(true);
+    try {
+      archiveMember(memberToArchive.id);
+      success(`${memberToArchive.first_name} ${memberToArchive.last_name} moved to archives.`);
+      setMemberToArchive(null);
+    } catch (err: any) {
+      error(err?.message || 'Failed to archive member');
+    } finally {
+      setIsArchiving(false);
+    }
+  };
+
+  const handleRestoreMember = (m: Member) => {
+    unarchiveMember(m.id);
+    success(`${m.first_name} ${m.last_name} restored to active congregation!`);
+  };
+
+  const handleBatchArchive = () => {
+    if (batchSelectedIds.size === 0) return;
+    let count = 0;
+    batchSelectedIds.forEach((id) => {
+      archiveMember(id);
+      count++;
+    });
+    success(`Archived ${count} selected members.`);
+    setBatchSelectedIds(new Set());
+  };
+
   // Filtered and Sorted members
   const filteredMembers = useMemo(() => {
     let result = members.filter((m) => {
-      if (m.is_archived) return false;
+      if (statusFilter === 'archived') {
+        if (!m.is_archived) return false;
+      } else {
+        if (m.is_archived) return false;
+      }
 
       // Birthday Filter
       if (birthdayFilterActive) {
@@ -234,6 +281,19 @@ export const MembersPage: React.FC = () => {
     birthdayFilterActive,
     currentMonth,
   ]);
+
+  // Cluster members into Household & Family Units
+  const households = useMemo(() => {
+    return clusterHouseholds(filteredMembers);
+  }, [filteredMembers]);
+
+  const multiMemberHouseholdsCount = useMemo(() => {
+    return households.filter((h) => h.totalMembers > 1).length;
+  }, [households]);
+
+  const marriedHouseholdsCount = useMemo(() => {
+    return households.filter((h) => h.hasMarriedCouple).length;
+  }, [households]);
 
   // Batch toggle
   const toggleSelectMember = (id: string, e?: React.MouseEvent) => {
@@ -543,6 +603,7 @@ export const MembersPage: React.FC = () => {
           onBack={handleBackToList}
           onEdit={openEditModal}
           renderStatusBadge={renderStatusBadge}
+          onSelectMember={handleSelectMember}
         />
       ) : (
         <>
@@ -584,6 +645,18 @@ export const MembersPage: React.FC = () => {
                 >
                   <List className="w-3.5 h-3.5 text-teal-600" />
                   <span>Table</span>
+                </button>
+                <button
+                  onClick={() => handleSetViewMode('families')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                    viewMode === 'families'
+                      ? 'bg-white text-teal-900 shadow-xs border border-slate-200/80 font-bold'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                  title="Families & Households Grouping"
+                >
+                  <Users className="w-3.5 h-3.5 text-teal-600" />
+                  <span>Families ({multiMemberHouseholdsCount})</span>
                 </button>
               </div>
 
@@ -778,6 +851,27 @@ export const MembersPage: React.FC = () => {
                     {statusCounts.unassigned_cell}
                   </span>
                 </button>
+
+                {/* Archived */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStatusFilter('archived');
+                    setBirthdayFilterActive(false);
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition shadow-2xs ${
+                    statusFilter === 'archived'
+                      ? 'bg-rose-700 text-white shadow-xs'
+                      : 'bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-200/60'
+                  }`}
+                  title="View archived member profiles"
+                >
+                  <Archive className="w-3.5 h-3.5" />
+                  <span>Archived</span>
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-white text-slate-700">
+                    {statusCounts.archived}
+                  </span>
+                </button>
               </div>
             </div>
 
@@ -896,6 +990,15 @@ export const MembersPage: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-2">
+                <button
+                  onClick={handleBatchArchive}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+                  title="Archive selected members"
+                >
+                  <Archive className="w-3.5 h-3.5" />
+                  <span>Archive Selected ({batchSelectedIds.size})</span>
+                </button>
+
                 <button
                   onClick={() => handleExportCSV(true)}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold transition border border-slate-700"
@@ -1092,13 +1195,30 @@ export const MembersPage: React.FC = () => {
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
+                        {member.is_archived ? (
+                          <button
+                            onClick={() => handleRestoreMember(member)}
+                            className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
+                            title="Restore member to active congregation"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setMemberToArchive(member)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                            title="Archive Member"
+                          >
+                            <Archive className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
                 );
               })}
             </div>
-          ) : (
+          ) : viewMode === 'table' ? (
             /* TABLE VIEW */
             <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
               <div className="overflow-x-auto">
@@ -1261,6 +1381,23 @@ export const MembersPage: React.FC = () => {
                               >
                                 <Edit2 className="w-4 h-4" />
                               </button>
+                              {member.is_archived ? (
+                                <button
+                                  onClick={() => handleRestoreMember(member)}
+                                  className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
+                                  title="Restore member to active congregation"
+                                >
+                                  <RotateCcw className="w-4 h-4" />
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => setMemberToArchive(member)}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                  title="Archive Member"
+                                >
+                                  <Archive className="w-4 h-4" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1270,7 +1407,189 @@ export const MembersPage: React.FC = () => {
                 </table>
               </div>
             </div>
-          )}
+          ) : viewMode === 'families' ? (
+            /* FAMILIES & HOUSEHOLDS DIRECTORY */
+            <div className="space-y-6">
+              {/* Family Directory Stats Bar */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-gradient-to-r from-teal-950 via-teal-900 to-emerald-900 p-4 rounded-2xl text-white shadow-sm border border-teal-800/40">
+                <div>
+                  <p className="text-[10px] text-teal-300 font-semibold uppercase tracking-wider">Total Family Units</p>
+                  <p className="text-xl font-black mt-0.5">{households.length}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-teal-300 font-semibold uppercase tracking-wider">Multi-Member Families</p>
+                  <p className="text-xl font-black mt-0.5 text-amber-300">{multiMemberHouseholdsCount}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-teal-300 font-semibold uppercase tracking-wider">Married Couples</p>
+                  <p className="text-xl font-black mt-0.5 text-rose-300">{marriedHouseholdsCount}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-teal-300 font-semibold uppercase tracking-wider">Active Members</p>
+                  <p className="text-xl font-black mt-0.5 text-teal-100">{filteredMembers.length}</p>
+                </div>
+              </div>
+
+              {/* Households Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {households.map((household) => {
+                  const isMulti = household.totalMembers > 1;
+                  const waUrl = household.primaryPhone
+                    ? buildFamilyBlessingWhatsAppUrl(
+                        household.primaryPhone,
+                        household.name,
+                        household.headOfHousehold.first_name
+                      )
+                    : null;
+
+                  return (
+                    <div
+                      key={household.id}
+                      className={`bg-white rounded-2xl border p-5 shadow-xs transition-all duration-200 flex flex-col justify-between ${
+                        isMulti
+                          ? 'border-slate-200 hover:border-teal-400 hover:shadow-md'
+                          : 'border-slate-200/80 bg-slate-50/30'
+                      }`}
+                    >
+                      <div className="space-y-3.5">
+                        {/* Household Header */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className={`w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-sm shadow-2xs shrink-0 ${
+                                isMulti
+                                  ? 'bg-teal-700 text-white'
+                                  : 'bg-slate-200 text-slate-700'
+                              }`}
+                            >
+                              <Users className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className="font-bold text-slate-900 text-base">{household.name}</h3>
+                                {household.hasMarriedCouple && (
+                                  <span className="text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
+                                    Married Couple
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-500 flex items-center gap-2 mt-0.5 flex-wrap">
+                                <span>Head: <strong>{household.headOfHousehold.first_name} {household.headOfHousehold.last_name}</strong></span>
+                                <span>•</span>
+                                <span>
+                                  {household.totalMembers} Member{household.totalMembers > 1 ? 's' : ''} ({household.adultCount} Adult{household.adultCount !== 1 ? 's' : ''}
+                                  {household.childrenCount > 0 ? `, ${household.childrenCount} Child${household.childrenCount > 1 ? 'ren' : ''}` : ''}
+                                  {household.youthCount > 0 ? `, ${household.youthCount} Youth` : ''})
+                                </span>
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Family Blessing WhatsApp Button */}
+                          {waUrl && (
+                            <a
+                              href={waUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-xl text-xs font-semibold border border-emerald-200 transition shrink-0"
+                              title="Send WhatsApp Family Blessing to this household"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">Bless Family</span>
+                            </a>
+                          )}
+                        </div>
+
+                        {/* Location / Contact strip */}
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                          <span className="flex items-center gap-1">
+                            <MapPin className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                            <span className="truncate max-w-[200px]">{household.residentialAddress}</span>
+                          </span>
+                          {household.gpsAddress && household.gpsAddress !== 'GA-' && (
+                            <span className="font-mono text-[11px] bg-white px-2 py-0.5 rounded border border-slate-200 text-slate-700">
+                              {household.gpsAddress}
+                            </span>
+                          )}
+                          {household.primaryPhone && (
+                            <span className="flex items-center gap-1 font-mono text-[11px] ml-auto text-slate-600">
+                              <Phone className="w-3 h-3 text-slate-400" />
+                              {household.primaryPhone}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Member Cards within this Household */}
+                        <div className="space-y-1.5 pt-1">
+                          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                            Household Members ({household.members.length})
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {household.members.map((m) => {
+                              const isHead = m.id === household.headOfHousehold.id;
+                              const isSpouseOfHead =
+                                !isHead &&
+                                household.hasMarriedCouple &&
+                                areSpouseMatch(household.headOfHousehold, m);
+
+                              const mAge = getMemberAgeGroup(m);
+                              let roleTag = isHead
+                                ? 'Head of House'
+                                : isSpouseOfHead
+                                ? m.gender === 'male'
+                                  ? 'Spouse (Husband)'
+                                  : 'Spouse (Wife)'
+                                : mAge === 'child'
+                                ? 'Child / Dependent'
+                                : mAge === 'youth'
+                                ? 'Youth'
+                                : 'Family Member';
+
+                              return (
+                                <div
+                                  key={m.id}
+                                  onClick={() => handleSelectMember(m)}
+                                  className="p-2.5 bg-white rounded-xl border border-slate-200 hover:border-teal-400 hover:bg-teal-50/30 transition cursor-pointer flex items-center justify-between gap-2"
+                                  title={`View ${m.first_name}'s full profile`}
+                                >
+                                  <div className="flex items-center gap-2 overflow-hidden">
+                                    <div className="w-7 h-7 rounded-lg bg-teal-100 text-teal-800 font-bold flex items-center justify-center text-xs shrink-0">
+                                      {m.first_name[0]}
+                                      {m.last_name[0]}
+                                    </div>
+                                    <div className="truncate">
+                                      <p className="font-bold text-slate-900 text-xs truncate">
+                                        {m.first_name} {m.last_name}
+                                      </p>
+                                      <p className="text-[10px] text-slate-400 font-mono truncate">
+                                        {m.member_id}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  <span
+                                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap border ${
+                                      isHead
+                                        ? 'bg-teal-50 text-teal-800 border-teal-200'
+                                        : isSpouseOfHead
+                                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                                    }`}
+                                  >
+                                    {roleTag}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
         </>
       )}
 
@@ -1298,6 +1617,17 @@ export const MembersPage: React.FC = () => {
           onClose={() => setSelectedMemberForIdCard(null)}
           member={selectedMemberForIdCard}
           settings={settings}
+        />
+      )}
+
+      {/* MODAL 4: ARCHIVE MEMBER CONFIRMATION */}
+      {memberToArchive && (
+        <ArchiveMemberModal
+          isOpen={Boolean(memberToArchive)}
+          onClose={() => setMemberToArchive(null)}
+          onConfirm={handleConfirmArchiveMember}
+          member={memberToArchive}
+          isProcessing={isArchiving}
         />
       )}
     </div>

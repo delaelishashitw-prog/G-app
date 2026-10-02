@@ -13,6 +13,8 @@ import {
   Heart,
   Edit2,
   Archive,
+  RotateCcw,
+  AlertTriangle,
   MessageCircle,
   Copy,
   Check,
@@ -43,12 +45,19 @@ import { RecordMemberGivingModal } from './members/RecordMemberGivingModal';
 import { AddPastoralNoteModal } from './members/AddPastoralNoteModal';
 import { MemberDossierModal } from './members/MemberDossierModal';
 import { MemberGivingStatementModal } from './finance/MemberGivingStatementModal';
+import { ArchiveMemberModal } from './members/ArchiveMemberModal';
+import {
+  getLinkedFamilyMembers,
+  buildFamilyBlessingWhatsAppUrl,
+  getMemberAgeGroup,
+} from '../lib/familyUtils';
 
 export interface MemberProfileViewProps {
   member: Member;
   onBack: () => void;
   onEdit: (member: Member) => void;
   renderStatusBadge: (member: Member, size?: 'sm' | 'md') => React.ReactNode;
+  onSelectMember?: (member: Member) => void;
 }
 
 export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
@@ -56,6 +65,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
   onBack,
   onEdit,
   renderStatusBadge,
+  onSelectMember,
 }) => {
   const {
     members,
@@ -65,6 +75,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
     attendance,
     pledges,
     archiveMember,
+    unarchiveMember,
     updateMember,
     recordAttendance,
     services,
@@ -85,6 +96,9 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
   const [isPastoralModalOpen, setIsPastoralModalOpen] = useState(false);
   const [isDossierOpen, setIsDossierOpen] = useState(false);
   const [isGivingStatementOpen, setIsGivingStatementOpen] = useState(false);
+  const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   // Filter church data for this specific member
   const memberAttendance = useMemo(() => {
@@ -135,17 +149,9 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
     [memberPledges]
   );
 
-  // Family and household connection (matching last name, emergency contact, or address)
-  const familyMembers = useMemo(() => {
-    return members.filter(
-      (m) =>
-        m.id !== member.id &&
-        !m.is_archived &&
-        (m.last_name.toLowerCase() === member.last_name.toLowerCase() ||
-          (m.emergency_phone && m.emergency_phone === member.phone) ||
-          (member.emergency_phone && member.emergency_phone === m.phone) ||
-          (m.residential_address && member.residential_address && m.residential_address === member.residential_address))
-    );
+  // Family and household connection (spouse, surname, shared contact, emergency contact, residence)
+  const familyLinks = useMemo(() => {
+    return getLinkedFamilyMembers(member, members);
   }, [members, member]);
 
   // Clean Ghana phone number
@@ -169,15 +175,33 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
     setTimeout(() => setCopiedId(false), 2000);
   };
 
-  const handleArchive = () => {
-    if (
-      confirm(
-        `Are you sure you want to archive ${member.first_name} ${member.last_name}? They will no longer appear in the active member registry.`
-      )
-    ) {
+  const handleOpenArchiveModal = () => {
+    setIsArchiveModalOpen(true);
+  };
+
+  const handleConfirmArchive = async () => {
+    setIsArchiving(true);
+    try {
       archiveMember(member.id);
-      success(`${member.first_name} archived.`);
+      success(`${member.first_name} ${member.last_name} has been moved to archives.`);
+      setIsArchiveModalOpen(false);
       onBack();
+    } catch (err: any) {
+      error(err?.message || 'Failed to archive member');
+    } finally {
+      setIsArchiving(false);
+    }
+  };
+
+  const handleRestoreMember = async () => {
+    setIsRestoring(true);
+    try {
+      unarchiveMember(member.id);
+      success(`${member.first_name} ${member.last_name} restored to active congregation!`);
+    } catch (err: any) {
+      error(err?.message || 'Failed to restore member');
+    } finally {
+      setIsRestoring(false);
     }
   };
 
@@ -338,17 +362,55 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
             <span>Edit Member</span>
           </button>
 
-          {/* Archive Member */}
-          <button
-            type="button"
-            onClick={handleArchive}
-            className="px-2.5 py-1.5 text-xs text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-xl transition"
-            title="Archive member"
-          >
-            <Archive className="w-3.5 h-3.5" />
-          </button>
+          {/* Restore or Archive Member */}
+          {member.is_archived ? (
+            <button
+              type="button"
+              onClick={handleRestoreMember}
+              disabled={isRestoring}
+              className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-xs cursor-pointer disabled:opacity-50"
+              title="Restore this member to active registry"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>{isRestoring ? 'Restoring...' : 'Restore Member'}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleOpenArchiveModal}
+              className="px-3 py-1.5 text-xs font-semibold text-rose-700 hover:text-rose-900 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+              title="Archive member from active congregation"
+            >
+              <Archive className="w-3.5 h-3.5 text-rose-600" />
+              <span>Archive</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Archived Warning Banner if Member is Archived */}
+      {member.is_archived && (
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-900 text-xs animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+            <div>
+              <p className="font-bold text-slate-900">This member profile is currently ARCHIVED</p>
+              <p className="text-[11px] text-amber-800 mt-0.5">
+                Hidden from active church lists, Sunday check-in, and cell groups. Historical giving, tithes, and attendance remain preserved.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleRestoreMember}
+            disabled={isRestoring}
+            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shrink-0 transition flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>{isRestoring ? 'Restoring...' : 'Restore to Active'}</span>
+          </button>
+        </div>
+      )}
 
       {/* Hero Profile Banner Card */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-teal-950 via-teal-900 to-slate-950 p-6 sm:p-8 text-white shadow-xl border border-teal-800/40">
@@ -929,43 +991,143 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
                 </div>
 
                 {/* Connected Family Members in Church */}
-                <div className="bg-slate-50/60 p-5 rounded-2xl border border-slate-200 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5 text-teal-700" />
-                      Family & Household Links ({familyMembers.length})
-                    </h4>
-                    <span className="text-[10px] text-slate-400">Same Household / Surname</span>
+                <div className="bg-slate-50/60 p-5 rounded-2xl border border-slate-200 space-y-3.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                        <Users className="w-3.5 h-3.5 text-teal-700" />
+                        Family & Household Links ({familyLinks.length})
+                      </h4>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Spouses, children, siblings, and household members in GWCC
+                      </p>
+                    </div>
+
+                    {familyLinks.length > 0 && member.phone && (
+                      <a
+                        href={buildFamilyBlessingWhatsAppUrl(
+                          member.phone,
+                          `The ${member.last_name} Household`,
+                          member.first_name
+                        )}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition"
+                        title="Send pastoral blessing to this household via WhatsApp"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>Send Family Blessing</span>
+                      </a>
+                    )}
                   </div>
 
-                  {familyMembers.length > 0 ? (
-                    <div className="space-y-2">
-                      {familyMembers.map((fam) => (
-                        <div
-                          key={fam.id}
-                          className="p-2.5 bg-white rounded-xl border border-slate-200 flex items-center justify-between text-xs"
-                        >
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-7 h-7 rounded-lg bg-teal-100 text-teal-800 font-bold flex items-center justify-center text-xs">
-                              {fam.first_name[0]}
-                              {fam.last_name[0]}
+                  {familyLinks.length > 0 ? (
+                    <div className="space-y-2.5">
+                      {familyLinks.map((fam) => {
+                        const cleanFamPhone = fam.member.phone ? fam.member.phone.replace(/[^0-9]/g, '') : '';
+                        const waFamPhone = cleanFamPhone.startsWith('0') ? '233' + cleanFamPhone.slice(1) : cleanFamPhone;
+
+                        return (
+                          <div
+                            key={fam.member.id}
+                            className="p-3 bg-white rounded-xl border border-slate-200 hover:border-teal-300 hover:shadow-xs transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                          >
+                            <div
+                              className="flex items-center gap-3 cursor-pointer flex-1"
+                              onClick={() => onSelectMember?.(fam.member)}
+                              title={`View ${fam.member.first_name}'s Profile`}
+                            >
+                              <div className="relative">
+                                {fam.member.profile_photo_url ? (
+                                  <img
+                                    src={fam.member.profile_photo_url}
+                                    alt={fam.member.first_name}
+                                    className="w-9 h-9 rounded-xl object-cover border border-slate-200"
+                                  />
+                                ) : (
+                                  <div
+                                    className={`w-9 h-9 rounded-xl font-bold flex items-center justify-center text-xs ${
+                                      fam.isSpouse
+                                        ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                        : 'bg-teal-100 text-teal-800 border border-teal-200'
+                                    }`}
+                                  >
+                                    {fam.member.first_name[0]}
+                                    {fam.member.last_name[0]}
+                                  </div>
+                                )}
+                              </div>
+
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-slate-900 hover:text-teal-700 transition">
+                                    {fam.member.first_name} {fam.member.last_name}
+                                  </span>
+                                  <span className="text-[10px] font-medium text-slate-500 capitalize bg-slate-100 px-1.5 py-0.5 rounded">
+                                    {getMemberAgeGroup(fam.member)}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+                                  {fam.member.member_id} • {fam.member.phone || 'No phone'}
+                                </p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="font-bold text-slate-900">{fam.first_name} {fam.last_name}</p>
-                              <p className="text-[10px] text-slate-500 font-mono">{fam.member_id} • {fam.phone}</p>
+
+                            <div className="flex items-center gap-2 self-end sm:self-center">
+                              {/* Relationship Badge */}
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded border capitalize ${
+                                  fam.isSpouse
+                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                    : fam.relationship.includes('Child')
+                                    ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                    : fam.relationship.includes('Parent')
+                                    ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                                    : 'bg-teal-50 text-teal-700 border-teal-200'
+                                }`}
+                              >
+                                {fam.relationship}
+                              </span>
+
+                              {/* Connection Reason Badge */}
+                              <span className="text-[9px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 hidden md:inline-block">
+                                {fam.connectionReason}
+                              </span>
+
+                              {/* Quick Actions */}
+                              {fam.member.phone && (
+                                <a
+                                  href={`https://wa.me/${waFamPhone}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg border border-slate-200 hover:border-emerald-200 transition"
+                                  title="Chat on WhatsApp"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <MessageCircle className="w-3.5 h-3.5" />
+                                </a>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => onSelectMember?.(fam.member)}
+                                className="px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:text-teal-800 bg-slate-50 hover:bg-teal-50 rounded-lg border border-slate-200 hover:border-teal-200 flex items-center gap-1 transition cursor-pointer"
+                              >
+                                <span>Profile</span>
+                                <ChevronRight className="w-3 h-3" />
+                              </button>
                             </div>
                           </div>
-
-                          <span className="text-[10px] font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded border border-teal-200 capitalize">
-                            {fam.gender === member.gender ? 'Relative' : fam.gender === 'female' ? 'Spouse / Sister' : 'Spouse / Brother'}
-                          </span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
-                    <p className="text-xs text-slate-400 italic">
-                      No other family members detected with matching surname or phone in the registry.
-                    </p>
+                    <div className="p-4 bg-white rounded-xl border border-dashed border-slate-200 text-center space-y-1">
+                      <p className="text-xs font-semibold text-slate-600">No other family members linked yet</p>
+                      <p className="text-[11px] text-slate-400 max-w-md mx-auto">
+                        Family members are automatically linked when sharing a surname, spouse record, emergency contact, or household line. You can record a spouse in the member's profile edit modal.
+                      </p>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1399,6 +1561,14 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
           onClose={() => setIsGivingStatementOpen(false)}
         />
       )}
+
+      <ArchiveMemberModal
+        isOpen={isArchiveModalOpen}
+        onClose={() => setIsArchiveModalOpen(false)}
+        onConfirm={handleConfirmArchive}
+        member={member}
+        isProcessing={isArchiving}
+      />
     </div>
   );
 };

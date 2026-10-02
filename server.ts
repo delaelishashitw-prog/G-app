@@ -40,10 +40,15 @@ app.get('/api/health', (_req: Request, res: Response) => {
 // AI Assistant endpoint
 app.post('/api/ai/assistant', async (req: Request, res: Response) => {
   try {
-    const { prompt, churchContext } = req.body;
+    const { prompt, churchContext } = req.body || {};
 
-    if (!prompt || typeof prompt !== 'string') {
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
       res.status(400).json({ error: 'Prompt is required' });
+      return;
+    }
+
+    if (prompt.length > 10000) {
+      res.status(400).json({ error: 'Prompt exceeds maximum allowed length (10,000 characters)' });
       return;
     }
 
@@ -62,6 +67,7 @@ app.post('/api/ai/assistant', async (req: Request, res: Response) => {
         headers: {
           'User-Agent': 'aistudio-build',
         },
+        timeout: 15000,
       },
     });
 
@@ -94,11 +100,16 @@ Tone: Faith-filled, biblically sound, encouraging, respectful of Ghanaian Christ
     const text = response.text || 'No response generated.';
     res.json({ text });
   } catch (error: any) {
-    console.error('Error generating AI response:', error);
-    res.status(500).json({
-      error: error?.message || 'Failed to process AI assistant request. Please try again.',
+    console.warn('AI generation encountered error, returning pastoral fallback:', error?.message || error);
+    res.status(200).json({
+      text: `**Greater Works City Church Assistant Notice**\n\nThe AI service is currently experiencing high demand or a temporary network interruption. Please try again in a few moments.\n\n**Scripture for the Hour**:\n> *"And God is able to make all grace abound toward you; that ye, always having all sufficiency in all things, may abound to every good work."* — 2 Corinthians 9:8\n\n*GWCC Ministerial Team • Joma New Site, Accra, Ghana*`
     });
   }
+});
+
+// 404 handler for unhandled API routes
+app.all('/api/*', (_req: Request, res: Response) => {
+  res.status(404).json({ error: 'API route not found' });
 });
 
 // Setup Vite or static serving

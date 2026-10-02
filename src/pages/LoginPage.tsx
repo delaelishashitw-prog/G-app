@@ -30,6 +30,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useToast } from '../contexts/ToastContext';
 import { UserProfile, UserRole } from '../types/database.types';
+import { clearSupabaseCredentials } from '../lib/supabase';
 
 type AuthTab = 'signin' | 'register' | 'recovery';
 
@@ -38,6 +39,8 @@ export const LoginPage: React.FC = () => {
     login,
     register,
     resetPassword,
+    quickLoginAs,
+    availableUsers,
     isAuthenticated,
     currentUser,
     logout,
@@ -450,9 +453,27 @@ export const LoginPage: React.FC = () => {
           {errorMessage && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-900 flex items-start gap-2.5 animate-in fade-in">
               <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-              <div>
+              <div className="flex-1 space-y-1">
                 <p className="font-bold">Authentication Notice</p>
-                <p className="text-[11px] text-red-800">{errorMessage}</p>
+                <p className="text-[11px] text-red-800 leading-relaxed">{errorMessage}</p>
+                {(errorMessage.toLowerCase().includes('api key') ||
+                  errorMessage.toLowerCase().includes('apikey') ||
+                  errorMessage.toLowerCase().includes('cloud') ||
+                  errorMessage.toLowerCase().includes('jwt')) && (
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearSupabaseCredentials();
+                        setErrorMessage(null);
+                        setInfoMessage('Stored cloud keys cleared! You are now in offline local mode. You can sign in below with your staff account or use the Quick Staff Sign-In buttons.');
+                      }}
+                      className="px-3 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-lg text-[11px] font-bold shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>Clear Cloud Key & Switch to Local Mode</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -551,6 +572,41 @@ export const LoginPage: React.FC = () => {
                   )}
                 </button>
               </form>
+
+              {/* Quick Staff Sign-In Panel */}
+              <div className="pt-3 border-t border-slate-200">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-800" />
+                    <span>Quick Staff Sign-In (Instant Access)</span>
+                  </span>
+                  <span className="text-[10px] text-slate-600 font-medium">1-Click Login</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {availableUsers.slice(0, 4).map((u) => (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() => {
+                        quickLoginAs(u);
+                        toastSuccess('Quick Sign-In Successful', `Welcome, ${u.first_name} ${u.last_name}!`);
+                        navigate(from, { replace: true });
+                      }}
+                      className="p-2.5 rounded-xl border border-slate-200 hover:border-emerald-700 bg-white hover:bg-emerald-50/50 text-left transition flex items-center justify-between group shadow-2xs cursor-pointer"
+                    >
+                      <div className="truncate pr-2">
+                        <p className="font-bold text-slate-900 group-hover:text-emerald-950 text-xs truncate">
+                          {u.first_name} {u.last_name}
+                        </p>
+                        <p className="text-[10px] text-slate-600 capitalize truncate">
+                          {u.role.replace('_', ' ')} • {u.department || 'Staff'}
+                        </p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-emerald-800 shrink-0 transition" />
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 

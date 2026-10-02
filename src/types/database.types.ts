@@ -86,6 +86,7 @@ export interface Member {
   last_name: string;
   gender: GenderType;
   date_of_birth?: string;
+  age_group?: 'child' | 'youth' | 'adult' | 'senior';
   marital_status: 'single' | 'married' | 'widowed' | 'divorced';
   nationality: string;
   occupation?: string;
