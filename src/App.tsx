@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ChurchDataProvider } from './contexts/ChurchDataContext';
 import { ToastProvider } from './contexts/ToastContext';
+import { ThemeProvider } from './contexts/ThemeContext';
 import { AppLayout } from './layouts/AppLayout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LoadingFallback } from './components/LoadingFallback';
@@ -31,9 +32,10 @@ const MemberPortalPage = lazy(() => import('./pages/MemberPortalPage').then(m =>
 export default function App() {
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <ChurchDataProvider>
-          <ToastProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <ChurchDataProvider>
+            <ToastProvider>
             <BrowserRouter>
               <Suspense fallback={<LoadingFallback />}>
                 <Routes>
@@ -67,6 +69,7 @@ export default function App() {
           </ToastProvider>
         </ChurchDataProvider>
       </AuthProvider>
-    </ErrorBoundary>
+    </ThemeProvider>
+  </ErrorBoundary>
   );
 }

@@ -34,10 +34,15 @@ import {
   Radio,
   Landmark,
   Smartphone,
-  Save
+  Save,
+  Sun,
+  Moon,
+  Monitor,
+  Palette,
 } from 'lucide-react';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useToast } from '../contexts/ToastContext';
+import { useTheme } from '../contexts/ThemeContext';
 import {
   testSupabaseConnection,
   checkSupabaseTables,
@@ -70,9 +75,10 @@ export const SettingsPage: React.FC = () => {
     ministries,
     smallGroups,
   } = useChurchData();
+  const { theme, resolvedTheme, isDark, setTheme, toggleTheme } = useTheme();
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<'identity' | 'finance' | 'services' | 'supabase' | 'backup'>('identity');
+  const [activeTab, setActiveTab] = useState<'identity' | 'appearance' | 'finance' | 'services' | 'supabase' | 'backup'>('identity');
 
   // General Settings state
   const [churchName, setChurchName] = useState(settings.church_name || 'Church Management System');
@@ -548,13 +554,13 @@ export const SettingsPage: React.FC = () => {
       )}
 
       {/* Navigation Tabs */}
-      <div className="flex border-b border-slate-200 gap-2 overflow-x-auto pb-px">
+      <div className="flex border-b border-slate-200 dark:border-slate-800 gap-2 overflow-x-auto pb-px">
         <button
           onClick={() => setActiveTab('identity')}
           className={`pb-3 px-3 text-xs font-bold border-b-2 flex items-center gap-2 transition shrink-0 ${
             activeTab === 'identity'
-              ? 'border-[#064e3b] text-[#064e3b]'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
+              ? 'border-[#064e3b] dark:border-emerald-400 text-[#064e3b] dark:text-emerald-400'
+              : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
           <Building className="w-4 h-4" />
@@ -562,11 +568,26 @@ export const SettingsPage: React.FC = () => {
         </button>
 
         <button
+          onClick={() => setActiveTab('appearance')}
+          className={`pb-3 px-3 text-xs font-bold border-b-2 flex items-center gap-2 transition shrink-0 ${
+            activeTab === 'appearance'
+              ? 'border-emerald-600 dark:border-emerald-400 text-emerald-800 dark:text-emerald-400'
+              : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+          }`}
+        >
+          <Palette className="w-4 h-4 text-amber-500" />
+          <span>Appearance & Theme</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-mono bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 capitalize">
+            {theme}
+          </span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('finance')}
           className={`pb-3 px-3 text-xs font-bold border-b-2 flex items-center gap-2 transition shrink-0 ${
             activeTab === 'finance'
-              ? 'border-[#064e3b] text-[#064e3b]'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
+              ? 'border-[#064e3b] dark:border-emerald-400 text-[#064e3b] dark:text-emerald-400'
+              : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
           <Smartphone className="w-4 h-4 text-emerald-600" />
@@ -577,8 +598,8 @@ export const SettingsPage: React.FC = () => {
           onClick={() => setActiveTab('services')}
           className={`pb-3 px-3 text-xs font-bold border-b-2 flex items-center gap-2 transition shrink-0 ${
             activeTab === 'services'
-              ? 'border-[#064e3b] text-[#064e3b]'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
+              ? 'border-[#064e3b] dark:border-emerald-400 text-[#064e3b] dark:text-emerald-400'
+              : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
           <Clock className="w-4 h-4 text-blue-600" />
@@ -589,8 +610,8 @@ export const SettingsPage: React.FC = () => {
           onClick={() => setActiveTab('supabase')}
           className={`pb-3 px-3 text-xs font-bold border-b-2 flex items-center gap-2 transition shrink-0 ${
             activeTab === 'supabase'
-              ? 'border-[#064e3b] text-[#064e3b]'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
+              ? 'border-[#064e3b] dark:border-emerald-400 text-[#064e3b] dark:text-emerald-400'
+              : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
           <Database className="w-4 h-4 text-purple-600" />
@@ -601,8 +622,8 @@ export const SettingsPage: React.FC = () => {
           onClick={() => setActiveTab('backup')}
           className={`pb-3 px-3 text-xs font-bold border-b-2 flex items-center gap-2 transition shrink-0 ${
             activeTab === 'backup'
-              ? 'border-[#064e3b] text-[#064e3b]'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
+              ? 'border-[#064e3b] dark:border-emerald-400 text-[#064e3b] dark:text-emerald-400'
+              : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
           }`}
         >
           <Server className="w-4 h-4 text-amber-600" />
@@ -613,10 +634,10 @@ export const SettingsPage: React.FC = () => {
       {/* TAB 1: CHURCH IDENTITY & ADDRESS */}
       {activeTab === 'identity' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-            <div className="border-b border-slate-100 pb-3">
-              <h2 className="text-base font-bold text-slate-900">Assembly Profile & Contact Information</h2>
-              <p className="text-xs text-slate-500">Official church information displayed on receipts, PDF bulletins, and reports.</p>
+          <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+            <div className="border-b border-slate-100 dark:border-slate-800 pb-3">
+              <h2 className="text-base font-bold text-slate-900 dark:text-white">Assembly Profile & Contact Information</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Official church information displayed on receipts, PDF bulletins, and reports.</p>
             </div>
 
             <form onSubmit={handleSaveIdentitySettings} className="space-y-4 text-xs">
@@ -844,6 +865,48 @@ export const SettingsPage: React.FC = () => {
               </div>
             </div>
 
+            {/* Quick Appearance Card */}
+            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5 text-xs">
+                  <Palette className="w-4 h-4 text-amber-500" />
+                  Appearance Theme
+                </span>
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 capitalize">
+                  {theme}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Active: <strong>{isDark ? 'Dark Theme' : 'Light Theme'}</strong>. Switch on the fly or open the Appearance tab.
+              </p>
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={toggleTheme}
+                  className="flex-1 py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                >
+                  {isDark ? (
+                    <>
+                      <Sun className="w-3.5 h-3.5 text-amber-500" />
+                      <span>Switch to Light</span>
+                    </>
+                  ) : (
+                    <>
+                      <Moon className="w-3.5 h-3.5 text-teal-600" />
+                      <span>Switch to Dark</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('appearance')}
+                  className="py-2 px-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 font-bold text-xs border border-emerald-200 dark:border-emerald-800/80 transition cursor-pointer"
+                >
+                  Theme Hub
+                </button>
+              </div>
+            </div>
+
             <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-950 space-y-1.5">
               <span className="font-bold flex items-center gap-1.5 text-emerald-900">
                 <Shield className="w-4 h-4 text-emerald-700" /> Verification Status
@@ -851,6 +914,258 @@ export const SettingsPage: React.FC = () => {
               <p className="text-[11px] text-emerald-800 leading-relaxed">
                 Registered Assembly in Joma, Greater Accra, Ghana. All printed documents include the official seal, GPS coordinates, and church reference numbers.
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: APPEARANCE & DARK THEME */}
+      {activeTab === 'appearance' && (
+        <div className="space-y-6 max-w-4xl">
+          {/* Main Appearance Panel */}
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-6">
+            <div className="border-b border-slate-100 dark:border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Palette className="w-5 h-5 text-amber-500" />
+                  Interface Theme & Color Mode
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Customize the visual workspace between Light, Dark, or System synchronized palettes.
+                </p>
+              </div>
+
+              {/* Quick Toggle Pill */}
+              <div className="flex items-center gap-2 self-start sm:self-center">
+                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  {isDark ? 'Dark Mode Active' : 'Light Mode Active'}
+                </span>
+                <button
+                  type="button"
+                  onClick={toggleTheme}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                    isDark ? 'bg-emerald-600' : 'bg-slate-300'
+                  }`}
+                  role="switch"
+                  aria-checked={isDark}
+                  title="Toggle Light / Dark mode"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out flex items-center justify-center text-[10px] ${
+                      isDark ? 'translate-x-5 text-amber-600' : 'translate-x-0 text-slate-400'
+                    }`}
+                  >
+                    {isDark ? '🌙' : '☀️'}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* Three Theme Cards Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Option 1: Light Theme */}
+              <div
+                onClick={() => {
+                  setTheme('light');
+                  toastSuccess('Light Theme Enabled', 'Clean daytime church palette activated.');
+                }}
+                className={`p-4 rounded-2xl border-2 cursor-pointer transition-all duration-200 flex flex-col justify-between space-y-4 group ${
+                  theme === 'light'
+                    ? 'border-emerald-600 bg-emerald-50/30 dark:bg-emerald-950/20 shadow-sm'
+                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40'
+                }`}
+              >
+                <div className="space-y-3">
+                  {/* Mockup Preview */}
+                  <div className="h-28 rounded-xl bg-slate-100 p-2 border border-slate-200 shadow-2xs space-y-1.5 flex flex-col justify-between overflow-hidden">
+                    <div className="h-4 bg-white rounded-md border border-slate-200 flex items-center px-1.5 justify-between">
+                      <div className="w-10 h-1.5 bg-emerald-700 rounded-full" />
+                      <div className="flex gap-1">
+                        <div className="w-2 h-2 rounded-full bg-slate-200" />
+                        <div className="w-2 h-2 rounded-full bg-slate-200" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5 flex-1 pt-1">
+                      <div className="bg-white rounded p-1.5 border border-slate-200 space-y-1">
+                        <div className="w-12 h-1.5 bg-slate-800 rounded-full" />
+                        <div className="w-8 h-1 bg-slate-300 rounded-full" />
+                      </div>
+                      <div className="bg-white rounded p-1.5 border border-slate-200 space-y-1">
+                        <div className="w-10 h-1.5 bg-teal-700 rounded-full" />
+                        <div className="w-6 h-1 bg-slate-300 rounded-full" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <Sun className="w-4 h-4 text-amber-500" />
+                        Light Theme
+                      </span>
+                      {theme === 'light' && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300">
+                          Active
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                      Clean off-white background with high-contrast text and crisp emerald green accents. Ideal for daytime office duties and PDF exports.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className={`w-full py-2 rounded-xl text-xs font-bold transition ${
+                    theme === 'light'
+                      ? 'bg-emerald-700 text-white'
+                      : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {theme === 'light' ? 'Selected' : 'Use Light Mode'}
+                </button>
+              </div>
+
+              {/* Option 2: Dark Theme */}
+              <div
+                onClick={() => {
+                  setTheme('dark');
+                  toastSuccess('Dark Theme Enabled', 'Deep obsidian dark mode activated.');
+                }}
+                className={`p-4 rounded-2xl border-2 cursor-pointer transition-all duration-200 flex flex-col justify-between space-y-4 group ${
+                  theme === 'dark'
+                    ? 'border-emerald-500 bg-emerald-950/20 shadow-sm'
+                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40'
+                }`}
+              >
+                <div className="space-y-3">
+                  {/* Mockup Preview */}
+                  <div className="h-28 rounded-xl bg-[#070b14] p-2 border border-slate-800 shadow-2xs space-y-1.5 flex flex-col justify-between overflow-hidden">
+                    <div className="h-4 bg-[#0b1120] rounded-md border border-slate-800 flex items-center px-1.5 justify-between">
+                      <div className="w-10 h-1.5 bg-emerald-400 rounded-full" />
+                      <div className="flex gap-1">
+                        <div className="w-2 h-2 rounded-full bg-slate-700" />
+                        <div className="w-2 h-2 rounded-full bg-slate-700" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5 flex-1 pt-1">
+                      <div className="bg-[#0f172a] rounded p-1.5 border border-slate-800 space-y-1">
+                        <div className="w-12 h-1.5 bg-slate-100 rounded-full" />
+                        <div className="w-8 h-1 bg-slate-600 rounded-full" />
+                      </div>
+                      <div className="bg-[#0f172a] rounded p-1.5 border border-slate-800 space-y-1">
+                        <div className="w-10 h-1.5 bg-teal-400 rounded-full" />
+                        <div className="w-6 h-1 bg-slate-600 rounded-full" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <Moon className="w-4 h-4 text-teal-400" />
+                        Dark Theme
+                      </span>
+                      {theme === 'dark' && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/50">
+                          Active
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                      Deep slate canvas (#0b1120) with neutral card elevations. Gentle on the eyes for projection booths, evening prayer, and night services.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className={`w-full py-2 rounded-xl text-xs font-bold transition ${
+                    theme === 'dark'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {theme === 'dark' ? 'Selected' : 'Use Dark Mode'}
+                </button>
+              </div>
+
+              {/* Option 3: System Theme */}
+              <div
+                onClick={() => {
+                  setTheme('system');
+                  toastSuccess('System Theme Enabled', 'Will match your device color scheme automatically.');
+                }}
+                className={`p-4 rounded-2xl border-2 cursor-pointer transition-all duration-200 flex flex-col justify-between space-y-4 group ${
+                  theme === 'system'
+                    ? 'border-emerald-600 dark:border-emerald-500 bg-emerald-50/30 dark:bg-emerald-950/20 shadow-sm'
+                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40'
+                }`}
+              >
+                <div className="space-y-3">
+                  {/* Mockup Preview (Split Light/Dark) */}
+                  <div className="h-28 rounded-xl p-2 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-1.5 flex flex-col justify-between overflow-hidden bg-gradient-to-r from-slate-100 via-slate-200 to-[#070b14]">
+                    <div className="h-4 bg-white/80 dark:bg-slate-900/80 rounded-md border border-slate-300 dark:border-slate-700 flex items-center px-1.5 justify-between">
+                      <div className="w-10 h-1.5 bg-blue-600 rounded-full" />
+                      <div className="flex gap-1">
+                        <div className="w-2 h-2 rounded-full bg-slate-400" />
+                        <div className="w-2 h-2 rounded-full bg-slate-600" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5 flex-1 pt-1">
+                      <div className="bg-white rounded p-1.5 border border-slate-200 space-y-1">
+                        <div className="w-10 h-1 bg-slate-700 rounded-full" />
+                      </div>
+                      <div className="bg-[#0f172a] rounded p-1.5 border border-slate-700 space-y-1">
+                        <div className="w-10 h-1 bg-slate-200 rounded-full" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <Monitor className="w-4 h-4 text-blue-500" />
+                        System Sync
+                      </span>
+                      {theme === 'system' && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border border-blue-300">
+                          Active ({resolvedTheme})
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                      Automatically detects your device setting. Switches to dark mode in the evening and light mode during the day as scheduled on your OS.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className={`w-full py-2 rounded-xl text-xs font-bold transition ${
+                    theme === 'system'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {theme === 'system' ? 'Selected' : 'Sync with System'}
+                </button>
+              </div>
+            </div>
+
+            {/* Practical Notes & Compliance */}
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 text-xs text-slate-600 dark:text-slate-400 space-y-2">
+              <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-slate-200">
+                <Shield className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>Accessibility & Visual Specifications</span>
+              </div>
+              <ul className="list-disc pl-5 space-y-1 text-[11px] leading-relaxed">
+                <li>All themes maintain strict WCAG AA minimum 4.5:1 contrast ratios on primary data and typography.</li>
+                <li>Theme selection is stored locally on this workstation and persists across page reloads and browser sessions.</li>
+                <li>Printed reports, tithe receipts, and PDF exports automatically render in standard printable black-and-white for crisp paper printing.</li>
+              </ul>
             </div>
           </div>
         </div>

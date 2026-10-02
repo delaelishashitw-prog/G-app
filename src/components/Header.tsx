@@ -16,9 +16,12 @@ import {
   UserPlus,
   Heart,
   Database,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
+import { useTheme } from '../contexts/ThemeContext';
 import { UserRole } from '../types/database.types';
 
 interface HeaderProps {
@@ -50,6 +53,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const { currentUser, currentRole, setCurrentRole, availableUsers, switchUser, logout } = useAuth();
   const { settings, visitors, prayerRequests, supabaseStatus } = useChurchData();
+  const { theme, resolvedTheme, isDark, toggleTheme } = useTheme();
   const [profileOpen, setProfileOpen] = useState(false);
   const [quickMenuOpen, setQuickMenuOpen] = useState(false);
 
@@ -58,12 +62,12 @@ export const Header: React.FC<HeaderProps> = ({
     prayerRequests.filter((p) => p.status === 'new').length;
 
   return (
-    <header className="sticky top-0 z-30 flex items-center justify-between h-16 px-4 sm:px-6 bg-white border-b border-slate-200 shadow-xs">
+    <header className="sticky top-0 z-30 flex items-center justify-between h-16 px-4 sm:px-6 bg-white dark:bg-[#0b1120] border-b border-slate-200 dark:border-slate-800 shadow-xs transition-colors duration-200">
       {/* Left side: Mobile menu toggle + Location info */}
       <div className="flex items-center gap-3">
         <button
           onClick={onToggleMobileMenu}
-          className="p-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 lg:hidden"
+          className="p-2 rounded-lg text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 lg:hidden"
           aria-label="Open navigation menu"
         >
           <Menu className="w-5 h-5" />
@@ -71,7 +75,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Mobile Church Logo & Name */}
         <div className="flex items-center gap-2 lg:hidden">
-          <div className="w-7 h-7 rounded-lg bg-white border border-slate-200 p-0.5 shadow-2xs shrink-0 flex items-center justify-center">
+          <div className="w-7 h-7 rounded-lg bg-white border border-slate-200 dark:border-slate-700 p-0.5 shadow-2xs shrink-0 flex items-center justify-center">
             <img
               src="/assets/logo.png"
               alt="CMS"
@@ -79,24 +83,24 @@ export const Header: React.FC<HeaderProps> = ({
               loading="eager"
             />
           </div>
-          <span className="font-bold text-xs text-slate-900 truncate">CMS</span>
+          <span className="font-bold text-xs text-slate-900 dark:text-white truncate">CMS</span>
         </div>
 
-        <div className="hidden sm:flex items-center gap-2 text-xs text-slate-600">
+        <div className="hidden sm:flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
           <img
             src="/assets/logo.png"
             alt="Church Logo"
             className="w-6 h-6 object-contain rounded"
             loading="eager"
           />
-          <span className="font-semibold text-slate-900">{settings.church_name}</span>
-          <span className="text-slate-300">•</span>
-          <span className="flex items-center gap-1 text-slate-500">
+          <span className="font-semibold text-slate-900 dark:text-white">{settings.church_name}</span>
+          <span className="text-slate-300 dark:text-slate-700">•</span>
+          <span className="flex items-center gap-1 text-slate-500 dark:text-slate-400">
             <MapPin className="w-3.5 h-3.5 text-emerald-600" />
             {settings.location}
           </span>
-          <span className="text-slate-300">•</span>
-          <span className="font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded text-[11px] font-semibold border border-emerald-200">
+          <span className="text-slate-300 dark:text-slate-700">•</span>
+          <span className="font-mono text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded text-[11px] font-semibold border border-emerald-200 dark:border-emerald-800/80">
             {settings.currency_symbol} {settings.currency}
           </span>
         </div>
@@ -157,12 +161,12 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Global Search Button */}
         <button
           onClick={onOpenSearch}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 text-xs sm:text-sm transition shadow-2xs"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 text-xs sm:text-sm transition shadow-2xs"
           title="Global Search across Members, Visitors, ID, Tithe, Phone (Ctrl+K)"
         >
           <Search className="w-4 h-4 text-slate-400" />
           <span className="hidden md:inline">Search church records...</span>
-          <span className="hidden sm:inline-block font-mono text-[10px] bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-400">
+          <span className="hidden sm:inline-block font-mono text-[10px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500">
             ⌘K
           </span>
         </button>
@@ -262,10 +266,25 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
+        {/* Dark / Light Theme Toggle Button */}
+        <button
+          type="button"
+          onClick={toggleTheme}
+          className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/90 text-slate-600 dark:text-amber-400 hover:text-slate-900 dark:hover:text-amber-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition shadow-2xs group cursor-pointer"
+          title={isDark ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
+          aria-label={isDark ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
+        >
+          {isDark ? (
+            <Sun className="w-5 h-5 text-amber-400 transition-transform duration-200 group-hover:rotate-45" />
+          ) : (
+            <Moon className="w-5 h-5 text-slate-600 dark:text-slate-300 group-hover:text-slate-900 transition-transform duration-200 group-hover:-rotate-12" />
+          )}
+        </button>
+
         {/* Notifications Button */}
         <button
           onClick={onOpenNotifications}
-          className="relative p-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition"
+          className="relative p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700 transition shadow-2xs cursor-pointer"
           title="Notifications & Action Items"
         >
           <Bell className="w-5 h-5" />
@@ -280,13 +299,13 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="relative pl-1">
           <button
             onClick={() => setProfileOpen(!profileOpen)}
-            className="flex items-center gap-2 p-1.5 rounded-xl hover:bg-slate-100 transition"
+            className="flex items-center gap-2 p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
           >
             {currentUser.avatar_url ? (
               <img
                 src={currentUser.avatar_url}
                 alt={currentUser.first_name}
-                className="w-8 h-8 rounded-full object-cover border border-slate-200 shadow-2xs"
+                className="w-8 h-8 rounded-full object-cover border border-slate-200 dark:border-slate-700 shadow-2xs"
               />
             ) : (
               <div className="w-8 h-8 rounded-full bg-emerald-700 text-white flex items-center justify-center font-bold text-xs">
@@ -295,7 +314,7 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             )}
             <div className="hidden xl:flex flex-col text-left">
-              <span className="text-xs font-bold text-slate-800 leading-tight">
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 leading-tight">
                 {currentUser.first_name} {currentUser.last_name}
               </span>
               <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded border w-fit ${ROLE_LABELS[currentRole].color}`}>
@@ -308,12 +327,12 @@ export const Header: React.FC<HeaderProps> = ({
           {profileOpen && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setProfileOpen(false)} />
-              <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
-                <div className="px-4 py-2 border-b border-slate-100">
-                  <p className="text-sm font-bold text-slate-900">
+              <div className="absolute right-0 mt-2 w-72 bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800">
+                  <p className="text-sm font-bold text-slate-900 dark:text-white">
                     {currentUser.first_name} {currentUser.last_name}
                   </p>
-                  <p className="text-xs text-slate-500 truncate">{currentUser.email}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{currentUser.email}</p>
                   <div className="mt-1.5 flex items-center gap-2">
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded border ${ROLE_LABELS[currentRole].color}`}>
                       Active Role: {ROLE_LABELS[currentRole].title}
@@ -322,14 +341,14 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
 
                 {/* Quick Role Switcher for Testing/Reviewing RBAC */}
-                <div className="px-4 py-2 bg-slate-50/80 border-b border-slate-100">
+                <div className="px-4 py-2 bg-slate-50/80 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1">
-                      <Shield className="w-3 h-3 text-emerald-600" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                      <Shield className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                       Role-Based Access Tester
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-500 mb-2">
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-2">
                     Switch role to test live system permissions & views:
                   </p>
                   <select
@@ -337,7 +356,7 @@ export const Header: React.FC<HeaderProps> = ({
                     onChange={(e) => {
                       setCurrentRole(e.target.value as UserRole);
                     }}
-                    className="w-full text-xs font-medium bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-800 focus:outline-emerald-600 focus:ring-1 focus:ring-emerald-600"
+                    className="w-full text-xs font-medium bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:outline-emerald-600 focus:ring-1 focus:ring-emerald-600"
                   >
                     <option value="super_admin">Super Admin (Full Access)</option>
                     <option value="senior_pastor">Senior Pastor</option>
@@ -351,8 +370,8 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
 
                 {/* Switch User Profile */}
-                <div className="px-4 py-2 border-b border-slate-100">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 block mb-1">
                     Switch Active Staff Member
                   </span>
                   <div className="space-y-1 max-h-36 overflow-y-auto">
@@ -365,8 +384,8 @@ export const Header: React.FC<HeaderProps> = ({
                         }}
                         className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition ${
                           u.id === currentUser.id
-                            ? 'bg-emerald-50 text-emerald-900 font-bold'
-                            : 'text-slate-600 hover:bg-slate-100'
+                            ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-900 dark:text-emerald-300 font-bold'
+                            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                         }`}
                       >
                         <span className="truncate">
@@ -380,18 +399,18 @@ export const Header: React.FC<HeaderProps> = ({
                   </div>
                 </div>
 
-                <div className="p-2 border-t border-slate-100 space-y-1">
+                <div className="p-2 border-t border-slate-100 dark:border-slate-800 space-y-1">
                   <button
                     onClick={async () => {
                       setProfileOpen(false);
                       await logout();
                     }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 rounded-lg transition"
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition"
                   >
-                    <LogOut className="w-3.5 h-3.5 text-red-600" />
+                    <LogOut className="w-3.5 h-3.5 text-red-600 dark:text-red-400" />
                     <span>Sign Out of Staff Portal</span>
                   </button>
-                  <div className="px-2 py-0.5 text-[10px] text-slate-400">
+                  <div className="px-2 py-0.5 text-[10px] text-slate-400 dark:text-slate-500">
                     Church Management System • City, Country
                   </div>
                 </div>

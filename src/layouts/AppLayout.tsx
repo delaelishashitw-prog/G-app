@@ -46,7 +46,7 @@ export const AppLayout: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 flex text-slate-800 antialiased selection:bg-emerald-700 selection:text-white">
+    <div className="min-h-screen bg-slate-100 dark:bg-[#070b14] flex text-slate-800 dark:text-slate-100 antialiased selection:bg-emerald-700 selection:text-white transition-colors duration-200">
       {/* Collapsible Left Sidebar */}
       <Sidebar
         collapsed={sidebarCollapsed}
@@ -72,7 +72,7 @@ export const AppLayout: React.FC = () => {
 
         {/* Optional Role testing banner if not super admin */}
         {currentRole !== 'super_admin' && (
-          <div className="bg-amber-500/10 border-b border-amber-300 px-4 py-1.5 flex items-center justify-between text-xs text-amber-900">
+          <div className="bg-amber-500/10 dark:bg-amber-950/30 border-b border-amber-300 dark:border-amber-800/60 px-4 py-1.5 flex items-center justify-between text-xs text-amber-900 dark:text-amber-200">
             <div className="flex items-center gap-2">
               <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
               <span>
