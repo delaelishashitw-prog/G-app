@@ -1,0 +1,833 @@
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { Session, User } from '@supabase/supabase-js';
+import { Member, UserProfile, UserRole } from '../types/database.types';
+import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
+
+interface AuthContextType {
+  currentUser: UserProfile;
+  currentRole: UserRole;
+  setCurrentRole: (role: UserRole) => void;
+  availableUsers: UserProfile[];
+  switchUser: (userId: string) => void;
+  canAccess: (module: string) => boolean;
+  hasRole: (roles: UserRole[]) => boolean;
+  isAuthenticated: boolean;
+  session: Session | null;
+  isAuthLoading: boolean;
+  currentMember: Member | null;
+  isMemberPortalUser: boolean;
+  login: (email: string, password?: string) => Promise<{ success: boolean; message: string }>;
+  loginAsMember: (identifier: string, pinOrPassword?: string) => Promise<{ success: boolean; message: string; member?: Member }>;
+  setPortalMember: (member: Member | null) => void;
+  register: (userData: {
+    email: string;
+    password?: string;
+    first_name: string;
+    last_name: string;
+    role: UserRole;
+    phone?: string;
+    department?: string;
+  }) => Promise<{ success: boolean; message: string }>;
+  resetPassword: (email: string) => Promise<{ success: boolean; message: string }>;
+  quickLoginAs: (user: UserProfile) => void;
+  logout: () => Promise<void>;
+  refreshSession: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
+  super_admin: [
+    'dashboard',
+    'members',
+    'visitors',
+    'attendance',
+    'services',
+    'finance',
+    'giving',
+    'pledges',
+    'ministries',
+    'small_groups',
+    'events',
+    'pastoral_care',
+    'prayer_requests',
+    'communication',
+    'reports',
+    'users',
+    'settings',
+    'audit_logs',
+  ],
+  senior_pastor: [
+    'dashboard',
+    'members',
+    'visitors',
+    'attendance',
+    'services',
+    'finance',
+    'giving',
+    'pledges',
+    'ministries',
+    'small_groups',
+    'events',
+    'pastoral_care',
+    'prayer_requests',
+    'communication',
+    'reports',
+    'audit_logs',
+  ],
+  administrator: [
+    'dashboard',
+    'members',
+    'visitors',
+    'attendance',
+    'services',
+    'ministries',
+    'small_groups',
+    'events',
+    'communication',
+    'reports',
+    'settings',
+    'audit_logs',
+  ],
+  finance_officer: [
+    'dashboard',
+    'members', // Read-only view for linking donors
+    'finance',
+    'giving',
+    'pledges',
+    'reports',
+    'audit_logs',
+  ],
+  pastor: [
+    'dashboard',
+    'members',
+    'visitors',
+    'attendance',
+    'ministries',
+    'small_groups',
+    'events',
+    'pastoral_care',
+    'prayer_requests',
+    'communication',
+  ],
+  ministry_leader: [
+    'dashboard',
+    'members',
+    'attendance',
+    'ministries',
+    'events',
+    'communication',
+  ],
+  attendance_officer: [
+    'dashboard',
+    'attendance',
+    'services',
+    'members', // For check-in verification
+    'visitors',
+  ],
+  data_entry: [
+    'dashboard',
+    'members',
+    'visitors',
+    'attendance',
+  ],
+  member: [
+    'member_portal',
+  ],
+};
+
+function mapSupabaseUserToProfile(
+  user: User,
+  existingProfiles: UserProfile[]
+): UserProfile {
+  const cleanEmail = (user.email || '').trim().toLowerCase();
+
+  // Check existing profiles first
+  const existing = existingProfiles.find(
+    (u) => u.id === user.id || u.email.toLowerCase() === cleanEmail
+  );
+  if (existing) {
+    return {
+      ...existing,
+      id: existing.id || user.id,
+      email: cleanEmail || existing.email,
+    };
+  }
+
+  // Derive from Supabase metadata
+  const meta = user.user_metadata || {};
+  const firstName = meta.first_name || (cleanEmail ? cleanEmail.split('@')[0].replace('.', ' ') : 'Staff');
+  const lastName = meta.last_name || 'Member';
+  const role: UserRole = (meta.role as UserRole) || 'super_admin';
+  const phone = meta.phone || user.phone || undefined;
+  const department = meta.department || undefined;
+
+  return {
+    id: user.id,
+    first_name: firstName,
+    last_name: lastName,
+    email: cleanEmail,
+    role,
+    phone,
+    department,
+    is_active: true,
+    created_at: user.created_at || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [usersList, setUsersList] = useState<UserProfile[]>(() => {
+    const saved = localStorage.getItem('gwcc_registered_users');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      } catch {
+        // fallback
+      }
+    }
+    return [];
+  });
+
+  const [currentUser, setCurrentUser] = useState<UserProfile>(() => {
+    const saved = localStorage.getItem('gwcc_active_user');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        // fallback
+      }
+    }
+    return {
+      id: 'guest-user',
+      first_name: 'Guest',
+      last_name: 'User',
+      email: 'guest@local',
+      role: 'data_entry',
+      is_active: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  });
+
+  const [session, setSession] = useState<Session | null>(null);
+
+  const [currentMember, setCurrentMember] = useState<Member | null>(() => {
+    const activeMemberId = localStorage.getItem('gwcc_active_member_id');
+    if (!activeMemberId) return null;
+    try {
+      const stored = localStorage.getItem('gwcc_members');
+      if (stored) {
+        const parsed: Member[] = JSON.parse(stored);
+        const found = parsed.find((m) => m.id === activeMemberId || m.member_id === activeMemberId);
+        if (found) return found;
+      }
+    } catch {}
+    return null;
+  });
+
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    const stored = localStorage.getItem('gwcc_auth_authenticated');
+    if (stored === null) {
+      return false; // Require explicit login in production.
+    }
+    return stored === 'true';
+  });
+
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+
+  // Sync users list to localStorage
+  useEffect(() => {
+    localStorage.setItem('gwcc_registered_users', JSON.stringify(usersList));
+  }, [usersList]);
+
+  // Sync active user to localStorage
+  useEffect(() => {
+    localStorage.setItem('gwcc_active_user', JSON.stringify(currentUser));
+  }, [currentUser]);
+
+  // Sync auth flag to localStorage
+  useEffect(() => {
+    localStorage.setItem('gwcc_auth_authenticated', isAuthenticated ? 'true' : 'false');
+  }, [isAuthenticated]);
+
+  // Handle Supabase session lifecycle and persistence
+  useEffect(() => {
+    let isMounted = true;
+    const client = getSupabaseClient();
+
+    if (!client) {
+      setIsAuthLoading(false);
+      return;
+    }
+
+    // 1. Initial active session check
+    client.auth.getSession().then(({ data: { session: initialSession }, error }) => {
+      if (!isMounted) return;
+
+      if (error) {
+        console.warn('Supabase getSession notice:', error.message);
+      }
+
+      if (initialSession?.user) {
+        setSession(initialSession);
+        setIsAuthenticated(true);
+        const profile = mapSupabaseUserToProfile(initialSession.user, usersList);
+        setCurrentUser(profile);
+        setUsersList((prev) => {
+          const index = prev.findIndex(
+            (u) => u.id === profile.id || u.email.toLowerCase() === profile.email.toLowerCase()
+          );
+          if (index >= 0) {
+            const next = [...prev];
+            next[index] = profile;
+            return next;
+          }
+          return [profile, ...prev];
+        });
+        localStorage.setItem('gwcc_auth_authenticated', 'true');
+        localStorage.setItem('gwcc_active_user', JSON.stringify(profile));
+      } else {
+        setSession(null);
+        // If Supabase is configured and has no session, check if explicitly signed out
+        const storedAuth = localStorage.getItem('gwcc_auth_authenticated');
+        if (storedAuth === 'false') {
+          setIsAuthenticated(false);
+        }
+      }
+      setIsAuthLoading(false);
+    });
+
+    // 2. Auth state subscription (login, logout, token refresh)
+    try {
+      const {
+        data: { subscription },
+      } = client.auth.onAuthStateChange(async (event, newSession) => {
+        if (!isMounted) return;
+
+        if (
+          (event === 'SIGNED_IN' ||
+            event === 'TOKEN_REFRESHED' ||
+            event === 'INITIAL_SESSION' ||
+            event === 'USER_UPDATED') &&
+          newSession?.user
+        ) {
+          setSession(newSession);
+          setIsAuthenticated(true);
+          const profile = mapSupabaseUserToProfile(newSession.user, usersList);
+          setCurrentUser(profile);
+          setUsersList((prev) => {
+            const index = prev.findIndex(
+              (u) => u.id === profile.id || u.email.toLowerCase() === profile.email.toLowerCase()
+            );
+            if (index >= 0) {
+              const next = [...prev];
+              next[index] = profile;
+              return next;
+            }
+            return [profile, ...prev];
+          });
+          localStorage.setItem('gwcc_auth_authenticated', 'true');
+          localStorage.setItem('gwcc_active_user', JSON.stringify(profile));
+        } else if (event === 'SIGNED_OUT') {
+          setSession(null);
+          setIsAuthenticated(false);
+          localStorage.setItem('gwcc_auth_authenticated', 'false');
+          localStorage.removeItem('gwcc_active_user');
+        }
+      });
+
+      return () => {
+        isMounted = false;
+        subscription.unsubscribe();
+      };
+    } catch (err) {
+      console.warn('Supabase auth state subscription error:', err);
+      setIsAuthLoading(false);
+    }
+  }, []);
+
+  const setCurrentRole = (role: UserRole) => {
+    setCurrentUser((prev) => ({
+      ...prev,
+      role,
+    }));
+  };
+
+  const switchUser = (userId: string) => {
+    const target = usersList.find((u) => u.id === userId);
+    if (target) {
+      setCurrentUser(target);
+      localStorage.setItem('gwcc_active_user', JSON.stringify(target));
+    }
+  };
+
+  const refreshSession = useCallback(async () => {
+    const client = getSupabaseClient();
+    if (!client) return;
+
+    try {
+      const { data, error } = await client.auth.refreshSession();
+      if (!error && data.session) {
+        setSession(data.session);
+        setIsAuthenticated(true);
+      }
+    } catch (err) {
+      console.warn('Supabase session refresh note:', err);
+    }
+  }, []);
+
+  const login = async (email: string, password?: string): Promise<{ success: boolean; message: string }> => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      return { success: false, message: 'Please provide a valid email address.' };
+    }
+
+    const client = getSupabaseClient();
+
+    // 1. Attempt Supabase Auth if client is configured
+    if (client && password) {
+      try {
+        const { data, error } = await client.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
+
+        if (!error && data.user) {
+          setSession(data.session);
+          const profile = mapSupabaseUserToProfile(data.user, usersList);
+          setCurrentUser(profile);
+          setUsersList((prev) => {
+            const index = prev.findIndex(
+              (u) => u.id === profile.id || u.email.toLowerCase() === cleanEmail
+            );
+            if (index >= 0) {
+              const next = [...prev];
+              next[index] = profile;
+              return next;
+            }
+            return [profile, ...prev];
+          });
+          setIsAuthenticated(true);
+          localStorage.setItem('gwcc_auth_authenticated', 'true');
+          localStorage.setItem('gwcc_active_user', JSON.stringify(profile));
+          return { success: true, message: `Welcome back, ${profile.first_name}! (Supabase Session Active)` };
+        }
+
+        if (error) {
+          return { success: false, message: error.message };
+        }
+      } catch (err: any) {
+        console.warn('Supabase sign in exception:', err);
+      }
+    }
+
+    // 2. Check local church staff accounts (offline / local directory)
+    const staff = usersList.find((u) => u.email.toLowerCase() === cleanEmail);
+    if (staff) {
+      if (!password || password.trim().length < 4) {
+        return { success: false, message: 'Please provide a valid password.' };
+      }
+      setCurrentUser(staff);
+      setIsAuthenticated(true);
+      localStorage.setItem('gwcc_auth_authenticated', 'true');
+      localStorage.setItem('gwcc_active_user', JSON.stringify(staff));
+      return { success: true, message: `Welcome back, ${staff.first_name}!` };
+    }
+
+    return { success: false, message: 'Invalid staff email or password. Please check your credentials or register for an account.' };
+  };
+
+  const register = async (userData: {
+    email: string;
+    password?: string;
+    first_name: string;
+    last_name: string;
+    role: UserRole;
+    phone?: string;
+    department?: string;
+  }): Promise<{ success: boolean; message: string }> => {
+    const cleanEmail = userData.email.trim().toLowerCase();
+
+    // Check if email already exists locally
+    const exists = usersList.some((u) => u.email.toLowerCase() === cleanEmail);
+    if (exists) {
+      return { success: false, message: 'An account with this email address already exists.' };
+    }
+
+    // Attempt Supabase Auth sign-up if configured
+    const client = getSupabaseClient();
+    if (client && userData.password) {
+      try {
+        const { data, error } = await client.auth.signUp({
+          email: cleanEmail,
+          password: userData.password,
+          options: {
+            data: {
+              first_name: userData.first_name.trim(),
+              last_name: userData.last_name.trim(),
+              role: userData.role,
+              phone: userData.phone?.trim(),
+              department: userData.department,
+            },
+          },
+        });
+
+        if (error) {
+          return { success: false, message: error.message };
+        }
+
+        if (data.user) {
+          const profile = mapSupabaseUserToProfile(data.user, usersList);
+          profile.first_name = userData.first_name.trim();
+          profile.last_name = userData.last_name.trim();
+          profile.role = userData.role;
+          profile.phone = userData.phone?.trim();
+          profile.department = userData.department;
+
+          setUsersList((prev) => [profile, ...prev]);
+          setCurrentUser(profile);
+
+          if (data.session) {
+            setSession(data.session);
+            setIsAuthenticated(true);
+            localStorage.setItem('gwcc_auth_authenticated', 'true');
+            localStorage.setItem('gwcc_active_user', JSON.stringify(profile));
+            return {
+              success: true,
+              message: `Account created and session authenticated for ${profile.first_name}!`,
+            };
+          } else {
+            setIsAuthenticated(true);
+            localStorage.setItem('gwcc_auth_authenticated', 'true');
+            localStorage.setItem('gwcc_active_user', JSON.stringify(profile));
+            return {
+              success: true,
+              message: `Account created for ${profile.first_name}! Check your inbox if confirmation was requested.`,
+            };
+          }
+        }
+      } catch (err: any) {
+        console.warn('Supabase sign up error:', err);
+        return { success: false, message: err?.message || 'Failed to complete cloud registration.' };
+      }
+    }
+
+    // Local / Offline fallback registration
+    const newUser: UserProfile = {
+      id: `usr-${Date.now()}`,
+      first_name: userData.first_name.trim(),
+      last_name: userData.last_name.trim(),
+      email: cleanEmail,
+      phone: userData.phone?.trim() || undefined,
+      department: userData.department,
+      role: userData.role,
+      is_active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    setUsersList((prev) => [newUser, ...prev]);
+    setCurrentUser(newUser);
+    setIsAuthenticated(true);
+    localStorage.setItem('gwcc_auth_authenticated', 'true');
+    localStorage.setItem('gwcc_active_user', JSON.stringify(newUser));
+
+    return {
+      success: true,
+      message: `Account created for ${newUser.first_name} ${newUser.last_name} (${newUser.role.replace('_', ' ')})!`,
+    };
+  };
+
+  const resetPassword = async (email: string): Promise<{ success: boolean; message: string }> => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail.includes('@')) {
+      return { success: false, message: 'Please provide a valid email address.' };
+    }
+
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { error } = await client.auth.resetPasswordForEmail(cleanEmail, {
+          redirectTo: `${window.location.origin}/login`,
+        });
+        if (error) {
+          return { success: false, message: error.message };
+        }
+        return {
+          success: true,
+          message: `Password reset link sent to ${cleanEmail}. Check your inbox.`,
+        };
+      } catch (err: any) {
+        console.warn('Supabase password reset note:', err);
+      }
+    }
+
+    return {
+      success: true,
+      message: `Password reset instructions have been dispatched to ${cleanEmail}. Please check your inbox or contact church administration.`,
+    };
+  };
+
+  const loginAsMember = async (
+    identifier: string,
+    pinOrPassword?: string
+  ): Promise<{ success: boolean; message: string; member?: Member }> => {
+    const clean = identifier.trim().toLowerCase();
+    if (!clean) {
+      return { success: false, message: 'Please provide your Member ID, Phone Number, or Email address.' };
+    }
+
+    let allMembers: Member[] = [];
+    try {
+      const stored = localStorage.getItem('gwcc_members');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          allMembers = parsed;
+        }
+      }
+    } catch {}
+
+    const cleanDigits = clean.replace(/[^0-9]/g, '');
+    const cleanAlphaNum = clean.replace(/[^a-z0-9]/g, '');
+
+    // Ghanaian phone normalization helper (e.g. +233 24 123 4567, 024 123 4567, 241234567)
+    const normalizeGhanaPhone = (num: string): string => {
+      const digits = num.replace(/[^0-9]/g, '');
+      if (digits.startsWith('233') && digits.length >= 12) {
+        return digits.slice(3); // e.g. 233241234567 -> 241234567
+      }
+      if (digits.startsWith('0') && digits.length >= 10) {
+        return digits.slice(1); // e.g. 0241234567 -> 241234567
+      }
+      return digits;
+    };
+    const cleanPhoneCore = normalizeGhanaPhone(clean);
+
+    let member = allMembers.find((m) => {
+      const idMatch = m.id.toLowerCase() === clean;
+      const memIdClean = m.member_id.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const memberIdMatch =
+        m.member_id.toLowerCase() === clean ||
+        (cleanAlphaNum.length >= 4 && memIdClean.includes(cleanAlphaNum));
+      const titheMatch = m.tithe_number ? m.tithe_number.toLowerCase() === clean : false;
+      const emailMatch = m.email ? m.email.toLowerCase() === clean : false;
+      const phoneDigits = m.phone.replace(/[^0-9]/g, '');
+      const memberPhoneCore = normalizeGhanaPhone(m.phone);
+
+      const phoneMatch =
+        (cleanPhoneCore.length >= 4 && memberPhoneCore.includes(cleanPhoneCore)) ||
+        (cleanDigits.length >= 4 && phoneDigits.endsWith(cleanDigits)) ||
+        m.phone.toLowerCase() === clean;
+
+      const fullName = `${m.first_name} ${m.last_name}`.toLowerCase();
+      const nameMatch = fullName === clean;
+      return idMatch || memberIdMatch || titheMatch || emailMatch || phoneMatch || nameMatch;
+    });
+
+    // Cloud Supabase lookup fallback if member not yet cached locally
+    if (!member) {
+      const client = getSupabaseClient();
+      if (client) {
+        try {
+          const { data: remoteMembers } = await client
+            .from('members')
+            .select('*')
+            .or(`member_id.ilike.%${clean}%,phone.ilike.%${cleanDigits || clean}%,email.ilike.%${clean}%`)
+            .limit(1);
+          if (remoteMembers && remoteMembers.length > 0) {
+            member = remoteMembers[0] as Member;
+          }
+        } catch (remoteErr) {
+          console.warn('Supabase remote member lookup notice:', remoteErr);
+        }
+      }
+    }
+
+    if (!member) {
+      return {
+        success: false,
+        message: 'No matching church member record was found for the details entered. Please verify your Member ID (e.g. GWCC-000002), registered phone number, or email.',
+      };
+    }
+
+    // Check PIN / Password
+    try {
+      const savedPins = localStorage.getItem('gwcc_member_passwords');
+      const pinsMap: Record<string, string> = savedPins ? JSON.parse(savedPins) : {};
+      const expectedPin = pinsMap[member.id] || pinsMap[member.member_id];
+      const memberPhoneDigits = (member.phone || '').replace(/[^0-9]/g, '');
+      const phoneSuffix = memberPhoneDigits.slice(-4);
+      const providedPin = (pinOrPassword || '').trim();
+
+      if (!providedPin) {
+        return {
+          success: false,
+          message: 'PIN or Password is required. For first-time login, your default PIN is the last 4 digits of your registered phone number.',
+        };
+      }
+
+      if (expectedPin) {
+        // Explicit PIN has been established by user or administration
+        const matchesExpected = providedPin === expectedPin.trim();
+        const matchesSuffixRecovery = phoneSuffix.length === 4 && providedPin === phoneSuffix;
+
+        if (!matchesExpected && !matchesSuffixRecovery) {
+          return {
+            success: false,
+            message: 'Incorrect PIN or password. Please enter your 4-digit PIN (or last 4 digits of your registered phone), or contact the church office.',
+          };
+        }
+      } else {
+        // First-time login: verify if providedPin matches phone suffix OR is a valid 4-digit PIN
+        const defaultPin = phoneSuffix.length === 4 ? phoneSuffix : '1234';
+        const matchesDefault = providedPin === defaultPin;
+        const isValidNewPin = /^\d{4,8}$/.test(providedPin);
+
+        if (!matchesDefault && !isValidNewPin) {
+          return {
+            success: false,
+            message: `First-time sign-in requires your 4-digit PIN. Your default PIN is the last 4 digits of your phone (${defaultPin}).`,
+          };
+        }
+
+        // Establish and persist this PIN
+        pinsMap[member.id] = providedPin;
+        pinsMap[member.member_id] = providedPin;
+        localStorage.setItem('gwcc_member_passwords', JSON.stringify(pinsMap));
+      }
+    } catch (e) {
+      console.warn('Member PIN verification error:', e);
+    }
+
+    const memberProfile: UserProfile = {
+      id: `usr-mem-${member.id}`,
+      first_name: member.first_name,
+      last_name: member.last_name,
+      email: member.email || `${member.member_id.toLowerCase()}@member.gwcc.org`,
+      phone: member.phone,
+      role: 'member',
+      member_id: member.id,
+      avatar_url: member.profile_photo_url,
+      is_active: true,
+      created_at: member.created_at,
+      updated_at: member.updated_at,
+    };
+
+    setCurrentMember(member);
+    setCurrentUser(memberProfile);
+    setIsAuthenticated(true);
+    localStorage.setItem('gwcc_auth_authenticated', 'true');
+    localStorage.setItem('gwcc_auth_role', 'member');
+    localStorage.setItem('gwcc_active_member_id', member.id);
+    localStorage.setItem('gwcc_active_user', JSON.stringify(memberProfile));
+
+    return {
+      success: true,
+      message: `Welcome, ${member.first_name} ${member.last_name}! Member Portal access granted.`,
+      member,
+    };
+  };
+
+  const setPortalMember = (member: Member | null) => {
+    setCurrentMember(member);
+    if (member) {
+      localStorage.setItem('gwcc_active_member_id', member.id);
+      if (currentUser.role === 'member') {
+        const profile: UserProfile = {
+          ...currentUser,
+          first_name: member.first_name,
+          last_name: member.last_name,
+          email: member.email || currentUser.email,
+          phone: member.phone,
+          member_id: member.id,
+          avatar_url: member.profile_photo_url,
+        };
+        setCurrentUser(profile);
+        localStorage.setItem('gwcc_active_user', JSON.stringify(profile));
+      }
+    } else {
+      localStorage.removeItem('gwcc_active_member_id');
+    }
+  };
+
+  const quickLoginAs = (user: UserProfile) => {
+    setCurrentUser(user);
+    setIsAuthenticated(true);
+    localStorage.setItem('gwcc_auth_authenticated', 'true');
+    localStorage.setItem('gwcc_active_user', JSON.stringify(user));
+  };
+
+  const logout = async () => {
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        await client.auth.signOut();
+      } catch (err) {
+        console.warn('Supabase sign out notice:', err);
+      }
+    }
+    setSession(null);
+    setIsAuthenticated(false);
+    setCurrentMember(null);
+    localStorage.setItem('gwcc_auth_authenticated', 'false');
+    localStorage.removeItem('gwcc_active_user');
+    localStorage.removeItem('gwcc_active_member_id');
+    localStorage.removeItem('gwcc_auth_role');
+  };
+
+  const canAccess = (module: string): boolean => {
+    const allowed = ROLE_PERMISSIONS[currentUser.role] || [];
+    return allowed.includes(module) || currentUser.role === 'super_admin';
+  };
+
+  const hasRole = (roles: UserRole[]): boolean => {
+    return roles.includes(currentUser.role) || currentUser.role === 'super_admin';
+  };
+
+  const isMemberPortalUser = currentUser.role === 'member' || currentMember !== null;
+
+  const contextValue = React.useMemo<AuthContextType>(
+    () => ({
+      currentUser,
+      currentRole: currentUser.role,
+      setCurrentRole,
+      availableUsers: usersList,
+      switchUser,
+      canAccess,
+      hasRole,
+      isAuthenticated,
+      session,
+      isAuthLoading,
+      currentMember,
+      isMemberPortalUser,
+      login,
+      loginAsMember,
+      setPortalMember,
+      register,
+      resetPassword,
+      quickLoginAs,
+      logout,
+      refreshSession,
+    }),
+    [currentUser, usersList, isAuthenticated, session, isAuthLoading, currentMember, isMemberPortalUser, refreshSession]
+  );
+
+  return (
+    <AuthContext.Provider value={contextValue}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};

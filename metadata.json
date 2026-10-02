@@ -1,0 +1,8 @@
+{
+  "name": "Remix Greater Works City Church - Church Management System",
+  "description": "Production-ready Church Management System (ChMS) for Greater Works City Church (GWCC) in Joma, Accra, Ghana.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
