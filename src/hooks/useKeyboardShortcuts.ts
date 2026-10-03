@@ -16,6 +16,7 @@ export interface UseKeyboardShortcutsOptions {
   onOpenAssistant?: () => void;
   onOpenShortcutsHelp: () => void;
   onToggleSidebar?: () => void;
+  onRefreshData?: () => void;
   onQuickAction?: (action: 'member' | 'visitor' | 'giving' | 'attendance' | 'event') => void;
   isAnyModalOpen?: boolean;
   onCloseAllModals?: () => void;
@@ -44,6 +45,7 @@ export function useKeyboardShortcuts({
   onOpenAssistant,
   onOpenShortcutsHelp,
   onToggleSidebar,
+  onRefreshData,
   onQuickAction,
   isAnyModalOpen,
   onCloseAllModals,
@@ -202,6 +204,14 @@ export function useKeyboardShortcuts({
       description: 'Expand or collapse navigation sidebar',
       action: () => onToggleSidebar?.(),
     },
+    {
+      id: 'tool-refresh-data',
+      category: 'Search & Tools',
+      label: 'Refresh Church Records',
+      keys: ['Ctrl', 'Shift', 'R'],
+      description: 'Re-sync all data from Supabase cloud or local storage',
+      action: () => onRefreshData?.(),
+    },
 
     // General
     {
@@ -276,6 +286,11 @@ export function useKeyboardShortcuts({
         if (key === 'a') {
           e.preventDefault();
           onQuickAction?.('attendance');
+          return;
+        }
+        if (key === 'r') {
+          e.preventDefault();
+          onRefreshData?.();
           return;
         }
       }
@@ -373,6 +388,7 @@ export function useKeyboardShortcuts({
     onOpenAssistant,
     onOpenShortcutsHelp,
     onToggleSidebar,
+    onRefreshData,
     onQuickAction,
     isAnyModalOpen,
     onCloseAllModals,

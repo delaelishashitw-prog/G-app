@@ -39,6 +39,7 @@ import {
   Share2,
   BarChart2,
   PieChart as PieChartIcon,
+  RefreshCw,
 } from 'lucide-react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useChurchData } from '../contexts/ChurchDataContext';
@@ -72,9 +73,21 @@ export const MembersPage: React.FC = () => {
     attendance,
     pledges,
     settings,
+    isRefreshing,
+    lastRefreshedAt,
+    refreshData,
   } = useChurchData();
   const { canAccess, currentRole } = useAuth();
-  const { success, error, info } = useToast();
+  const { success, error, warning, info } = useToast();
+
+  const handleRefresh = async () => {
+    const res = await refreshData();
+    if (res.success) {
+      success('Members Directory Refreshed', res.message);
+    } else {
+      warning('Refresh Warning', res.message);
+    }
+  };
   const location = useLocation();
   const navigate = useNavigate();
   const { memberId } = useParams<{ memberId?: string }>();
@@ -714,6 +727,17 @@ export const MembersPage: React.FC = () => {
               >
                 <BarChart2 className="w-3.5 h-3.5 text-teal-400" />
                 <span>Demographics</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-2xs cursor-pointer disabled:opacity-60"
+                title={`Refresh Members Directory • Last updated: ${lastRefreshedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isRefreshing ? 'animate-spin text-teal-600' : ''}`} />
+                <span className="hidden sm:inline">{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
               </button>
 
               <button

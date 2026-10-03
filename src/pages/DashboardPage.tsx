@@ -31,6 +31,7 @@ import {
   PlusCircle,
   BarChart3,
   HelpCircle,
+  RefreshCw,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -48,6 +49,7 @@ import {
 } from 'recharts';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { DashboardSummary } from '../components/DashboardSummary';
 import { DashboardChartsSection } from '../components/DashboardChartsSection';
 import { QuickActionModal } from '../components/QuickActionModal';
@@ -59,6 +61,7 @@ const PIE_COLORS = ['#064e3b', '#047857', '#059669', '#10b981', '#34d399', '#d97
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
+  const { success, warning } = useToast();
   const {
     settings,
     members,
@@ -71,7 +74,19 @@ export const DashboardPage: React.FC = () => {
     prayerRequests,
     services,
     auditLogs,
+    isRefreshing,
+    lastRefreshedAt,
+    refreshData,
   } = useChurchData();
+
+  const handleRefresh = async () => {
+    const res = await refreshData();
+    if (res.success) {
+      success('Dashboard Refreshed', res.message);
+    } else {
+      warning('Refresh Warning', res.message);
+    }
+  };
 
   // Active Tab: 'overview' | 'services' | 'pastoral' | 'finance'
   const [activeTab, setActiveTab] = useState<'overview' | 'services' | 'pastoral' | 'finance'>('overview');
@@ -259,6 +274,15 @@ export const DashboardPage: React.FC = () => {
               <UserPlus className="w-4 h-4 text-emerald-300" />
               <span>Member</span>
             </button>
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="px-3 py-2 rounded-xl bg-emerald-950/70 hover:bg-emerald-900 text-emerald-200 border border-emerald-700/60 text-xs font-semibold transition flex items-center gap-1.5 active:scale-95 cursor-pointer disabled:opacity-60"
+              title="Refresh Dashboard & Metrics"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-emerald-300' : ''}`} />
+              <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+            </button>
           </div>
         </div>
 
@@ -322,11 +346,20 @@ export const DashboardPage: React.FC = () => {
           </button>
         </div>
 
-        {/* Quick Launch Link */}
-        <div className="hidden md:flex items-center gap-2">
+        {/* Quick Launch & Refresh */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="text-xs font-semibold text-slate-700 hover:text-slate-900 flex items-center gap-1.5 bg-white hover:bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 transition shadow-2xs cursor-pointer disabled:opacity-60"
+            title={`Refresh Dashboard Data • Last updated: ${lastRefreshedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isRefreshing ? 'animate-spin text-emerald-600' : ''}`} />
+            <span className="hidden sm:inline">{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+          </button>
           <button
             onClick={() => navigate('/attendance')}
-            className="text-xs font-semibold text-emerald-800 hover:text-emerald-950 flex items-center gap-1 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200/80 transition"
+            className="hidden md:flex text-xs font-semibold text-emerald-800 hover:text-emerald-950 items-center gap-1 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200/80 transition"
           >
             <span>Launch Attendance Kiosk</span>
             <ArrowUpRight className="w-3.5 h-3.5" />

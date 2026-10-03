@@ -10,10 +10,14 @@ import { AiAssistantModal } from '../components/AiAssistantModal';
 import { KeyboardShortcutsModal } from '../components/KeyboardShortcutsModal';
 import { ShieldAlert, Sparkles, Keyboard } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useChurchData } from '../contexts/ChurchDataContext';
+import { useToast } from '../contexts/ToastContext';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 
 export const AppLayout: React.FC = () => {
   const { currentRole, isAuthenticated } = useAuth();
+  const { refreshData } = useChurchData();
+  const { success, warning } = useToast();
   const location = useLocation();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -41,12 +45,22 @@ export const AppLayout: React.FC = () => {
     setQuickActionType(null);
   };
 
+  const handleGlobalRefresh = async () => {
+    const res = await refreshData();
+    if (res.success) {
+      success('Church Records Refreshed', res.message);
+    } else {
+      warning('Refresh Warning', res.message);
+    }
+  };
+
   // Keyboard shortcut system for navigation speed and productivity
   const { shortcuts } = useKeyboardShortcuts({
     onOpenSearch: () => setSearchOpen(true),
     onOpenAssistant: () => setAiAssistantOpen(true),
     onOpenShortcutsHelp: () => setShortcutsHelpOpen(true),
     onToggleSidebar: () => setSidebarCollapsed((prev) => !prev),
+    onRefreshData: handleGlobalRefresh,
     onQuickAction: (type) => setQuickActionType(type),
     isAnyModalOpen,
     onCloseAllModals: handleCloseAllModals,

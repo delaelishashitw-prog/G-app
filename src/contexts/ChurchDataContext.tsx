@@ -180,6 +180,11 @@ interface ChurchDataContextType {
   pushToSupabase: (onProgress?: (step: string, percent: number) => void) => Promise<{ success: boolean; summary: Record<string, number>; errors: string[] }>;
   pullFromSupabase: () => Promise<{ success: boolean; errors: string[] }>;
 
+  // Refresh functionality
+  isRefreshing: boolean;
+  lastRefreshedAt: Date;
+  refreshData: () => Promise<{ success: boolean; source: 'supabase' | 'local'; message: string }>;
+
   // General Reset
   resetToSampleData: () => void;
   resetToDefaultData: () => void;
@@ -220,6 +225,8 @@ function saveToStorage<T>(key: string, data: T) {
 export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser } = useAuth();
   const isInitialMount = React.useRef(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(() => new Date());
 
   const [settings, setSettings] = useState<ChurchSettings>(() => {
     const loaded = loadFromStorage('settings', initialSettings);
@@ -613,6 +620,128 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setSupabaseStatus('error');
       setSupabaseError(res.errors.join('; '));
       return { success: false, errors: res.errors };
+    }
+  }, []);
+
+  const refreshData = useCallback(async (): Promise<{ success: boolean; source: 'supabase' | 'local'; message: string }> => {
+    setIsRefreshing(true);
+    try {
+      const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+      const isConfigured = isSupabaseConfigured();
+
+      if (isConfigured && isOnline) {
+        setSupabaseStatus('syncing');
+        const pullRes = await pullAllDataFromSupabase();
+        if (pullRes.success && pullRes.data) {
+          const { data } = pullRes;
+          if (data.members) setMembers(data.members);
+          if (data.visitors) setVisitors(data.visitors);
+          if (data.services) setServices(data.services);
+          if (data.attendance) setAttendance(data.attendance);
+          if (data.headcounts) setHeadcounts(data.headcounts);
+          if (data.giving) setGiving(data.giving);
+          if (data.expenses) setExpenses(data.expenses);
+          if (data.campaigns) setCampaigns(data.campaigns);
+          if (data.pledges) setPledges(data.pledges);
+          if (data.ministries) setMinistries(data.ministries);
+          if (data.smallGroups) setSmallGroups(data.smallGroups);
+          if (data.events) setEvents(data.events);
+          if (data.pastoralCare) setPastoralCare(data.pastoralCare);
+          if (data.prayerRequests) setPrayerRequests(data.prayerRequests);
+          if (data.communications) setCommunications(data.communications);
+          if (data.auditLogs) setAuditLogs(data.auditLogs);
+          if (data.settings) setSettings(data.settings);
+
+          setSupabaseStatus('connected');
+          setSupabaseError(null);
+          const now = new Date();
+          setLastRefreshedAt(now);
+          const nowIso = now.toISOString();
+          setLastSyncTime(nowIso);
+          try {
+            localStorage.setItem('gwcc_last_supabase_sync', nowIso);
+          } catch {
+            // Ignore
+          }
+
+          return {
+            success: true,
+            source: 'supabase',
+            message: 'All church records synced fresh from Supabase cloud database.',
+          };
+        }
+      }
+
+      // Local storage reload
+      const loadedMembers = loadFromStorage<Member[]>('members', []);
+      if (loadedMembers && loadedMembers.length > 0) setMembers(loadedMembers);
+
+      const loadedVisitors = loadFromStorage<Visitor[]>('visitors', []);
+      if (loadedVisitors && loadedVisitors.length > 0) setVisitors(loadedVisitors);
+
+      const loadedServices = loadFromStorage<ChurchService[]>('services', []);
+      if (loadedServices && loadedServices.length > 0) setServices(loadedServices);
+
+      const loadedAttendance = loadFromStorage<AttendanceRecord[]>('attendance', []);
+      if (loadedAttendance && loadedAttendance.length > 0) setAttendance(loadedAttendance);
+
+      const loadedHeadcounts = loadFromStorage<HeadcountRecord[]>('headcounts', []);
+      if (loadedHeadcounts && loadedHeadcounts.length > 0) setHeadcounts(loadedHeadcounts);
+
+      const loadedGiving = loadFromStorage<GivingRecord[]>('giving', []);
+      if (loadedGiving && loadedGiving.length > 0) setGiving(loadedGiving);
+
+      const loadedExpenses = loadFromStorage<ExpenseRecord[]>('expenses', []);
+      if (loadedExpenses && loadedExpenses.length > 0) setExpenses(loadedExpenses);
+
+      const loadedCampaigns = loadFromStorage<PledgeCampaign[]>('campaigns', []);
+      if (loadedCampaigns && loadedCampaigns.length > 0) setCampaigns(loadedCampaigns);
+
+      const loadedPledges = loadFromStorage<PledgeRecord[]>('pledges', []);
+      if (loadedPledges && loadedPledges.length > 0) setPledges(loadedPledges);
+
+      const loadedMinistries = loadFromStorage<Ministry[]>('ministries', []);
+      if (loadedMinistries && loadedMinistries.length > 0) setMinistries(loadedMinistries);
+
+      const loadedSmallGroups = loadFromStorage<SmallGroup[]>('smallGroups', []);
+      if (loadedSmallGroups && loadedSmallGroups.length > 0) setSmallGroups(loadedSmallGroups);
+
+      const loadedEvents = loadFromStorage<ChurchEvent[]>('events', []);
+      if (loadedEvents && loadedEvents.length > 0) setEvents(loadedEvents);
+
+      const loadedPastoralCare = loadFromStorage<PastoralCareRecord[]>('pastoralCare', []);
+      if (loadedPastoralCare && loadedPastoralCare.length > 0) setPastoralCare(loadedPastoralCare);
+
+      const loadedPrayerRequests = loadFromStorage<PrayerRequest[]>('prayerRequests', []);
+      if (loadedPrayerRequests && loadedPrayerRequests.length > 0) setPrayerRequests(loadedPrayerRequests);
+
+      const loadedCommunications = loadFromStorage<CommunicationRecord[]>('communications', []);
+      if (loadedCommunications && loadedCommunications.length > 0) setCommunications(loadedCommunications);
+
+      const loadedAuditLogs = loadFromStorage<AuditLog[]>('auditLogs', []);
+      if (loadedAuditLogs && loadedAuditLogs.length > 0) setAuditLogs(loadedAuditLogs);
+
+      const loadedSettings = loadFromStorage('settings', initialSettings);
+      if (loadedSettings) setSettings(loadedSettings);
+
+      const now = new Date();
+      setLastRefreshedAt(now);
+
+      return {
+        success: true,
+        source: 'local',
+        message: 'Church records reloaded fresh from local storage.',
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        source: 'local',
+        message: `Refresh failed: ${err?.message || 'Unknown error'}`,
+      };
+    } finally {
+      setTimeout(() => {
+        setIsRefreshing(false);
+      }, 500);
     }
   }, []);
 
@@ -1729,6 +1858,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       disconnectSupabase,
       pushToSupabase,
       pullFromSupabase,
+      isRefreshing,
+      lastRefreshedAt,
+      refreshData,
       resetToSampleData,
       resetToDefaultData: resetToSampleData,
     }),
@@ -1753,6 +1885,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       supabaseError,
       lastSyncTime,
       supabaseConfig,
+      isRefreshing,
+      lastRefreshedAt,
+      refreshData,
     ]
   );
 

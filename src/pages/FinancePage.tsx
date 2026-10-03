@@ -144,8 +144,20 @@ export const FinancePage: React.FC = () => {
     recordExpense,
     updateExpense,
     deleteExpense,
+    isRefreshing,
+    lastRefreshedAt,
+    refreshData,
   } = useChurchData();
-  const { success, info, error } = useToast();
+  const { success, info, warning, error } = useToast();
+
+  const handleRefresh = async () => {
+    const res = await refreshData();
+    if (res.success) {
+      success('Finance Records Refreshed', res.message);
+    } else {
+      warning('Refresh Warning', res.message);
+    }
+  };
 
   // Active Main Tab
   const [activeTab, setActiveTab] = useState<'overview' | 'giving' | 'expenses' | 'tithers' | 'counter' | 'budgets'>('overview');
@@ -1027,6 +1039,16 @@ export const FinancePage: React.FC = () => {
 
         {/* Quick Top Actions */}
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold flex items-center gap-1.5 transition shadow-2xs cursor-pointer disabled:opacity-60"
+            title={`Refresh Finance Records • Last updated: ${lastRefreshedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isRefreshing ? 'animate-spin text-emerald-600' : ''}`} />
+            <span className="hidden sm:inline">{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+          </button>
+
           <button
             onClick={() => setIsBatchModalOpen(true)}
             className="px-3.5 py-2 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 hover:bg-emerald-100 text-xs font-bold flex items-center gap-1.5 transition shadow-2xs cursor-pointer"

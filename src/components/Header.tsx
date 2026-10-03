@@ -20,11 +20,13 @@ import {
   Moon,
   WifiOff,
   Keyboard,
+  RefreshCw,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
+import { useToast } from '../contexts/ToastContext';
 import { UserRole } from '../types/database.types';
 
 interface HeaderProps {
@@ -57,11 +59,29 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenShortcutsHelp,
 }) => {
   const { currentUser, currentRole, setCurrentRole, availableUsers, switchUser, logout } = useAuth();
-  const { settings, visitors, prayerRequests, supabaseStatus } = useChurchData();
+  const {
+    settings,
+    visitors,
+    prayerRequests,
+    supabaseStatus,
+    isRefreshing,
+    lastRefreshedAt,
+    refreshData,
+  } = useChurchData();
   const { theme, resolvedTheme, isDark, toggleTheme } = useTheme();
   const { isOnline } = useNetworkStatus();
+  const { success, warning } = useToast();
   const [profileOpen, setProfileOpen] = useState(false);
   const [quickMenuOpen, setQuickMenuOpen] = useState(false);
+
+  const handleHeaderRefresh = async () => {
+    const res = await refreshData();
+    if (res.success) {
+      success('Church Records Refreshed', res.message);
+    } else {
+      warning('Refresh Warning', res.message);
+    }
+  };
 
   const pendingCount =
     visitors.filter((v) => v.follow_up_status === 'new' || v.follow_up_status === 'follow_up_required').length +
@@ -174,6 +194,23 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
           )}
         </Link>
+
+        {/* Refresh Data Button */}
+        <button
+          onClick={handleHeaderRefresh}
+          disabled={isRefreshing}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white text-xs font-semibold transition shadow-2xs cursor-pointer disabled:opacity-60"
+          title={`Refresh Church Data (Ctrl+Shift+R) • Last updated: ${lastRefreshedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+        >
+          <RefreshCw
+            className={`w-3.5 h-3.5 text-slate-500 dark:text-slate-400 ${
+              isRefreshing ? 'animate-spin text-emerald-600 dark:text-emerald-400' : ''
+            }`}
+          />
+          <span className="hidden md:inline">
+            {isRefreshing ? 'Refreshing...' : 'Refresh'}
+          </span>
+        </button>
 
         {/* Global Search Button */}
         <button
