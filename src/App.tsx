@@ -7,6 +7,7 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { AppLayout } from './layouts/AppLayout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LoadingFallback } from './components/LoadingFallback';
+import { OfflineConnectivityBanner } from './components/OfflineConnectivityBanner';
 
 // Code-split pages with React.lazy for fast initial bundle and optimal performance
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
@@ -36,7 +37,8 @@ export default function App() {
         <AuthProvider>
           <ChurchDataProvider>
             <ToastProvider>
-            <BrowserRouter>
+              <OfflineConnectivityBanner />
+              <BrowserRouter>
               <Suspense fallback={<LoadingFallback />}>
                 <Routes>
                   <Route path="/login" element={<LoginPage />} />

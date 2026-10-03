@@ -252,6 +252,7 @@ export interface GivingRecord {
   id: string;
   member_id?: string;
   member_name?: string;
+  tithe_number?: string; // Tithe envelope / member tithe number (e.g. T-1001)
   donor_name?: string;
   category: GivingCategory;
   amount: number;

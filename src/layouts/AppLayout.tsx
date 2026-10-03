@@ -7,8 +7,10 @@ import { GlobalSearchModal } from '../components/GlobalSearchModal';
 import { NotificationModal } from '../components/NotificationModal';
 import { QuickActionModal } from '../components/QuickActionModal';
 import { AiAssistantModal } from '../components/AiAssistantModal';
-import { ShieldAlert, Sparkles } from 'lucide-react';
+import { KeyboardShortcutsModal } from '../components/KeyboardShortcutsModal';
+import { ShieldAlert, Sparkles, Keyboard } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 
 export const AppLayout: React.FC = () => {
   const { currentRole, isAuthenticated } = useAuth();
@@ -19,21 +21,36 @@ export const AppLayout: React.FC = () => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
+  const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
   const [quickActionType, setQuickActionType] = useState<
     'member' | 'visitor' | 'giving' | 'attendance' | 'event' | null
   >(null);
 
-  // Listen for Cmd+K / Ctrl+K
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setSearchOpen((prev) => !prev);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  const isAnyModalOpen =
+    searchOpen ||
+    notificationsOpen ||
+    aiAssistantOpen ||
+    shortcutsHelpOpen ||
+    Boolean(quickActionType);
+
+  const handleCloseAllModals = () => {
+    setSearchOpen(false);
+    setNotificationsOpen(false);
+    setAiAssistantOpen(false);
+    setShortcutsHelpOpen(false);
+    setQuickActionType(null);
+  };
+
+  // Keyboard shortcut system for navigation speed and productivity
+  const { shortcuts } = useKeyboardShortcuts({
+    onOpenSearch: () => setSearchOpen(true),
+    onOpenAssistant: () => setAiAssistantOpen(true),
+    onOpenShortcutsHelp: () => setShortcutsHelpOpen(true),
+    onToggleSidebar: () => setSidebarCollapsed((prev) => !prev),
+    onQuickAction: (type) => setQuickActionType(type),
+    isAnyModalOpen,
+    onCloseAllModals: handleCloseAllModals,
+  });
 
   // Redirect to login if user is not authenticated (must be after all hooks)
   if (!isAuthenticated) {
@@ -68,6 +85,7 @@ export const AppLayout: React.FC = () => {
           onOpenNotifications={() => setNotificationsOpen(true)}
           onOpenQuickAction={(type) => setQuickActionType(type)}
           onOpenAssistant={() => setAiAssistantOpen(true)}
+          onOpenShortcutsHelp={() => setShortcutsHelpOpen(true)}
         />
 
         {/* Optional Role testing banner if not super admin */}
@@ -102,7 +120,21 @@ export const AppLayout: React.FC = () => {
         <footer className="py-4 px-6 text-center text-xs text-slate-600 border-t border-slate-200 bg-white">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-2 max-w-7xl mx-auto">
             <span>Church Management System • City, Country</span>
-            <span>Enterprise Church Ops • Currency: USD ($)</span>
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={() => setShortcutsHelpOpen(true)}
+                className="flex items-center gap-1.5 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition cursor-pointer"
+                title="View Keyboard Shortcuts Cheat Sheet (Press ?)"
+              >
+                <Keyboard className="w-3.5 h-3.5 text-slate-400" />
+                <span>Shortcuts</span>
+                <kbd className="font-mono text-[10px] bg-slate-100 dark:bg-slate-800 px-1 py-0.2 rounded border border-slate-300 dark:border-slate-700">
+                  ?
+                </kbd>
+              </button>
+              <span>Enterprise Church Ops • Currency: USD ($)</span>
+            </div>
           </div>
         </footer>
       </div>
@@ -121,6 +153,11 @@ export const AppLayout: React.FC = () => {
       <GlobalSearchModal isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
       <NotificationModal isOpen={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
       <AiAssistantModal isOpen={aiAssistantOpen} onClose={() => setAiAssistantOpen(false)} />
+      <KeyboardShortcutsModal
+        isOpen={shortcutsHelpOpen}
+        onClose={() => setShortcutsHelpOpen(false)}
+        shortcuts={shortcuts}
+      />
       <QuickActionModal
         isOpen={Boolean(quickActionType)}
         type={quickActionType}

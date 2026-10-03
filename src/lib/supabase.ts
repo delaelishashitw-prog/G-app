@@ -927,10 +927,25 @@ export async function pushAllDataToSupabase(
             payment_method: g.payment_method || 'mobile_money',
           };
         });
-        const { error } = await client.from('giving').upsert(sanitized);
+        let { error } = await client.from('giving').upsert(sanitized);
         if (error) {
-          if (error.message?.includes('foreign key') || error.message?.includes('fkey')) {
-            const fallback = sanitized.map((r) => ({ ...r, member_id: null }));
+          // If tithe_number column has not been added to remote Supabase schema cache yet, retry without it
+          if (
+            error.message?.includes('tithe_number') ||
+            String(error.details || '').includes('tithe_number') ||
+            String((error as any).hint || '').includes('tithe_number')
+          ) {
+            const fallbackWithoutTithe = sanitized.map(({ tithe_number, ...rest }: any) => rest);
+            const retryTithe = await client.from('giving').upsert(fallbackWithoutTithe);
+            if (!retryTithe.error) {
+              summary['giving'] = fallbackWithoutTithe.length;
+              return;
+            }
+            error = retryTithe.error;
+          }
+
+          if (error && (error.message?.includes('foreign key') || error.message?.includes('fkey'))) {
+            const fallback = sanitized.map(({ tithe_number, ...r }: any) => ({ ...r, member_id: null }));
             const retry = await client.from('giving').upsert(fallback);
             if (!retry.error) {
               summary['giving'] = fallback.length;
@@ -1271,6 +1286,16 @@ export async function dbSyncUpsert(table: string, record: any): Promise<void> {
 
     let { error } = await client.from(table).upsert(sanitized);
     if (error && !isTableNotFoundError(error)) {
+      if (
+        table === 'giving' &&
+        (error.message?.includes('tithe_number') ||
+          String(error.details || '').includes('tithe_number') ||
+          String((error as any).hint || '').includes('tithe_number'))
+      ) {
+        const { tithe_number, ...rest } = sanitized;
+        const retry = await client.from(table).upsert(rest);
+        if (!retry.error) return;
+      }
       if (table === 'settings' && (error.message?.includes('general_secretary') || String(error.details || '').includes('general_secretary'))) {
         const { general_secretary, ...rest } = sanitized;
         const retry = await client.from(table).upsert(rest);

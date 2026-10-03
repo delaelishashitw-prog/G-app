@@ -29,7 +29,7 @@ export const OfficialReceiptModal: React.FC<OfficialReceiptModalProps> = ({
     const text = `GREATER WORKS CITY CHURCH - OFFICIAL RECEIPT
 Receipt No: ${receiptNumber}
 Date: ${record.date}
-Received From: ${donorDisplayName}
+Received From: ${donorDisplayName}${record.tithe_number ? ` (Tithe #${record.tithe_number})` : ''}
 Category: ${record.category}
 Amount: ${formatGHS(record.amount)} (${numberToCedisWords(record.amount)})
 Payment Method: ${record.payment_method.toUpperCase()} ${record.payment_channel ? `(${record.payment_channel})` : ''}
@@ -128,6 +128,15 @@ Thank you for your generous stewardship!`;
               <span className="text-slate-500 font-medium">Received With Thanks From:</span>
               <span className="font-bold text-slate-950 text-sm">{donorDisplayName}</span>
             </div>
+
+            {record.tithe_number && (
+              <div className="p-3 sm:px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                <span className="text-slate-500 font-medium">Tithe Envelope / Member No:</span>
+                <span className="font-mono font-bold text-emerald-900 bg-emerald-100/90 px-2 py-0.5 rounded border border-emerald-300">
+                  Tithe #{record.tithe_number}
+                </span>
+              </div>
+            )}
 
             <div className="p-3 sm:px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
               <span className="text-slate-500 font-medium">Giving Category / Designation:</span>

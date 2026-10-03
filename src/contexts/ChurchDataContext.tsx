@@ -1013,24 +1013,36 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // FINANCE & GIVING
   const recordGiving = (data: Omit<GivingRecord, 'id' | 'created_at'>): GivingRecord => {
+    // Resolve member by either member_id or tithe_number
+    const matchingMember = data.member_id
+      ? members.find((x) => x.id === data.member_id)
+      : data.tithe_number
+        ? members.find((x) => x.tithe_number?.trim().toLowerCase() === data.tithe_number?.trim().toLowerCase())
+        : undefined;
+
+    const resolvedMemberId = data.member_id || matchingMember?.id;
+    const resolvedMemberName = data.member_name || (matchingMember ? `${matchingMember.first_name} ${matchingMember.last_name}` : undefined);
+    const resolvedTitheNumber = data.tithe_number || matchingMember?.tithe_number || undefined;
+
     const newRecord: GivingRecord = {
       ...data,
+      member_id: resolvedMemberId,
+      member_name: resolvedMemberName,
+      tithe_number: resolvedTitheNumber,
       id: `giv-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       created_at: new Date().toISOString(),
     };
     setGiving((prev) => [newRecord, ...prev]);
 
     const donor =
+      resolvedMemberName ||
       data.donor_name ||
-      (() => {
-        const m = members.find((x) => x.id === data.member_id);
-        return m ? `${m.first_name} ${m.last_name}` : 'Anonymous';
-      })();
+      (resolvedTitheNumber ? `Tither #${resolvedTitheNumber}` : 'Anonymous');
 
     logAction(
       'RECORD_GIVING',
       'Finance',
-      `Recorded ${data.category} of GH₵ ${data.amount.toFixed(2)} from ${donor}`,
+      `Recorded ${data.category} of GH₵ ${data.amount.toFixed(2)} from ${donor}${resolvedTitheNumber ? ` (Tithe #${resolvedTitheNumber})` : ''}`,
       newRecord.id
     );
     dbSyncUpsert('giving', newRecord);
@@ -1041,11 +1053,13 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setGiving((prev) =>
       prev.map((g) => {
         if (g.id === id) {
-          const updated = { ...g, ...updates };
+          const mem = updates.member_id ? members.find((x) => x.id === updates.member_id) : undefined;
+          const titheNum = updates.tithe_number !== undefined ? updates.tithe_number : (mem?.tithe_number || g.tithe_number);
+          const updated = { ...g, ...updates, tithe_number: titheNum };
           logAction(
             'UPDATE_GIVING',
             'Finance',
-            `Updated giving entry of GH₵ ${updated.amount.toFixed(2)} for ${updated.member_name || updated.donor_name || 'Anonymous'}`,
+            `Updated giving entry of GH₵ ${updated.amount.toFixed(2)} for ${updated.member_name || updated.donor_name || 'Anonymous'}${updated.tithe_number ? ` (Tithe #${updated.tithe_number})` : ''}`,
             id
           );
           dbSyncUpsert('giving', updated);

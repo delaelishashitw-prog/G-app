@@ -46,6 +46,7 @@ export const RecordMemberGivingModal: React.FC<RecordMemberGivingModalProps> = (
       recordGiving({
         member_id: member.id,
         member_name: `${member.first_name} ${member.last_name}`,
+        tithe_number: member.tithe_number || undefined,
         donor_name: `${member.first_name} ${member.last_name}`,
         category,
         amount: parsedAmount,
@@ -59,7 +60,7 @@ export const RecordMemberGivingModal: React.FC<RecordMemberGivingModalProps> = (
         notes: notes.trim() || undefined,
       });
 
-      success(`Successfully recorded ${formatGHS(parsedAmount)} ${category} for ${member.first_name}!`);
+      success(`Successfully recorded ${formatGHS(parsedAmount)} ${category} for ${member.first_name}${member.tithe_number ? ` (Tithe #${member.tithe_number})` : ''}!`);
       onClose();
     } catch (err) {
       console.error(err);
@@ -81,7 +82,7 @@ export const RecordMemberGivingModal: React.FC<RecordMemberGivingModalProps> = (
             <div>
               <h3 className="font-bold text-base">Record Giving / Tithe</h3>
               <p className="text-xs text-teal-100">
-                For {member.first_name} {member.last_name} ({member.member_id})
+                For {member.first_name} {member.last_name} ({member.member_id}{member.tithe_number ? ` • Tithe #${member.tithe_number}` : ''})
               </p>
             </div>
           </div>

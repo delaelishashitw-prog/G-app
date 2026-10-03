@@ -1791,7 +1791,7 @@ export const SettingsPage: React.FC = () => {
                               </span>
                             </h4>
                             <p className="text-amber-900/90 leading-relaxed text-[11px]">
-                              Your Supabase PostgreSQL database tables have Row-Level Security active without public API permissions, or are missing newly added columns (<code className="font-mono bg-amber-200/60 px-1 rounded">general_secretary</code>, <code className="font-mono bg-amber-200/60 px-1 rounded">updated_at</code>). Run our quick SQL script in your Supabase SQL Editor to resolve all 17 errors immediately!
+                              Your Supabase PostgreSQL database tables have Row-Level Security active without public API permissions, or are missing newly added columns (<code className="font-mono bg-amber-200/60 px-1 rounded">tithe_number</code>, <code className="font-mono bg-amber-200/60 px-1 rounded">general_secretary</code>, <code className="font-mono bg-amber-200/60 px-1 rounded">updated_at</code>). Run our quick SQL script in your Supabase SQL Editor to resolve all schema errors immediately!
                             </p>
                           </div>
                         </div>

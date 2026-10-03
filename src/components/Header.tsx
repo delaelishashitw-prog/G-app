@@ -18,10 +18,13 @@ import {
   Database,
   Sun,
   Moon,
+  WifiOff,
+  Keyboard,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useTheme } from '../contexts/ThemeContext';
+import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import { UserRole } from '../types/database.types';
 
 interface HeaderProps {
@@ -30,6 +33,7 @@ interface HeaderProps {
   onOpenNotifications: () => void;
   onOpenQuickAction: (action: 'member' | 'visitor' | 'giving' | 'attendance' | 'event') => void;
   onOpenAssistant?: () => void;
+  onOpenShortcutsHelp?: () => void;
 }
 
 const ROLE_LABELS: Record<UserRole, { title: string; color: string }> = {
@@ -50,10 +54,12 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenNotifications,
   onOpenQuickAction,
   onOpenAssistant,
+  onOpenShortcutsHelp,
 }) => {
   const { currentUser, currentRole, setCurrentRole, availableUsers, switchUser, logout } = useAuth();
   const { settings, visitors, prayerRequests, supabaseStatus } = useChurchData();
   const { theme, resolvedTheme, isDark, toggleTheme } = useTheme();
+  const { isOnline } = useNetworkStatus();
   const [profileOpen, setProfileOpen] = useState(false);
   const [quickMenuOpen, setQuickMenuOpen] = useState(false);
 
@@ -108,6 +114,17 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Center/Right controls */}
       <div className="flex items-center gap-2 sm:gap-3">
+        {/* Offline Connectivity Warning Badge */}
+        {!isOnline && (
+          <span
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60 shadow-2xs animate-pulse"
+            title="Navigator reports offline. System operating with local caching."
+          >
+            <WifiOff className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+            <span>Offline Mode</span>
+          </span>
+        )}
+
         {/* Supabase Cloud Status Indicator */}
         <Link
           to="/settings"
@@ -170,6 +187,20 @@ export const Header: React.FC<HeaderProps> = ({
             ⌘K
           </span>
         </button>
+
+        {/* Keyboard Shortcuts Trigger Button */}
+        {onOpenShortcutsHelp && (
+          <button
+            onClick={onOpenShortcutsHelp}
+            className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 text-xs transition shadow-2xs"
+            title="Keyboard Shortcuts Cheat Sheet (Press ? anytime)"
+          >
+            <Keyboard className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+            <kbd className="font-mono text-[10px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1.5 py-0.2 rounded text-slate-400 dark:text-slate-500">
+              ?
+            </kbd>
+          </button>
+        )}
 
         {/* AI Assistant Button */}
         {onOpenAssistant && (

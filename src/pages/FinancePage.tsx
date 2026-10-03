@@ -36,6 +36,9 @@ import {
   Layers,
   DollarSign,
   UserCheck,
+  Hash,
+  User,
+  Tag,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -196,9 +199,13 @@ export const FinancePage: React.FC = () => {
   const [counterUsdRate, setCounterUsdRate] = useState<number>(15.8);
   const [isCounterPrintSheetOpen, setIsCounterPrintSheetOpen] = useState(false);
 
+  // Tithe / Giving Entry Mode: by member name or by tithe number
+  const [givingEntryMode, setGivingEntryMode] = useState<'name' | 'tithe_number'>('name');
+
   // Quick single Giving Form state
   const [givingForm, setGivingForm] = useState({
     member_id: '',
+    tithe_number: '',
     donor_name: '',
     category: 'Tithe' as GivingCategory,
     amount: '',
@@ -480,10 +487,13 @@ export const FinancePage: React.FC = () => {
     return giving
       .filter((g) => {
         const term = givingSearch.toLowerCase();
+        const memberObj = g.member_id ? members.find((m) => m.id === g.member_id) : undefined;
+        const titheNum = (g.tithe_number || memberObj?.tithe_number || '').toLowerCase();
         const matchesSearch =
           !term ||
           (g.member_name && g.member_name.toLowerCase().includes(term)) ||
           (g.donor_name && g.donor_name.toLowerCase().includes(term)) ||
+          (titheNum && titheNum.includes(term)) ||
           (g.reference_number && g.reference_number.toLowerCase().includes(term)) ||
           (g.notes && g.notes.toLowerCase().includes(term)) ||
           (g.payment_channel && g.payment_channel.toLowerCase().includes(term)) ||
@@ -862,15 +872,33 @@ export const FinancePage: React.FC = () => {
     if (isNaN(amt) || amt <= 0) return;
 
     let memberName = '';
-    if (givingForm.member_id) {
-      const mem = members.find((m) => m.id === givingForm.member_id);
+    let titheNum = givingForm.tithe_number ? givingForm.tithe_number.trim() : '';
+    let finalMemberId = givingForm.member_id;
+
+    if (finalMemberId) {
+      const mem = members.find((m) => m.id === finalMemberId);
       memberName = mem ? `${mem.first_name} ${mem.last_name}` : '';
+      if (!titheNum && mem?.tithe_number) {
+        titheNum = mem.tithe_number;
+      }
+    } else if (titheNum) {
+      const mem = members.find(
+        (m) =>
+          m.tithe_number?.trim().toLowerCase() === titheNum.toLowerCase() ||
+          (m.tithe_number && titheNum.replace(/\D/g, '') && m.tithe_number.replace(/\D/g, '') === titheNum.replace(/\D/g, ''))
+      );
+      if (mem) {
+        finalMemberId = mem.id;
+        memberName = `${mem.first_name} ${mem.last_name}`;
+        titheNum = mem.tithe_number || titheNum;
+      }
     }
 
     const rec = recordGiving({
-      member_id: givingForm.member_id || undefined,
+      member_id: finalMemberId || undefined,
       member_name: memberName || undefined,
-      donor_name: memberName ? undefined : givingForm.donor_name || 'Anonymous Giver',
+      tithe_number: titheNum || undefined,
+      donor_name: memberName ? undefined : givingForm.donor_name || (titheNum ? `Tithe Envelope #${titheNum}` : 'Anonymous Giver'),
       category: givingForm.category,
       amount: amt,
       currency: 'GHS',
@@ -883,11 +911,15 @@ export const FinancePage: React.FC = () => {
     });
 
     setIsGivingModalOpen(false);
-    success('Giving Recorded!', `${formatGHS(amt)} recorded for ${rec.member_name || rec.donor_name}.`);
+    success(
+      'Giving Recorded!',
+      `${formatGHS(amt)} recorded for ${rec.member_name || rec.donor_name}${titheNum ? ` (Tithe #${titheNum})` : ''}.`
+    );
 
     // Reset
     setGivingForm({
       member_id: '',
+      tithe_number: '',
       donor_name: '',
       category: 'Tithe',
       amount: '',
@@ -1397,7 +1429,7 @@ export const FinancePage: React.FC = () => {
                   type="text"
                   value={givingSearch}
                   onChange={(e) => setGivingSearch(e.target.value)}
-                  placeholder="Search member, donor, ref..."
+                  placeholder="Search member, tithe # (e.g. T-1001), ref..."
                   className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
@@ -1581,9 +1613,20 @@ export const FinancePage: React.FC = () => {
                         <td className="py-3 px-4 font-mono text-slate-600">{normalizeDateStr(rec.date) || rec.date}</td>
                         <td className="py-3 px-4">
                           <div>
-                            <span className="font-bold text-slate-900 block">
-                              {rec.member_name || rec.donor_name || 'Anonymous Giver'}
-                            </span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-bold text-slate-900 block">
+                                {rec.member_name || rec.donor_name || 'Anonymous Giver'}
+                              </span>
+                              {(rec.tithe_number || (rec.member_id && members.find((m) => m.id === rec.member_id)?.tithe_number)) && (
+                                <span
+                                  className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 inline-flex items-center gap-0.5"
+                                  title="Assigned Tithe Envelope Number"
+                                >
+                                  <Hash className="w-2.5 h-2.5 text-amber-600" />
+                                  {rec.tithe_number || members.find((m) => m.id === rec.member_id)?.tithe_number}
+                                </span>
+                              )}
+                            </div>
                             {rec.service_name && (
                               <span className="text-[10px] text-slate-400">{rec.service_name}</span>
                             )}
@@ -2501,36 +2544,220 @@ export const FinancePage: React.FC = () => {
             </div>
 
             <form onSubmit={handleGivingSubmit} className="p-6 space-y-3.5 text-xs">
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Select Member (or leave blank for Guest/Basket)
-                </label>
-                <select
-                  value={givingForm.member_id}
-                  onChange={(e) => setGivingForm({ ...givingForm, member_id: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+              {/* Entry Mode Switcher: By Member Name vs By Tithe Number */}
+              <div className="bg-slate-100 p-1 rounded-xl flex items-center gap-1 border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setGivingEntryMode('name')}
+                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                    givingEntryMode === 'name'
+                      ? 'bg-white text-emerald-950 shadow-xs border border-slate-200'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
                 >
-                  <option value="">-- General Anonymous / Non-Member --</option>
-                  {members
-                    .filter((m) => !m.is_archived)
-                    .map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.first_name} {m.last_name} ({m.member_id} {m.tithe_number ? `• Tithe #${m.tithe_number}` : ''})
-                      </option>
-                    ))}
-                </select>
+                  <User className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>Record by Member Name</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGivingEntryMode('tithe_number');
+                    setGivingForm((prev) => ({ ...prev, category: 'Tithe' }));
+                  }}
+                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                    givingEntryMode === 'tithe_number'
+                      ? 'bg-emerald-700 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Hash className="w-3.5 h-3.5 text-emerald-200" />
+                  <span>Record by Tithe Number</span>
+                </button>
               </div>
 
-              {!givingForm.member_id && (
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Donor Name / Source (if guest)</label>
-                  <input
-                    type="text"
-                    value={givingForm.donor_name}
-                    onChange={(e) => setGivingForm({ ...givingForm, donor_name: e.target.value })}
+              {/* Mode A: Record by Tithe Number */}
+              {givingEntryMode === 'tithe_number' && (
+                <div className="space-y-2 p-3.5 bg-amber-50/60 rounded-xl border border-amber-200">
+                  <div className="flex items-center justify-between">
+                    <label className="block font-bold text-amber-950 text-xs flex items-center gap-1.5">
+                      <Hash className="w-4 h-4 text-amber-700" />
+                      Enter Tithe Envelope / Member Card # *
+                    </label>
+                    <span className="text-[11px] text-amber-800 font-medium">
+                      Auto-resolves member
+                    </span>
+                  </div>
+
+                  <div className="relative">
+                    <input
+                      type="text"
+                      list="finance-tithe-numbers-list"
+                      value={givingForm.tithe_number}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const cleanedVal = val.trim();
+                        const matched = members.find(
+                          (m) =>
+                            m.tithe_number?.toLowerCase() === cleanedVal.toLowerCase() ||
+                            (cleanedVal.length >= 2 &&
+                              m.tithe_number &&
+                              cleanedVal.replace(/\D/g, '') &&
+                              m.tithe_number.replace(/\D/g, '') === cleanedVal.replace(/\D/g, ''))
+                        );
+
+                        if (matched) {
+                          setGivingForm((prev) => ({
+                            ...prev,
+                            tithe_number: val,
+                            member_id: matched.id,
+                            category: 'Tithe',
+                          }));
+                        } else {
+                          setGivingForm((prev) => ({
+                            ...prev,
+                            tithe_number: val,
+                            member_id: '',
+                            category: 'Tithe',
+                          }));
+                        }
+                      }}
+                      placeholder="Type or select tithe # (e.g. T-1001, 1002)..."
+                      className="w-full px-3 py-2 border border-amber-300 rounded-lg text-xs font-mono font-bold bg-white focus:outline-emerald-600"
+                      autoFocus
+                    />
+                    <datalist id="finance-tithe-numbers-list">
+                      {members
+                        .filter((m) => !m.is_archived && m.tithe_number)
+                        .map((m) => (
+                          <option key={m.id} value={m.tithe_number}>
+                            {m.first_name} {m.last_name} ({m.member_id})
+                          </option>
+                        ))}
+                    </datalist>
+                  </div>
+
+                  {/* Instant Tithe Lookup Resolution Status */}
+                  {givingForm.tithe_number && (
+                    <div>
+                      {givingForm.member_id ? (
+                        (() => {
+                          const m = members.find((x) => x.id === givingForm.member_id);
+                          if (!m) return null;
+                          return (
+                            <div className="p-2.5 bg-emerald-100/90 border border-emerald-300 rounded-lg flex items-center justify-between text-xs animate-in fade-in">
+                              <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-xs shrink-0">
+                                  {m.first_name[0]}{m.last_name[0]}
+                                </div>
+                                <div>
+                                  <span className="font-bold text-emerald-950 block">
+                                    {m.first_name} {m.last_name}
+                                  </span>
+                                  <span className="text-[11px] text-emerald-800">
+                                    {m.member_id} • Tel: {m.phone || 'N/A'}
+                                  </span>
+                                </div>
+                              </div>
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-800 text-white font-mono font-bold text-[10px]">
+                                Tithe #{m.tithe_number || givingForm.tithe_number}
+                              </span>
+                            </div>
+                          );
+                        })()
+                      ) : (
+                        <div className="p-2.5 bg-amber-100/90 border border-amber-300 rounded-lg text-[11px] text-amber-950 space-y-1.5">
+                          <span className="font-bold flex items-center gap-1 text-amber-900">
+                            <Tag className="w-3.5 h-3.5 text-amber-700" />
+                            Tithe Envelope #{givingForm.tithe_number} (Unassigned Envelope)
+                          </span>
+                          <p className="text-[10px] text-amber-800">
+                            This envelope is not yet registered to an existing member. Tithe will still be logged under this envelope number.
+                          </p>
+                          <div>
+                            <label className="block text-[10px] font-semibold text-amber-950 mb-0.5">
+                              Giver / Donor Name (optional):
+                            </label>
+                            <input
+                              type="text"
+                              value={givingForm.donor_name}
+                              onChange={(e) => setGivingForm((prev) => ({ ...prev, donor_name: e.target.value }))}
+                              placeholder="e.g. Visitor Kwabena or Anonymous"
+                              className="w-full px-2 py-1 border border-amber-300 rounded text-xs bg-white"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Mode B: Record by Member Name */}
+              {givingEntryMode === 'name' && (
+                <div className="space-y-2">
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Select Member (or leave blank for Guest/Basket)
+                  </label>
+                  <select
+                    value={givingForm.member_id}
+                    onChange={(e) => {
+                      const memId = e.target.value;
+                      const selected = members.find((m) => m.id === memId);
+                      setGivingForm((prev) => ({
+                        ...prev,
+                        member_id: memId,
+                        tithe_number: selected?.tithe_number || '',
+                        donor_name: selected ? '' : prev.donor_name,
+                      }));
+                    }}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                    placeholder="e.g. Visitor Kwabena or Sunday 2nd Service Basket"
-                  />
+                  >
+                    <option value="">-- General Anonymous / Non-Member --</option>
+                    {members
+                      .filter((m) => !m.is_archived)
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.first_name} {m.last_name} ({m.member_id}{m.tithe_number ? ` • Tithe #${m.tithe_number}` : ''})
+                        </option>
+                      ))}
+                  </select>
+
+                  {/* Selected Member Info Pill */}
+                  {givingForm.member_id && (
+                    (() => {
+                      const m = members.find((x) => x.id === givingForm.member_id);
+                      if (!m) return null;
+                      return (
+                        <div className="p-2 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between text-xs">
+                          <span className="text-slate-600 font-medium">
+                            Member ID: <strong className="text-slate-900">{m.member_id}</strong>
+                          </span>
+                          {m.tithe_number ? (
+                            <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 font-mono font-bold text-[11px] border border-emerald-300 flex items-center gap-1">
+                              <Hash className="w-3 h-3 text-emerald-700" />
+                              Tithe #{m.tithe_number}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 italic">No Tithe # Assigned</span>
+                          )}
+                        </div>
+                      );
+                    })()
+                  )}
+
+                  {!givingForm.member_id && (
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Donor Name / Source (if guest)</label>
+                      <input
+                        type="text"
+                        value={givingForm.donor_name}
+                        onChange={(e) => setGivingForm({ ...givingForm, donor_name: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                        placeholder="e.g. Visitor Kwabena or Sunday 2nd Service Basket"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
 

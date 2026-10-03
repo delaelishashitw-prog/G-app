@@ -650,6 +650,7 @@ CREATE TABLE IF NOT EXISTS public.giving (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   member_id TEXT,
   member_name VARCHAR(150),
+  tithe_number VARCHAR(100),
   donor_name VARCHAR(150),
   category VARCHAR(100) NOT NULL,
   amount DECIMAL(14, 2) NOT NULL CHECK (amount >= 0),
@@ -888,6 +889,7 @@ ALTER TABLE public.pledges ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAU
 
 ALTER TABLE public.giving ADD COLUMN IF NOT EXISTS member_id TEXT;
 ALTER TABLE public.giving ADD COLUMN IF NOT EXISTS member_name VARCHAR(150);
+ALTER TABLE public.giving ADD COLUMN IF NOT EXISTS tithe_number VARCHAR(100);
 ALTER TABLE public.giving ADD COLUMN IF NOT EXISTS donor_name VARCHAR(150);
 ALTER TABLE public.giving ADD COLUMN IF NOT EXISTS category VARCHAR(100) DEFAULT 'tithe';
 ALTER TABLE public.giving ADD COLUMN IF NOT EXISTS amount DECIMAL(14, 2) DEFAULT 0.00;
@@ -1537,6 +1539,7 @@ export const SQL_FIX_RLS_SCHEMA = `-- ==========================================
 -- ==============================================================================
 
 -- 1. Ensure missing columns exist in pre-existing tables
+ALTER TABLE public.giving ADD COLUMN IF NOT EXISTS tithe_number VARCHAR(100);
 ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS general_secretary VARCHAR(150) DEFAULT 'Tamekloe Clara Gaewornu';
 ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS senior_pastor VARCHAR(150) DEFAULT 'Prophet Elisha K. Richard';
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
