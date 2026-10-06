@@ -33,6 +33,7 @@ import {
   UserX,
   Building,
   Check,
+  RefreshCw,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -53,6 +54,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useToast } from '../contexts/ToastContext';
 import { ChurchService, AttendanceRecord, HeadcountRecord, Member, Visitor } from '../types/database.types';
+import { getLocalDateString, formatServiceDayString, getQuickDate } from '../lib/attendanceDateUtils';
 
 // Modals
 import { AttendanceKioskModal } from '../components/attendance/AttendanceKioskModal';
@@ -65,6 +67,7 @@ export const AttendancePage: React.FC = () => {
     services,
     members,
     visitors,
+    ministries,
     attendance,
     headcounts,
     recordAttendance,
@@ -72,16 +75,22 @@ export const AttendancePage: React.FC = () => {
     removeAttendance,
     recordHeadcount,
     settings,
+    isRefreshing,
+    lastRefreshedAt,
+    refreshData,
   } = useChurchData();
-  const { success, error, info } = useToast();
+  const { success, error, warning, info } = useToast();
 
   // Active service and date selection
   const [selectedServiceId, setSelectedServiceId] = useState(services[0]?.id || '');
-  const [selectedDate, setSelectedDate] = useState(() => {
-    // Default to the most recent Sunday or today
-    const now = new Date();
-    return now.toISOString().split('T')[0];
-  });
+  const [selectedDate, setSelectedDate] = useState(() => getLocalDateString());
+
+  // Ensure selectedServiceId is kept in sync if services load or change
+  React.useEffect(() => {
+    if (!selectedServiceId && services.length > 0) {
+      setSelectedServiceId(services[0].id);
+    }
+  }, [services, selectedServiceId]);
 
   // Active navigation tab
   const [activeTab, setActiveTab] = useState<
@@ -98,6 +107,19 @@ export const AttendancePage: React.FC = () => {
   const [isQuickVisitorOpen, setIsQuickVisitorOpen] = useState(false);
   const [isPrintRegisterOpen, setIsPrintRegisterOpen] = useState(false);
   const [digitalPassMember, setDigitalPassMember] = useState<Member | null>(null);
+
+  // In-app confirmations (replaces window.confirm)
+  const [recordToUndo, setRecordToUndo] = useState<AttendanceRecord | null>(null);
+  const [isResetHeadcountConfirmOpen, setIsResetHeadcountConfirmOpen] = useState(false);
+
+  const handleRefresh = async () => {
+    const res = await refreshData();
+    if (res.success) {
+      success('Attendance Data Refreshed', res.message);
+    } else {
+      warning('Refresh Warning', res.message);
+    }
+  };
 
   // Batch Department Check-In state
   const [selectedMinistryId, setSelectedMinistryId] = useState<string>('all');
@@ -156,34 +178,41 @@ export const AttendancePage: React.FC = () => {
     notes: currentHeadcountRecord?.notes ?? '',
   });
 
+  // Active session key to only re-initialize when switching service or date
+  const activeSessionKey = `${selectedServiceId}_${selectedDate}`;
+  const prevSessionKeyRef = React.useRef(activeSessionKey);
+
   // Sync form when selectedServiceId or selectedDate changes
   React.useEffect(() => {
-    if (currentHeadcountRecord) {
-      setHeadcountForm({
-        men: currentHeadcountRecord.men,
-        women: currentHeadcountRecord.women,
-        youth: currentHeadcountRecord.youth,
-        children: currentHeadcountRecord.children,
-        visitors: currentHeadcountRecord.visitors,
-        ushers_protocol: currentHeadcountRecord.ushers_protocol,
-        online_viewers: currentHeadcountRecord.online_viewers,
-        counted_by: currentHeadcountRecord.counted_by || '',
-        notes: currentHeadcountRecord.notes || '',
-      });
-    } else {
-      setHeadcountForm({
-        men: 0,
-        women: 0,
-        youth: 0,
-        children: 0,
-        visitors: visitorsCheckedIn.length,
-        ushers_protocol: 0,
-        online_viewers: 0,
-        counted_by: '',
-        notes: '',
-      });
+    if (prevSessionKeyRef.current !== activeSessionKey) {
+      prevSessionKeyRef.current = activeSessionKey;
+      if (currentHeadcountRecord) {
+        setHeadcountForm({
+          men: currentHeadcountRecord.men,
+          women: currentHeadcountRecord.women,
+          youth: currentHeadcountRecord.youth,
+          children: currentHeadcountRecord.children,
+          visitors: currentHeadcountRecord.visitors,
+          ushers_protocol: currentHeadcountRecord.ushers_protocol,
+          online_viewers: currentHeadcountRecord.online_viewers,
+          counted_by: currentHeadcountRecord.counted_by || '',
+          notes: currentHeadcountRecord.notes || '',
+        });
+      } else {
+        setHeadcountForm({
+          men: 0,
+          women: 0,
+          youth: 0,
+          children: 0,
+          visitors: visitorsCheckedIn.length,
+          ushers_protocol: 0,
+          online_viewers: 0,
+          counted_by: '',
+          notes: '',
+        });
+      }
     }
-  }, [currentHeadcountRecord, selectedServiceId, selectedDate, visitorsCheckedIn.length]);
+  }, [activeSessionKey, currentHeadcountRecord, visitorsCheckedIn.length]);
 
   const totalAuditorium =
     headcountForm.men +
@@ -226,26 +255,18 @@ export const AttendancePage: React.FC = () => {
     }
   };
 
-  // Quick preset dates
+  // Quick preset dates using timezone-safe calculator
   const handleSetQuickDate = (preset: 'today' | 'lastSunday' | 'lastWednesday') => {
-    const now = new Date();
-    if (preset === 'today') {
-      setSelectedDate(now.toISOString().split('T')[0]);
-    } else if (preset === 'lastSunday') {
-      const day = now.getDay();
-      const diff = now.getDate() - day + (day === 0 ? 0 : -7);
-      const sun = new Date(now.setDate(diff));
-      setSelectedDate(sun.toISOString().split('T')[0]);
-    } else if (preset === 'lastWednesday') {
-      const day = now.getDay();
-      const diff = now.getDate() - day + (day >= 3 ? 3 : -4);
-      const wed = new Date(now.setDate(diff));
-      setSelectedDate(wed.toISOString().split('T')[0]);
-    }
+    const newDate = getQuickDate(preset);
+    setSelectedDate(newDate);
   };
 
   // Save Headcount
   const handleSaveHeadcount = () => {
+    if (!selectedServiceId) {
+      error('Please select a service before saving headcount.');
+      return;
+    }
     recordHeadcount({
       service_id: selectedServiceId,
       service_name: selectedService?.name || 'Worship Service',
@@ -264,29 +285,37 @@ export const AttendancePage: React.FC = () => {
     success('Auditorium headcount saved and locked into official records.');
   };
 
-  // Reset Headcount
+  // Reset Headcount (opens in-app confirmation modal)
   const handleResetHeadcount = () => {
-    if (window.confirm('Reset all auditorium headcount numbers to zero?')) {
-      setHeadcountForm({
-        men: 0,
-        women: 0,
-        youth: 0,
-        children: 0,
-        visitors: 0,
-        ushers_protocol: 0,
-        online_viewers: 0,
-        counted_by: '',
-        notes: '',
-      });
-      info('Counters reset to zero.');
-    }
+    setIsResetHeadcountConfirmOpen(true);
+  };
+
+  const handleConfirmResetHeadcount = () => {
+    setHeadcountForm({
+      men: 0,
+      women: 0,
+      youth: 0,
+      children: 0,
+      visitors: 0,
+      ushers_protocol: 0,
+      online_viewers: 0,
+      counted_by: '',
+      notes: '',
+    });
+    setIsResetHeadcountConfirmOpen(false);
+    info('Counters reset to zero.');
   };
 
   // Department members for Batch Check-In
   const departmentMembers = useMemo(() => {
     let list = members.filter((m) => !m.is_archived);
     if (selectedMinistryId !== 'all') {
-      list = list.filter((m) => m.ministry_id === selectedMinistryId);
+      const selectedMin = ministries.find((min) => min.id === selectedMinistryId);
+      list = list.filter(
+        (m) =>
+          m.ministry_id === selectedMinistryId ||
+          (selectedMin && m.ministry_name?.toLowerCase() === selectedMin.name.toLowerCase())
+      );
     }
     if (batchSearchTerm.trim()) {
       const term = batchSearchTerm.toLowerCase();
@@ -294,11 +323,12 @@ export const AttendancePage: React.FC = () => {
         (m) =>
           m.first_name.toLowerCase().includes(term) ||
           m.last_name.toLowerCase().includes(term) ||
-          m.member_id.toLowerCase().includes(term)
+          m.member_id.toLowerCase().includes(term) ||
+          (m.phone && m.phone.includes(term))
       );
     }
     return list;
-  }, [members, selectedMinistryId, batchSearchTerm]);
+  }, [members, ministries, selectedMinistryId, batchSearchTerm]);
 
   // Handle Commit Batch Check-In
   const handleCommitBatchCheckIn = () => {
@@ -357,6 +387,13 @@ export const AttendancePage: React.FC = () => {
     });
   }, [currentSessionRecords, attendeeFilter, attendeeSearch]);
 
+  const handleConfirmUndoCheckIn = () => {
+    if (!recordToUndo) return;
+    removeAttendance(recordToUndo.id);
+    info(`Check-in for ${recordToUndo.person_name || recordToUndo.member_name || 'attendee'} reversed.`);
+    setRecordToUndo(null);
+  };
+
   // Export Attendance CSV
   const handleExportCSV = () => {
     if (currentSessionRecords.length === 0) {
@@ -390,12 +427,14 @@ export const AttendancePage: React.FC = () => {
       'data:text/csv;charset=utf-8,' +
       [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
 
+    const safeServiceName = (selectedService?.name || 'Worship_Service').replace(/[^a-zA-Z0-9]/g, '_');
+    const churchPrefix = (settings?.short_name || 'Church').replace(/[^a-zA-Z0-9]/g, '_');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
     link.setAttribute(
       'download',
-      `GWCC_Attendance_${selectedService?.name.replace(/[^a-zA-Z0-9]/g, '_')}_${selectedDate}.csv`
+      `${churchPrefix}_Attendance_${safeServiceName}_${selectedDate}.csv`
     );
     document.body.appendChild(link);
     link.click();
@@ -421,21 +460,64 @@ export const AttendancePage: React.FC = () => {
       });
     });
 
+    // Also include attendance check-in dates if not already present
+    attendance.forEach((a) => {
+      if (!datesMap.has(a.date)) {
+        const recordsOnDate = attendance.filter((att) => att.date === a.date);
+        const visitorsCount = recordsOnDate.filter((att) => att.person_type === 'visitor').length;
+        datesMap.set(a.date, {
+          date: a.date,
+          total: recordsOnDate.length,
+          men: 0,
+          women: 0,
+          children: 0,
+          visitors: visitorsCount,
+        });
+      }
+    });
+
     return Array.from(datesMap.values())
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
       .slice(-6);
-  }, [headcounts]);
+  }, [headcounts, attendance]);
 
   // Demographic Pie Data
   const demographicData = useMemo(() => {
-    return [
+    const fromHeadcount = [
       { name: 'Men', value: headcountForm.men, color: '#0d9488' },
       { name: 'Women', value: headcountForm.women, color: '#0284c7' },
       { name: 'Youth', value: headcountForm.youth, color: '#8b5cf6' },
       { name: 'Children', value: headcountForm.children, color: '#f59e0b' },
       { name: 'Visitors', value: headcountForm.visitors, color: '#10b981' },
     ].filter((d) => d.value > 0);
-  }, [headcountForm]);
+
+    if (fromHeadcount.length > 0) return fromHeadcount;
+
+    // Fallback to current session check-ins if headcount form has not been entered yet
+    if (currentSessionRecords.length > 0) {
+      let maleMembers = 0;
+      let femaleMembers = 0;
+      let visitorsCount = 0;
+
+      currentSessionRecords.forEach((r) => {
+        if (r.person_type === 'visitor') {
+          visitorsCount++;
+        } else {
+          const m = members.find((mem) => mem.id === r.member_id);
+          if (m?.gender === 'female') femaleMembers++;
+          else maleMembers++;
+        }
+      });
+
+      return [
+        { name: 'Male Members', value: maleMembers, color: '#0d9488' },
+        { name: 'Female Members', value: femaleMembers, color: '#0284c7' },
+        { name: 'Visitors', value: visitorsCount, color: '#10b981' },
+      ].filter((d) => d.value > 0);
+    }
+
+    return [];
+  }, [headcountForm, currentSessionRecords, members]);
 
   // Expected capacity comparison
   const capacityTarget = selectedService?.expected_attendance || 0;
@@ -465,6 +547,16 @@ export const AttendancePage: React.FC = () => {
 
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition shadow-xs disabled:opacity-60 cursor-pointer"
+            title={`Refresh attendance records • Last updated: ${lastRefreshedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+          >
+            <RefreshCw className={`w-4 h-4 text-slate-600 ${isRefreshing ? 'animate-spin text-teal-600' : ''}`} />
+            <span className="hidden sm:inline">{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+          </button>
+
           <button
             onClick={() => setIsKioskOpen(true)}
             className="flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-teal-700 to-emerald-700 hover:from-teal-800 hover:to-emerald-800 text-white rounded-xl text-xs font-bold transition shadow-md shadow-teal-700/20"
@@ -548,12 +640,7 @@ export const AttendancePage: React.FC = () => {
         <div className="flex items-center gap-2 text-xs">
           <span className="font-semibold text-slate-500">Service Day:</span>
           <span className="font-bold text-teal-800 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200">
-            {new Date(selectedDate).toLocaleDateString('en-GB', {
-              weekday: 'long',
-              day: 'numeric',
-              month: 'short',
-              year: 'numeric',
-            })}
+            {formatServiceDayString(selectedDate)}
           </span>
         </div>
       </div>
@@ -725,7 +812,7 @@ export const AttendancePage: React.FC = () => {
                     Member Quick Check-In Scanner
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Type member name, Member ID (e.g. GWCC-000001) or phone number to check in.
+                    Type member name, Member ID (e.g. {settings.short_name || 'GWCC'}-0001) or phone number to check in.
                   </p>
                 </div>
 
@@ -744,7 +831,7 @@ export const AttendancePage: React.FC = () => {
                   type="text"
                   value={searchMemberTerm}
                   onChange={(e) => setSearchMemberTerm(e.target.value)}
-                  placeholder="Search member to check-in (e.g. Kwame, Abena, GWCC-000002, 0244...)"
+                  placeholder={`Search member to check-in (e.g. Kwame, Abena, ${settings.short_name || 'GWCC'}-0002, 0244...)`}
                   className="w-full pl-10 pr-4 py-3 text-sm border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-teal-600 font-medium transition shadow-inner"
                   autoFocus
                 />
@@ -903,12 +990,7 @@ export const AttendancePage: React.FC = () => {
                       </div>
 
                       <button
-                        onClick={() => {
-                          if (window.confirm(`Undo check-in for ${rec.person_name}?`)) {
-                            removeAttendance(rec.id);
-                            info('Check-in reversed.');
-                          }
-                        }}
+                        onClick={() => setRecordToUndo(rec)}
                         className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition"
                         title="Undo check-in"
                       >
@@ -1295,14 +1377,12 @@ export const AttendancePage: React.FC = () => {
                 onChange={(e) => setSelectedMinistryId(e.target.value)}
                 className="w-full px-3 py-2 text-xs font-bold text-slate-800 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-teal-600"
               >
-                <option value="all">All Church Ministries</option>
-                <option value="min-001">Voice of Dominion (Choir & Worship)</option>
-                <option value="min-002">Media, Sound & IT</option>
-                <option value="min-003">Protocol & Ushering Ministry</option>
-                <option value="min-004">Generations of Champions (Youth)</option>
-                <option value="min-005">Women of Grace & Virtue</option>
-                <option value="min-006">Men of Valour</option>
-                <option value="min-007">Children Ministry Teachers</option>
+                <option value="all">All Church Ministries ({members.length} Members)</option>
+                {ministries.map((min) => (
+                  <option key={min.id} value={min.id}>
+                    {min.name}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -1437,7 +1517,7 @@ export const AttendancePage: React.FC = () => {
                       : cleanPhone;
 
                     const whatsappMessage = encodeURIComponent(
-                      `Praise the Lord Brother/Sister ${m.first_name}, greetings from Greater Works City Church! We missed your presence at our worship service today. Just checking on your well-being and praying God's richest blessings over your week. Let us know if you need any pastoral prayers. God bless you!`
+                      `Praise the Lord Brother/Sister ${m.first_name}, greetings from ${settings.church_name || 'the church family'}! We missed your presence at our worship service today. Just checking on your well-being and praying God's richest blessings over your week. Let us know if you need any pastoral prayers. God bless you!`
                     );
 
                     return (
@@ -1450,7 +1530,7 @@ export const AttendancePage: React.FC = () => {
                         </td>
                         <td className="p-3 font-mono text-slate-700">{m.phone}</td>
                         <td className="p-3 text-slate-600">{m.ministry_name || 'General Member'}</td>
-                        <td className="p-3 text-slate-600">{m.small_group_name || 'Joma Central'}</td>
+                        <td className="p-3 text-slate-600">{m.small_group_name || 'None'}</td>
                         <td className="p-3 font-mono text-slate-600">
                           {m.lastAttended !== 'Never recorded' ? (
                             <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-800 text-[11px]">
@@ -1643,8 +1723,8 @@ export const AttendancePage: React.FC = () => {
                       {h.date}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500">{h.notes || 'Normal church worship service'}</p>
-                  <p className="text-[11px] text-slate-400">Recorded by: {h.counted_by}</p>
+                  <p className="text-xs text-slate-500">{h.notes || 'Worship service session'}</p>
+                  <p className="text-[11px] text-slate-400">Recorded by: {h.counted_by || 'Usher Board'}</p>
                 </div>
 
                 <div className="flex items-center gap-6 text-xs">
@@ -1681,6 +1761,7 @@ export const AttendancePage: React.FC = () => {
         date={selectedDate}
         members={members}
         visitors={visitors}
+        settings={settings}
         alreadyCheckedInIds={alreadyCheckedInIds}
         onCheckIn={(type, id) => handleCheckIn(type, id, 'qr_code')}
         onOpenQuickVisitorModal={() => {
@@ -1714,6 +1795,82 @@ export const AttendancePage: React.FC = () => {
           member={digitalPassMember}
           settings={settings}
         />
+      )}
+
+      {/* Confirm Undo Check-In Modal (replaces window.confirm) */}
+      {recordToUndo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl max-w-sm w-full p-5 space-y-4 animate-in zoom-in-95">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-slate-900">Undo Check-In</h4>
+                <p className="text-xs text-slate-500">Remove from session register</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600">
+              Are you sure you want to reverse the attendance check-in for{' '}
+              <span className="font-bold text-slate-900">
+                {recordToUndo.person_name || recordToUndo.member_name || recordToUndo.visitor_name}
+              </span>
+              ?
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setRecordToUndo(null)}
+                className="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-bold transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmUndoCheckIn}
+                className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+              >
+                Yes, Reverse Check-In
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Reset Headcount Modal (replaces window.confirm) */}
+      {isResetHeadcountConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl max-w-sm w-full p-5 space-y-4 animate-in zoom-in-95">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
+                <RotateCcw className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-slate-900">Reset Headcount</h4>
+                <p className="text-xs text-slate-500">Clear tally sheet counts</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600">
+              Are you sure you want to reset all auditorium counters for this service to zero?
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsResetHeadcountConfirmOpen(false)}
+                className="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-bold transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmResetHeadcount}
+                className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+              >
+                Reset to Zero
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

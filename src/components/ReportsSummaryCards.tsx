@@ -19,6 +19,7 @@ export interface ReportsSummaryCardsProps {
   activeMembers: number;
   monthlyIncome: number;
   averageWeeklyAttendance: number;
+  incomeLabel?: string;
   tithesIncome?: number;
   offeringsIncome?: number;
   buildingFundIncome?: number;
@@ -33,11 +34,12 @@ export const ReportsSummaryCards: React.FC<ReportsSummaryCardsProps> = ({
   activeMembers,
   monthlyIncome,
   averageWeeklyAttendance,
+  incomeLabel = 'Total Receipts & Revenue',
   tithesIncome,
   offeringsIncome,
   buildingFundIncome,
   peakWeeklyAttendance,
-  periodLabel = 'Current Month (September 2026)',
+  periodLabel = 'Current Reporting Period',
   onFilterClick,
   className = '',
 }) => {
@@ -124,7 +126,7 @@ export const ReportsSummaryCards: React.FC<ReportsSummaryCardsProps> = ({
           <div className="flex items-start justify-between relative z-10">
             <div>
               <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1">
-                Monthly Income
+                {incomeLabel}
               </span>
               <div className="flex items-baseline gap-1.5">
                 <span className="text-2xl sm:text-3xl font-extrabold text-emerald-950 font-mono tracking-tight">

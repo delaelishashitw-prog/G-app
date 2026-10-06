@@ -42,14 +42,18 @@ export const DigitalPassModal: React.FC<DigitalPassModalProps> = ({
         <div className="p-6 bg-gradient-to-b from-teal-900 via-teal-800 to-slate-900 text-white text-center space-y-4">
           <div className="flex items-center justify-between text-left border-b border-teal-700/60 pb-3">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-teal-500/20 border border-teal-400/40 flex items-center justify-center font-black text-sm text-teal-300">
-                GW
+              <div className="w-8 h-8 rounded-lg bg-teal-500/20 border border-teal-400/40 flex items-center justify-center font-black text-sm text-teal-300 overflow-hidden">
+                {settings.logo_url ? (
+                  <img src={settings.logo_url} alt="Logo" className="w-full h-full object-contain p-0.5" />
+                ) : (
+                  settings.short_name?.slice(0, 2) || 'GW'
+                )}
               </div>
               <div>
                 <h4 className="font-extrabold text-xs tracking-tight text-white leading-tight">
                   {settings.church_name}
                 </h4>
-                <p className="text-[10px] text-teal-300">{settings.branch_name || 'Joma Assembly'}</p>
+                <p className="text-[10px] text-teal-300">{settings.branch_name || settings.location || ''}</p>
               </div>
             </div>
             <span className="text-[9px] font-bold uppercase tracking-wider bg-teal-400/20 text-teal-200 px-2 py-0.5 rounded-full border border-teal-400/30">

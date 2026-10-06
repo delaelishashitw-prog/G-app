@@ -16,6 +16,8 @@ import {
   Sparkles,
   ChevronRight,
   Eye,
+  Network,
+  Target,
 } from 'lucide-react';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -98,6 +100,24 @@ const TEMPLATES: Array<{
     defaultOrientation: 'portrait',
     category: 'executive',
   },
+  {
+    id: 'small_groups',
+    title: 'Cell Fellowship & Home Disciples Directory',
+    badge: 'Cell Network',
+    description: 'Directory of territorial cell fellowships, cell leaders, schedules, zones, and disciple counts.',
+    icon: Network,
+    defaultOrientation: 'landscape',
+    category: 'membership',
+  },
+  {
+    id: 'pledges_audit',
+    title: 'Capital Projects & Faith Pledges Audit',
+    badge: 'Pledges Audit',
+    description: 'Official audit ledger of building campaign pledges, total redeemed capital, and outstanding balances.',
+    icon: Target,
+    defaultOrientation: 'landscape',
+    category: 'finance',
+  },
 ];
 
 export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
@@ -107,7 +127,7 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
   initialStartDate = '2026-09-01',
   initialEndDate = '2026-09-30',
 }) => {
-  const { members, visitors, attendance, giving, expenses, pledges, settings } = useChurchData();
+  const { members, visitors, attendance, giving, expenses, pledges, settings, smallGroups, ministries } = useChurchData();
   const { currentUser } = useAuth();
   const { success, error: toastError } = useToast();
 
@@ -242,6 +262,8 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
           giving,
           expenses,
           pledges,
+          smallGroups,
+          ministries,
           currentUser,
         },
         options
@@ -273,6 +295,8 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
           giving,
           expenses,
           pledges,
+          smallGroups,
+          ministries,
           currentUser,
         },
         options

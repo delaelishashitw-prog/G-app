@@ -9,6 +9,8 @@ import {
   AttendanceRecord,
   PledgeRecord,
   UserProfile,
+  SmallGroup,
+  Ministry,
 } from '../types/database.types';
 
 export type ReportTemplateType =
@@ -17,7 +19,9 @@ export type ReportTemplateType =
   | 'membership_roster'
   | 'attendance_register'
   | 'visitor_follow_up'
-  | 'comprehensive_executive';
+  | 'comprehensive_executive'
+  | 'small_groups'
+  | 'pledges_audit';
 
 export interface PdfExportOptions {
   template: ReportTemplateType;
@@ -40,6 +44,8 @@ export interface ChurchReportData {
   giving: GivingRecord[];
   expenses: ExpenseRecord[];
   pledges: PledgeRecord[];
+  smallGroups?: SmallGroup[];
+  ministries?: Ministry[];
   currentUser?: UserProfile;
 }
 
@@ -56,7 +62,13 @@ export function generateChurchReportPdf(
     template,
     startDate,
     endDate,
-    orientation = template === 'membership_roster' || template === 'financial_ledger' ? 'landscape' : 'portrait',
+    orientation =
+      template === 'membership_roster' ||
+      template === 'financial_ledger' ||
+      template === 'small_groups' ||
+      template === 'pledges_audit'
+        ? 'landscape'
+        : 'portrait',
     includeSignatures = true,
     includeSummaryKpis = true,
     includeOfficialSeal = true,
@@ -154,6 +166,12 @@ export function generateChurchReportPdf(
   } else if (template === 'comprehensive_executive') {
     reportTitle = 'QUARTERLY EXECUTIVE INTELLIGENCE DOSSIER';
     reportSubtitle = 'All-round administrative appraisal: treasury, discipleship, growth, and attendance';
+  } else if (template === 'small_groups') {
+    reportTitle = 'CELL FELLOWSHIP & HOME DISCIPLER ROSTER';
+    reportSubtitle = 'Territorial home cell fellowship networks, cell leaders, and disciple coverage';
+  } else if (template === 'pledges_audit') {
+    reportTitle = 'CAPITAL PROJECTS & FAITH PLEDGES AUDIT RECORD';
+    reportSubtitle = 'Building fund campaigns, committed pledges, disbursements, and fulfillment audit';
   }
 
   // Draw Header on first page
@@ -425,6 +443,80 @@ export function generateChurchReportPdf(
       doc.text('CONVERTED TO DISCIPLESHIP', margin + (kpiWidth + 3) * 2 + 3, currentY + 4.5);
       doc.setFontSize(10);
       doc.text(`${converted} Established (${Math.round((converted / (totalVisitors || 1)) * 100)}%)`, margin + (kpiWidth + 3) * 2 + 3, currentY + 11.5);
+
+      currentY += 21;
+    } else if (template === 'small_groups') {
+      const kpiWidth = (contentWidth - 6) / 3;
+      const kpiHeight = 16;
+      const groupsCount = (data.smallGroups || []).length;
+      const distinctZones = new Set((data.smallGroups || []).map((g) => g.zone).filter(Boolean)).size;
+
+      doc.setFillColor(240, 253, 244);
+      doc.setDrawColor(187, 247, 208);
+      doc.roundedRect(margin, currentY, kpiWidth, kpiHeight, 1.5, 1.5, 'FD');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(22, 101, 52);
+      doc.text('ACTIVE CELL FELLOWSHIPS', margin + 3, currentY + 4.5);
+      doc.setFontSize(12);
+      doc.text(`${groupsCount} Groups`, margin + 3, currentY + 11.5);
+
+      doc.setFillColor(248, 250, 252);
+      doc.setDrawColor(...borderLight);
+      doc.roundedRect(margin + kpiWidth + 3, currentY, kpiWidth, kpiHeight, 1.5, 1.5, 'FD');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(...textDark);
+      doc.text('TERRITORIAL SECTORS', margin + kpiWidth + 6, currentY + 4.5);
+      doc.setFontSize(10);
+      doc.text(`${distinctZones} Zonal Sectors`, margin + kpiWidth + 6, currentY + 11.5);
+
+      doc.setFillColor(254, 243, 199);
+      doc.setDrawColor(253, 230, 138);
+      doc.roundedRect(margin + (kpiWidth + 3) * 2, currentY, kpiWidth, kpiHeight, 1.5, 1.5, 'FD');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(146, 64, 14);
+      doc.text('TOTAL CONNECTED DISCIPLES', margin + (kpiWidth + 3) * 2 + 3, currentY + 4.5);
+      doc.setFontSize(10);
+      const discipleCount = filteredMembers.filter((m) => m.small_group_id || m.small_group_name).length;
+      doc.text(`${discipleCount} Disciples`, margin + (kpiWidth + 3) * 2 + 3, currentY + 11.5);
+
+      currentY += 21;
+    } else if (template === 'pledges_audit') {
+      const kpiWidth = (contentWidth - 6) / 3;
+      const kpiHeight = 16;
+
+      doc.setFillColor(254, 243, 199);
+      doc.setDrawColor(253, 230, 138);
+      doc.roundedRect(margin, currentY, kpiWidth, kpiHeight, 1.5, 1.5, 'FD');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(146, 64, 14);
+      doc.text('TOTAL CAPITAL COMMITTED', margin + 3, currentY + 4.5);
+      doc.setFontSize(11);
+      doc.text(formatGHS(totalPledged), margin + 3, currentY + 11.5);
+
+      doc.setFillColor(240, 253, 244);
+      doc.setDrawColor(187, 247, 208);
+      doc.roundedRect(margin + kpiWidth + 3, currentY, kpiWidth, kpiHeight, 1.5, 1.5, 'FD');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(22, 101, 52);
+      doc.text('REDEEMED FUNDS TO DATE', margin + kpiWidth + 6, currentY + 4.5);
+      doc.setFontSize(11);
+      doc.text(formatGHS(totalPledgePaid), margin + kpiWidth + 6, currentY + 11.5);
+
+      doc.setFillColor(248, 250, 252);
+      doc.setDrawColor(...borderLight);
+      doc.roundedRect(margin + (kpiWidth + 3) * 2, currentY, kpiWidth, kpiHeight, 1.5, 1.5, 'FD');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(...textDark);
+      doc.text('OUTSTANDING BALANCE', margin + (kpiWidth + 3) * 2 + 3, currentY + 4.5);
+      doc.setFontSize(11);
+      doc.setTextColor(190, 18, 57);
+      doc.text(formatGHS(totalPledgeBalance), margin + (kpiWidth + 3) * 2 + 3, currentY + 11.5);
 
       currentY += 21;
     }
@@ -723,6 +815,113 @@ export function generateChurchReportPdf(
       columnStyles: {
         0: { cellWidth: 'auto' },
         1: { cellWidth: 55, halign: 'right', fontStyle: 'bold' },
+      },
+    });
+  } else if (template === 'small_groups') {
+    const tableBody = (data.smallGroups || []).map((g, idx) => {
+      const disciples = filteredMembers.filter(
+        (m) => m.small_group_id === g.id || m.small_group_name === g.name
+      ).length;
+      return [
+        (idx + 1).toString(),
+        g.name,
+        g.zone || '-',
+        g.leader_name || '-',
+        g.leader_phone || '-',
+        `${g.meeting_day || 'Weekly'}s @ ${g.meeting_time || '6:30 PM'}`,
+        g.meeting_address || g.meeting_location || 'Accra',
+        disciples.toString(),
+      ];
+    });
+
+    autoTable(doc, {
+      startY: currentY,
+      margin: { left: margin, right: margin, bottom: 25 },
+      head: [['#', 'Cell Fellowship', 'Sector / Zone', 'Cell Leader', 'Phone Number', 'Meeting Schedule', 'Meeting Location', 'Disciples']],
+      body: tableBody,
+      theme: 'grid',
+      styles: {
+        fontSize: 7.5,
+        cellPadding: 2,
+        textColor: textDark,
+        lineColor: borderLight,
+        lineWidth: 0.2,
+      },
+      headStyles: {
+        fillColor: primaryGreen,
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 8,
+      },
+      columnStyles: {
+        0: { cellWidth: 8, halign: 'center' },
+        1: { cellWidth: 38, fontStyle: 'bold' },
+        2: { cellWidth: 26 },
+        3: { cellWidth: 32 },
+        4: { cellWidth: 26 },
+        5: { cellWidth: 35 },
+        6: { cellWidth: 'auto' },
+        7: { cellWidth: 20, halign: 'center', fontStyle: 'bold' },
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+    });
+  } else if (template === 'pledges_audit') {
+    const tableBody = data.pledges.map((p, idx) => {
+      const percent = p.amount_pledged > 0 ? Math.round((p.amount_paid / p.amount_pledged) * 100) : 0;
+      return [
+        (idx + 1).toString(),
+        p.member_name || 'Anonymous Contributor',
+        p.campaign_name || 'General Expansion',
+        `GH₵ ${p.amount_pledged.toFixed(2)}`,
+        `GH₵ ${p.amount_paid.toFixed(2)}`,
+        `GH₵ ${p.balance.toFixed(2)}`,
+        `${percent}%`,
+        p.status.toUpperCase(),
+      ];
+    });
+
+    autoTable(doc, {
+      startY: currentY,
+      margin: { left: margin, right: margin, bottom: 25 },
+      head: [['#', 'Contributor / Member', 'Campaign Project', 'Pledged (GH₵)', 'Paid (GH₵)', 'Balance (GH₵)', 'Fulfillment', 'Status']],
+      body: tableBody,
+      foot: [
+        ['', 'TOTAL CAPITAL AUDITED', '', `GH₵ ${totalPledged.toFixed(2)}`, `GH₵ ${totalPledgePaid.toFixed(2)}`, `GH₵ ${totalPledgeBalance.toFixed(2)}`, '', ''],
+      ],
+      theme: 'grid',
+      styles: {
+        fontSize: 7.5,
+        cellPadding: 2,
+        textColor: textDark,
+        lineColor: borderLight,
+        lineWidth: 0.2,
+      },
+      headStyles: {
+        fillColor: primaryGreen,
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 8,
+      },
+      footStyles: {
+        fillColor: [241, 245, 249],
+        textColor: primaryGreen,
+        fontStyle: 'bold',
+        fontSize: 8,
+      },
+      columnStyles: {
+        0: { cellWidth: 8, halign: 'center' },
+        1: { cellWidth: 38 },
+        2: { cellWidth: 35 },
+        3: { cellWidth: 28, halign: 'right' },
+        4: { cellWidth: 28, halign: 'right', fontStyle: 'bold' },
+        5: { cellWidth: 28, halign: 'right' },
+        6: { cellWidth: 24, halign: 'center' },
+        7: { cellWidth: 24, halign: 'center' },
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
       },
     });
   }

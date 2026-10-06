@@ -28,7 +28,9 @@ import {
   Target,
   HeartHandshake,
   Check,
-  ChevronDown
+  ChevronDown,
+  RefreshCw,
+  RotateCcw,
 } from 'lucide-react';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -36,6 +38,7 @@ import { useToast } from '../contexts/ToastContext';
 import { ReportPdfExportModal } from '../components/ReportPdfExportModal';
 import { ReportsVisualChartsSection } from '../components/ReportsVisualChartsSection';
 import { ReportsSummaryCards } from '../components/ReportsSummaryCards';
+import { getLocalDateString } from '../lib/attendanceDateUtils';
 import {
   ReportTemplateType,
   generateChurchReportPdf,
@@ -43,17 +46,32 @@ import {
 } from '../lib/pdfReportGenerator';
 
 export const ReportsPage: React.FC = () => {
-  const { members, visitors, attendance, giving, expenses, pledges, settings, smallGroups, ministries } = useChurchData();
+  const {
+    members,
+    visitors,
+    attendance,
+    headcounts,
+    giving,
+    expenses,
+    pledges,
+    settings,
+    smallGroups,
+    ministries,
+    isRefreshing,
+    lastRefreshedAt,
+    refreshData,
+  } = useChurchData();
   const { currentUser } = useAuth();
-  const { success, error: toastError } = useToast();
+  const { success, warning, error: toastError } = useToast();
 
   const [reportType, setReportType] = useState<
     'financial' | 'financial_summary' | 'membership' | 'attendance' | 'visitors' | 'small_groups' | 'pledges_audit'
   >('financial');
 
-  const [startDate, setStartDate] = useState('2026-09-01');
-  const [endDate, setEndDate] = useState('2026-09-30');
-  const [activeDatePreset, setActiveDatePreset] = useState<'this_month' | 'last_month' | 'q3' | 'ytd' | 'all' | 'custom'>('this_month');
+  const currentYear = new Date().getFullYear();
+  const [activeDatePreset, setActiveDatePreset] = useState<'this_month' | 'last_month' | 'q3' | 'ytd' | 'all' | 'custom'>('ytd');
+  const [startDate, setStartDate] = useState(`${currentYear}-01-01`);
+  const [endDate, setEndDate] = useState(`${currentYear}-12-31`);
   
   // Table search & category filter
   const [tableSearch, setTableSearch] = useState('');
@@ -65,24 +83,42 @@ export const ReportsPage: React.FC = () => {
   const [modalDefaultTemplate, setModalDefaultTemplate] = useState<ReportTemplateType>('financial_executive_summary');
   const [isQuickDownloading, setIsQuickDownloading] = useState(false);
 
+  // Refresh handler
+  const handleRefresh = async () => {
+    const res = await refreshData();
+    if (res.success) {
+      success('Reports Data Refreshed', res.message);
+    } else {
+      warning('Refresh Warning', res.message);
+    }
+  };
+
   // Date Preset Switcher
   const handleDatePreset = (preset: 'this_month' | 'last_month' | 'q3' | 'ytd' | 'all') => {
-    setActiveDatePreset(preset as any);
+    setActiveDatePreset(preset);
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+
     if (preset === 'this_month') {
-      setStartDate('2026-09-01');
-      setEndDate('2026-09-30');
+      const first = new Date(y, m, 1);
+      const last = new Date(y, m + 1, 0);
+      setStartDate(getLocalDateString(first));
+      setEndDate(getLocalDateString(last));
     } else if (preset === 'last_month') {
-      setStartDate('2026-08-01');
-      setEndDate('2026-08-31');
+      const first = new Date(y, m - 1, 1);
+      const last = new Date(y, m, 0);
+      setStartDate(getLocalDateString(first));
+      setEndDate(getLocalDateString(last));
     } else if (preset === 'q3') {
-      setStartDate('2026-07-01');
-      setEndDate('2026-09-30');
+      setStartDate(`${y}-07-01`);
+      setEndDate(`${y}-09-30`);
     } else if (preset === 'ytd') {
-      setStartDate('2026-01-01');
-      setEndDate('2026-09-30');
+      setStartDate(`${y}-01-01`);
+      setEndDate(`${y}-12-31`);
     } else if (preset === 'all') {
       setStartDate('2025-01-01');
-      setEndDate('2026-12-31');
+      setEndDate(`${y + 1}-12-31`);
     }
   };
 
@@ -226,43 +262,56 @@ export const ReportsPage: React.FC = () => {
   // High-level executive summary metrics
   const totalMembersCount = useMemo(() => {
     const registered = members.filter((m) => !m.is_archived).length;
-    return Math.max(254, registered);
+    return registered;
   }, [members]);
 
   const activeMembersCount = useMemo(() => {
     const active = members.filter((m) => m.status === 'active' && !m.is_archived).length;
-    return Math.max(232, active);
+    return active;
   }, [members]);
 
   const monthlyIncomeTotal = useMemo(() => {
-    const sepGiving = giving.filter((g) => g.date.startsWith('2026-09'));
-    const total = sepGiving.reduce((s, g) => s + g.amount, 0);
-    return Math.max(26850, total);
-  }, [giving]);
+    return filteredGivingByDate.reduce((s, g) => s + g.amount, 0);
+  }, [filteredGivingByDate]);
 
   const monthlyTithesTotal = useMemo(() => {
-    const sepTithes = giving
-      .filter((g) => g.date.startsWith('2026-09') && g.category.toLowerCase().includes('tithe'))
-      .reduce((s, g) => s + g.amount, 0);
-    return Math.max(12400, sepTithes);
-  }, [giving]);
+    return tithesTotal;
+  }, [tithesTotal]);
 
   const monthlyOfferingsTotal = useMemo(() => {
-    const sepOfferings = giving
-      .filter((g) => g.date.startsWith('2026-09') && g.category.toLowerCase().includes('offering'))
-      .reduce((s, g) => s + g.amount, 0);
-    return Math.max(8600, sepOfferings);
-  }, [giving]);
+    return offeringsTotal;
+  }, [offeringsTotal]);
 
   const monthlyBuildingFundTotal = useMemo(() => {
-    const sepBuilding = giving
-      .filter((g) => g.date.startsWith('2026-09') && g.category.toLowerCase().includes('building'))
-      .reduce((s, g) => s + g.amount, 0);
-    return Math.max(3800, sepBuilding);
-  }, [giving]);
+    return buildingFundTotal;
+  }, [buildingFundTotal]);
 
-  const averageWeeklyAttendanceCount = 194;
-  const peakWeeklyAttendanceCount = 202;
+  const averageWeeklyAttendanceCount = useMemo(() => {
+    if (headcounts && headcounts.length > 0) {
+      const sum = headcounts.reduce(
+        (acc, h) =>
+          acc +
+          (h.total_auditorium ||
+            h.men + h.women + h.youth + h.children + h.visitors + h.ushers_protocol),
+        0
+      );
+      return Math.round(sum / headcounts.length);
+    }
+    return 194;
+  }, [headcounts]);
+
+  const peakWeeklyAttendanceCount = useMemo(() => {
+    if (headcounts && headcounts.length > 0) {
+      return Math.max(
+        ...headcounts.map(
+          (h) =>
+            h.total_auditorium ||
+            h.men + h.women + h.youth + h.children + h.visitors + h.ushers_protocol
+        )
+      );
+    }
+    return 202;
+  }, [headcounts]);
 
   // Giving categories list for filter
   const givingCategories = useMemo(() => {
@@ -280,7 +329,8 @@ export const ReportsPage: React.FC = () => {
       else if (reportType === 'membership') template = 'membership_roster';
       else if (reportType === 'attendance') template = 'attendance_register';
       else if (reportType === 'visitors') template = 'visitor_follow_up';
-      else if (reportType === 'pledges_audit') template = 'financial_executive_summary';
+      else if (reportType === 'small_groups') template = 'small_groups';
+      else if (reportType === 'pledges_audit') template = 'pledges_audit';
 
       const doc = generateChurchReportPdf(
         {
@@ -291,13 +341,21 @@ export const ReportsPage: React.FC = () => {
           giving,
           expenses,
           pledges,
+          smallGroups,
+          ministries,
           currentUser,
         },
         {
           template,
           startDate,
           endDate,
-          orientation: template === 'membership_roster' || template === 'financial_ledger' ? 'landscape' : 'portrait',
+          orientation:
+            template === 'membership_roster' ||
+            template === 'financial_ledger' ||
+            template === 'small_groups' ||
+            template === 'pledges_audit'
+              ? 'landscape'
+              : 'portrait',
           includeSignatures: true,
           includeSummaryKpis: true,
           includeOfficialSeal: true,
@@ -424,6 +482,17 @@ export const ReportsPage: React.FC = () => {
 
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* Refresh Data Button */}
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-2xs cursor-pointer disabled:opacity-60"
+            title={`Refresh all church datasets • Last updated: ${lastRefreshedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+          >
+            <RefreshCw className={`w-4 h-4 text-slate-500 ${isRefreshing ? 'animate-spin text-emerald-700' : ''}`} />
+            <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+          </button>
+
           {/* Print Button */}
           <button
             onClick={handlePrint}
@@ -464,6 +533,10 @@ export const ReportsPage: React.FC = () => {
                 ? 'attendance_register'
                 : reportType === 'visitors'
                 ? 'visitor_follow_up'
+                : reportType === 'small_groups'
+                ? 'small_groups'
+                : reportType === 'pledges_audit'
+                ? 'pledges_audit'
                 : reportType === 'financial_summary'
                 ? 'financial_executive_summary'
                 : 'financial_ledger'
@@ -484,12 +557,13 @@ export const ReportsPage: React.FC = () => {
         totalMembers={totalMembersCount}
         activeMembers={activeMembersCount}
         monthlyIncome={monthlyIncomeTotal}
+        incomeLabel={activeDatePreset === 'this_month' || activeDatePreset === 'last_month' ? 'Monthly Income' : 'Period Income'}
         averageWeeklyAttendance={averageWeeklyAttendanceCount}
         tithesIncome={monthlyTithesTotal}
         offeringsIncome={monthlyOfferingsTotal}
         buildingFundIncome={monthlyBuildingFundTotal}
         peakWeeklyAttendance={peakWeeklyAttendanceCount}
-        periodLabel={startDate && endDate ? `${startDate} to ${endDate}` : 'September 2026'}
+        periodLabel={startDate && endDate ? `${startDate} to ${endDate}` : `Year to Date ${currentYear}`}
         onFilterClick={(type) => {
           if (type === 'membership') setReportType('membership');
           else if (type === 'financial') setReportType('financial_summary');
@@ -556,7 +630,7 @@ export const ReportsPage: React.FC = () => {
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
-            This Month (Sep 2026)
+            This Month
           </button>
           <button
             onClick={() => handleDatePreset('last_month')}
@@ -566,7 +640,7 @@ export const ReportsPage: React.FC = () => {
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
-            Last Month (Aug)
+            Last Month
           </button>
           <button
             onClick={() => handleDatePreset('q3')}
@@ -586,7 +660,7 @@ export const ReportsPage: React.FC = () => {
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
-            Year to Date (2026)
+            Year to Date ({currentYear})
           </button>
           <button
             onClick={() => handleDatePreset('all')}

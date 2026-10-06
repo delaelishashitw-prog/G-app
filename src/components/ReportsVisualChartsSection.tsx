@@ -62,14 +62,14 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
 
   // 1. FINANCIAL TRENDS AGGREGATION (Monthly & Live)
   const financialData = useMemo(() => {
-    // Aggregate the selected six-month reporting window from live ledger records.
+    // Aggregate the reporting window from live ledger records.
     const months = [
-      { key: '2026-04', month: 'Apr 2026', short: 'Apr' },
       { key: '2026-05', month: 'May 2026', short: 'May' },
       { key: '2026-06', month: 'Jun 2026', short: 'Jun' },
       { key: '2026-07', month: 'Jul 2026', short: 'Jul' },
       { key: '2026-08', month: 'Aug 2026', short: 'Aug' },
       { key: '2026-09', month: 'Sep 2026', short: 'Sep' },
+      { key: '2026-10', month: 'Oct 2026', short: 'Oct' },
     ];
 
     return months.map((m) => {
@@ -209,8 +209,8 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
       let members = wk.members;
       let visitors = wk.visitors;
 
-      // Ensure week 38/39 reflects live check-in counts
-      if (idx === 5) {
+      // Ensure recent weeks reflect live check-in counts
+      if (idx >= 5) {
         if (memberAttendanceCount > 0) {
           members = Math.max(members, memberAttendanceCount);
         }

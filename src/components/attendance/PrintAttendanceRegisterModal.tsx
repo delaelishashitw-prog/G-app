@@ -1,11 +1,12 @@
 import React from 'react';
 import { Printer, X, Download, ShieldCheck, CheckCircle2, Users } from 'lucide-react';
 import { ChurchSettings, ChurchService, AttendanceRecord, HeadcountRecord } from '../../types/database.types';
+import { formatServiceDayString } from '../../lib/attendanceDateUtils';
 
 interface PrintAttendanceRegisterModalProps {
   isOpen: boolean;
   onClose: () => void;
-  service: ChurchService;
+  service?: ChurchService;
   date: string;
   settings: ChurchSettings;
   records: AttendanceRecord[];
@@ -30,12 +31,7 @@ export const PrintAttendanceRegisterModal: React.FC<PrintAttendanceRegisterModal
   const membersList = records.filter((r) => r.person_type === 'member');
   const visitorsList = records.filter((r) => r.person_type === 'visitor');
 
-  const formattedDate = new Date(date).toLocaleDateString('en-GB', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  });
+  const formattedDate = formatServiceDayString(date);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-in fade-in">
@@ -69,15 +65,19 @@ export const PrintAttendanceRegisterModal: React.FC<PrintAttendanceRegisterModal
           {/* Header */}
           <div className="text-center border-b-2 border-slate-900 pb-6 mb-6">
             <div className="flex items-center justify-center gap-3 mb-2">
-              <div className="w-12 h-12 rounded-xl bg-teal-800 text-white font-black text-xl flex items-center justify-center shadow-md">
-                GW
+              <div className="w-12 h-12 rounded-xl bg-teal-800 text-white font-black text-xl flex items-center justify-center shadow-md overflow-hidden">
+                {settings.logo_url ? (
+                  <img src={settings.logo_url} alt="Logo" className="w-full h-full object-contain p-1" />
+                ) : (
+                  settings.short_name?.slice(0, 2) || 'GW'
+                )}
               </div>
               <div className="text-left">
                 <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 leading-none">
                   {settings.church_name}
                 </h1>
                 <p className="text-xs font-semibold text-slate-600 mt-0.5">
-                  {settings.branch_name || 'Joma Assembly'} • {settings.location}
+                  {settings.branch_name ? `${settings.branch_name} • ` : ''}{settings.location}
                 </p>
               </div>
             </div>
@@ -95,7 +95,7 @@ export const PrintAttendanceRegisterModal: React.FC<PrintAttendanceRegisterModal
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200 text-xs mb-6">
             <div>
               <span className="text-[10px] font-bold uppercase text-slate-400">Service</span>
-              <p className="font-bold text-slate-900 mt-0.5">{service.name}</p>
+              <p className="font-bold text-slate-900 mt-0.5">{service?.name || 'Worship Service'}</p>
             </div>
             <div>
               <span className="text-[10px] font-bold uppercase text-slate-400">Date</span>
@@ -104,13 +104,13 @@ export const PrintAttendanceRegisterModal: React.FC<PrintAttendanceRegisterModal
             <div>
               <span className="text-[10px] font-bold uppercase text-slate-400">Time</span>
               <p className="font-bold text-slate-900 mt-0.5">
-                {service.start_time} - {service.end_time}
+                {service ? `${service.start_time} - ${service.end_time}` : 'Morning Service'}
               </p>
             </div>
             <div>
               <span className="text-[10px] font-bold uppercase text-slate-400">Venue</span>
               <p className="font-bold text-slate-900 mt-0.5">
-                {service.venue || 'Main Sanctuary, Joma'}
+                {service?.venue || settings.location || 'Church Auditorium'}
               </p>
             </div>
           </div>
@@ -220,7 +220,7 @@ export const PrintAttendanceRegisterModal: React.FC<PrintAttendanceRegisterModal
               <p className="font-bold text-slate-900">Head Usher / Protocol Lead</p>
               <div className="border-b border-dashed border-slate-400 h-10 mt-2 mb-1"></div>
               <p className="text-[11px] text-slate-500">
-                Name: {headcount?.counted_by || 'Deacon Kwesi Appiah'}
+                Name: {headcount?.counted_by || 'Usher / Protocol Lead'}
               </p>
               <p className="text-[10px] text-slate-400">Sign & Date</p>
             </div>
@@ -228,18 +228,18 @@ export const PrintAttendanceRegisterModal: React.FC<PrintAttendanceRegisterModal
             <div>
               <p className="font-bold text-slate-900">General Secretary</p>
               <div className="border-b border-dashed border-slate-400 h-10 mt-2 mb-1 flex items-end justify-start pb-0.5">
-                <span className="font-serif italic text-xs text-slate-700">{settings.general_secretary || 'Tamekloe Clara Gaewornu'}</span>
+                <span className="font-serif italic text-xs text-slate-700">{settings.general_secretary || ''}</span>
               </div>
-              <p className="text-[11px] text-slate-600 font-semibold">{settings.general_secretary || 'Tamekloe Clara Gaewornu'}</p>
+              <p className="text-[11px] text-slate-600 font-semibold">{settings.general_secretary || 'General Secretary'}</p>
               <p className="text-[10px] text-slate-400">Sign & Date</p>
             </div>
 
             <div>
               <p className="font-bold text-slate-900">Resident Pastor Endorsement</p>
               <div className="border-b border-dashed border-slate-400 h-10 mt-2 mb-1 flex items-end justify-start pb-0.5">
-                <span className="font-serif italic text-xs text-slate-700">{settings.senior_pastor || 'Prophet Elisha K. Richard'}</span>
+                <span className="font-serif italic text-xs text-slate-700">{settings.senior_pastor || ''}</span>
               </div>
-              <p className="text-[11px] text-emerald-800 font-semibold">{settings.senior_pastor || 'Prophet Elisha K. Richard'}</p>
+              <p className="text-[11px] text-emerald-800 font-semibold">{settings.senior_pastor || 'Senior Pastor'}</p>
               <p className="text-[10px] text-slate-400">Sign & Stamp</p>
             </div>
           </div>

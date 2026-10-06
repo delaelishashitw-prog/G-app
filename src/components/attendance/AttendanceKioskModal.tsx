@@ -15,7 +15,7 @@ import {
   Check,
   UserPlus,
 } from 'lucide-react';
-import { Member, Visitor, ChurchService } from '../../types/database.types';
+import { Member, Visitor, ChurchService, ChurchSettings } from '../../types/database.types';
 
 interface AttendanceKioskModalProps {
   isOpen: boolean;
@@ -24,6 +24,7 @@ interface AttendanceKioskModalProps {
   date: string;
   members: Member[];
   visitors: Visitor[];
+  settings?: ChurchSettings;
   alreadyCheckedInIds: Set<string>;
   onCheckIn: (personType: 'member' | 'visitor', personId: string) => void;
   onOpenQuickVisitorModal: () => void;
@@ -36,6 +37,7 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
   date,
   members,
   visitors,
+  settings,
   alreadyCheckedInIds,
   onCheckIn,
   onOpenQuickVisitorModal,
@@ -121,12 +123,16 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
       {/* Kiosk Header */}
       <header className="p-6 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-teal-600 flex items-center justify-center font-black text-xl shadow-lg shadow-teal-500/20 text-white">
-            GW
+          <div className="w-12 h-12 rounded-2xl bg-teal-600 flex items-center justify-center font-black text-xl shadow-lg shadow-teal-500/20 text-white overflow-hidden">
+            {settings?.logo_url ? (
+              <img src={settings.logo_url} alt="Logo" className="w-full h-full object-contain p-1" />
+            ) : (
+              settings?.short_name?.slice(0, 2) || 'GW'
+            )}
           </div>
           <div>
             <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2">
-              Greater Works City Church
+              {settings?.church_name || 'Church Sanctuary'}
               <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-teal-500/20 text-teal-300 border border-teal-500/30">
                 Self Check-In Kiosk
               </span>
@@ -143,30 +149,33 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
         {/* Exit / Admin Lock */}
         <div>
           {pinPrompt ? (
-            <div className="flex items-center gap-2 bg-slate-800 p-1.5 rounded-xl border border-slate-700 animate-in slide-in-from-right">
-              <input
-                type="password"
-                placeholder="Admin PIN"
-                value={pinInput}
-                onChange={(e) => setPinInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleUnlockAttempt()}
-                className={`w-36 px-2.5 py-1 text-xs bg-slate-900 border rounded-lg text-white font-mono text-center focus:outline-none ${
-                  pinError ? 'border-rose-500' : 'border-slate-700'
-                }`}
-                autoFocus
-              />
-              <button
-                onClick={handleUnlockAttempt}
-                className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-xs font-bold rounded-lg transition"
-              >
-                Exit
-              </button>
-              <button
-                onClick={() => setPinPrompt(false)}
-                className="p-1 text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
+            <div className="flex flex-col items-end gap-1">
+              <div className="flex items-center gap-2 bg-slate-800 p-1.5 rounded-xl border border-slate-700 animate-in slide-in-from-right">
+                <input
+                  type="password"
+                  placeholder="PIN (1234)"
+                  value={pinInput}
+                  onChange={(e) => setPinInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleUnlockAttempt()}
+                  className={`w-32 px-2.5 py-1 text-xs bg-slate-900 border rounded-lg text-white font-mono text-center focus:outline-none ${
+                    pinError ? 'border-rose-500' : 'border-slate-700'
+                  }`}
+                  autoFocus
+                />
+                <button
+                  onClick={handleUnlockAttempt}
+                  className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-xs font-bold rounded-lg transition"
+                >
+                  Exit
+                </button>
+                <button
+                  onClick={() => setPinPrompt(false)}
+                  className="p-1 text-slate-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <span className="text-[10px] text-slate-400 font-mono">Default PIN: 1234 or gwcc</span>
             </div>
           ) : (
             <button

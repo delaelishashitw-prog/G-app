@@ -52,7 +52,7 @@ export const QuickAddVisitorModal: React.FC<QuickAddVisitorModalProps> = ({
         full_name: formData.full_name.trim(),
         gender: formData.gender,
         phone: formData.phone.trim(),
-        address: formData.address.trim() || 'Joma, Accra',
+        address: formData.address.trim() || undefined,
         gps_address: formData.gps_address.trim() || undefined,
         visit_date: date,
         service_attended: serviceName,
@@ -66,6 +66,15 @@ export const QuickAddVisitorModal: React.FC<QuickAddVisitorModalProps> = ({
       const attRes = recordAttendance(serviceId, 'visitor', newVisitor.id, 'manual', date);
 
       success(`Welcome ${newVisitor.full_name}! Registered and checked in successfully.`);
+      setFormData({
+        full_name: '',
+        gender: 'male',
+        phone: '',
+        address: '',
+        gps_address: '',
+        invited_by: '',
+        prayer_request: '',
+      });
       if (onVisitorAddedAndCheckedIn) {
         onVisitorAddedAndCheckedIn(newVisitor.id);
       }

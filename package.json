@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "node --test src/lib/financeDateUtils.test.js src/lib/networkStatus.test.js src/lib/keyboardShortcuts.test.js src/lib/refreshFunctionality.test.js && tsx --test src/lib/familyUtils.test.js"
+    "test": "node --test src/lib/financeDateUtils.test.js src/lib/networkStatus.test.js src/lib/keyboardShortcuts.test.js src/lib/refreshFunctionality.test.js src/lib/attendanceDateUtils.test.js && tsx --test src/lib/familyUtils.test.js"
   },
   "engines": {
     "node": ">=22.0.0"
