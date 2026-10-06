@@ -57,6 +57,7 @@ import {
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { useChurchData } from '../contexts/ChurchDataContext';
+import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { AnimatedNumber } from '../components/AnimatedNumber';
 import { GivingCategory, PaymentMethod, GivingRecord, ExpenseRecord, Member } from '../types/database.types';
@@ -133,10 +134,12 @@ const createDefaultDenominations = (): DenominationRow[] => [
 ];
 
 export const FinancePage: React.FC = () => {
+  const { currentUser } = useAuth();
   const {
     giving,
     expenses,
     members,
+    services,
     settings,
     recordGiving,
     updateGiving,
@@ -200,12 +203,14 @@ export const FinancePage: React.FC = () => {
 
   // Sunday Offering Counter tool state
   const [denominations, setDenominations] = useState<DenominationRow[]>(createDefaultDenominations);
-  const [counterServiceName, setCounterServiceName] = useState('Sunday 2nd Service (Celebration Service)');
+  const [counterServiceName, setCounterServiceName] = useState(services[0]?.name || 'Sunday Service');
   const [counterDate, setCounterDate] = useState(todayISO());
-  const [counterEnvelopesCount, setCounterEnvelopesCount] = useState<number>(34);
-  const [counterMoMoTotal, setCounterMoMoTotal] = useState<number>(3250);
-  const [counterTelecelTotal, setCounterTelecelTotal] = useState<number>(650);
-  const [counterSupervisor, setCounterSupervisor] = useState('Deacon Kofi Asante');
+  const [counterEnvelopesCount, setCounterEnvelopesCount] = useState<number>(0);
+  const [counterMoMoTotal, setCounterMoMoTotal] = useState<number>(0);
+  const [counterTelecelTotal, setCounterTelecelTotal] = useState<number>(0);
+  const [counterSupervisor, setCounterSupervisor] = useState(
+    currentUser?.first_name ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Committee Lead'
+  );
   const [counterNotes, setCounterNotes] = useState('Open basket collection & tither envelopes counted by Finance Committee');
   const [counterUsdAmount, setCounterUsdAmount] = useState<number>(0);
   const [counterUsdRate, setCounterUsdRate] = useState<number>(15.8);
@@ -225,7 +230,7 @@ export const FinancePage: React.FC = () => {
     payment_method: 'mobile_money' as PaymentMethod,
     payment_channel: 'MTN MoMo',
     reference_number: '',
-    service_name: 'Sunday 2nd Service (Celebration)',
+    service_name: services[0]?.name || 'Sunday Service',
     notes: '',
   });
 
@@ -238,7 +243,7 @@ export const FinancePage: React.FC = () => {
     payment_method: 'mobile_money' as PaymentMethod,
     recipient: '',
     account: 'Mobile Money Account',
-    approved_by: 'Prophet Elisha K. Richard',
+    approved_by: settings.senior_pastor || 'Senior Pastor',
     reference_number: '',
     notes: '',
   });
@@ -975,7 +980,7 @@ export const FinancePage: React.FC = () => {
       payment_method: 'mobile_money',
       account: 'Mobile Money Account',
       recipient: '',
-      approved_by: 'Prophet Elisha K. Richard',
+      approved_by: settings.senior_pastor || 'Senior Pastor',
       reference_number: '',
       notes: '',
     });
@@ -1033,7 +1038,7 @@ export const FinancePage: React.FC = () => {
             </h1>
           </div>
           <p className="text-xs text-slate-500">
-            {settings.church_name || 'Greater Works City Church'}, {settings.branch_name || 'Joma Assembly'} • Currency: Ghana Cedi (GH₵)
+            {settings.church_name || 'Church Cathedral'}{settings.branch_name ? `, ${settings.branch_name}` : ''} • Currency: {settings.currency || 'Ghana Cedi'} ({settings.currency_symbol || 'GH₵'})
           </p>
         </div>
 
@@ -2028,8 +2033,8 @@ export const FinancePage: React.FC = () => {
                     const cleanPhone = cleanGhanaPhone(row.member.phone);
                     const waMessage =
                       row.status === 'consistent'
-                        ? `Dear ${row.member.first_name}, blessings from Greater Works City Church! Prophet Elisha and the leadership want to thank you for your faithful covenant stewardship and tithes. May God open the windows of heaven upon you!`
-                        : `Dear ${row.member.first_name}, warm greetings from Greater Works City Church! We are praying for you and wanted to check in on you and your family. Let us know if you need any pastoral support or prayer.`;
+                        ? `Dear ${row.member.first_name}, blessings from ${settings.church_name}! The pastoral leadership and church family want to thank you for your faithful covenant stewardship and tithes. May God open the windows of heaven upon you!`
+                        : `Dear ${row.member.first_name}, warm greetings from ${settings.church_name}! We are praying for you and wanted to check in on you and your family. Let us know if you need any pastoral support or prayer.`;
                     const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(waMessage)}`;
 
                     return (
@@ -2557,8 +2562,8 @@ export const FinancePage: React.FC = () => {
           <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-4">
             <div className="px-6 py-4 bg-[#064e3b] text-white flex items-center justify-between">
               <div>
-                <h3 className="text-base font-bold">Record Tithe or Offering (GH₵)</h3>
-                <p className="text-xs text-emerald-200">{settings.church_name || 'Greater Works City Church'} Treasury</p>
+                <h3 className="text-base font-bold">Record Tithe or Offering ({settings.currency_symbol || 'GH₵'})</h3>
+                <p className="text-xs text-emerald-200">{settings.church_name || 'Church'} Treasury</p>
               </div>
               <button onClick={() => setIsGivingModalOpen(false)} className="p-1 text-white/80 hover:text-white cursor-pointer">
                 ✕
@@ -2963,7 +2968,7 @@ export const FinancePage: React.FC = () => {
                     value={expenseForm.recipient}
                     onChange={(e) => setExpenseForm({ ...expenseForm, recipient: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                    placeholder="e.g. ECG Ablekuma District"
+                    placeholder="e.g. Utility Provider / Vendor"
                   />
                 </div>
                 <div>
@@ -2973,7 +2978,7 @@ export const FinancePage: React.FC = () => {
                     value={expenseForm.approved_by}
                     onChange={(e) => setExpenseForm({ ...expenseForm, approved_by: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                    placeholder="e.g. Prophet Elisha K. Richard"
+                    placeholder={`e.g. ${settings.senior_pastor || 'Senior Pastor'}`}
                   />
                 </div>
               </div>

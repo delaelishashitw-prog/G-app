@@ -35,7 +35,7 @@ import { EditPledgeModal } from '../components/pledges/EditPledgeModal';
 import { PrintPledgesModal } from '../components/pledges/PrintPledgesModal';
 
 export const PledgesPage: React.FC = () => {
-  const { pledges, campaigns, members } = useChurchData();
+  const { pledges, campaigns, members, settings } = useChurchData();
 
   // Search & Filter State
   const [searchTerm, setSearchTerm] = useState('');
@@ -141,7 +141,7 @@ export const PledgesPage: React.FC = () => {
     const phone = cleanGhanaPhone(p.member_phone);
     const name = p.member_name.split(' ')[0] || 'Beloved';
     const text = encodeURIComponent(
-      `Calvary greetings ${name} from Greater Works City Church! 🙌\n\nGentle update on your kingdom pledge for *${p.campaign_name}*:\n• Total Vowed: ${formatGHS(p.amount_pledged)}\n• Redeemed: ${formatGHS(p.amount_paid)}\n• Current Balance: ${formatGHS(p.balance)}\n\nYou may remit via MTN MoMo: 024 456 1234 (GWCC Project Acct). God multiply your seed sown!`
+      `Calvary greetings ${name} from ${settings.church_name}! 🙌\n\nGentle update on your kingdom pledge for *${p.campaign_name}*:\n• Total Vowed: ${formatGHS(p.amount_pledged)}\n• Redeemed: ${formatGHS(p.amount_paid)}\n• Current Balance: ${formatGHS(p.balance)}\n\nYou may remit via ${settings.phone ? `MoMo: ${settings.phone} (${settings.short_name || 'Church'} Project Acct)` : 'the church treasury'}. God multiply your seed sown!`
     );
     const url = phone ? `https://wa.me/${phone}?text=${text}` : `https://wa.me/?text=${text}`;
     const a = document.createElement('a');
@@ -388,7 +388,7 @@ export const PledgesPage: React.FC = () => {
                   </div>
 
                   <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">
-                    {camp.description || 'Church infrastructural covenant project in Joma, Accra.'}
+                    {camp.description || `Church infrastructural covenant project for ${settings.branch_name || settings.church_name}.`}
                   </p>
                 </div>
 
@@ -833,7 +833,7 @@ export const PledgesPage: React.FC = () => {
             <div className="font-semibold text-xs text-purple-100 italic">
               "Go up to the mountain, and bring wood, and build the house; and I will take pleasure in it, and I will be glorified, saith the LORD."
             </div>
-            <p className="text-[10px] text-purple-300 mt-0.5">— Haggai 1:8 • Greater Works City Church Sanctuary Development</p>
+            <p className="text-[10px] text-purple-300 mt-0.5">— Haggai 1:8 • {settings.church_name} Sanctuary Development</p>
           </div>
         </div>
 

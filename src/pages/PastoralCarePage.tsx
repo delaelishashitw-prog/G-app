@@ -13,11 +13,17 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { useChurchData } from '../contexts/ChurchDataContext';
+import { useAuth } from '../contexts/AuthContext';
 import { PastoralCareLog, PrayerRequest } from '../types/database.types';
 
 export const PastoralCarePage: React.FC = () => {
-  const { pastoralCare, prayerRequests, members, addPastoralCareLog, addPrayerRequest, updatePrayerStatus } =
+  const { currentUser } = useAuth();
+  const { pastoralCare, prayerRequests, members, settings, addPastoralCareLog, addPrayerRequest, updatePrayerStatus } =
     useChurchData();
+
+  const defaultPastorName = currentUser?.first_name
+    ? `${currentUser.first_name} ${currentUser.last_name}`
+    : settings.senior_pastor || 'Senior Pastor';
 
   const [activeTab, setActiveTab] = useState<'care' | 'prayers'>('prayers');
   const [isCareModalOpen, setIsCareModalOpen] = useState(false);
@@ -26,7 +32,7 @@ export const PastoralCarePage: React.FC = () => {
   // Forms
   const [careForm, setCareForm] = useState({
     member_id: members[0]?.id || '',
-    pastor_name: 'Prophet Elisha K. Richard',
+    pastor_name: defaultPastorName,
     care_type: 'counseling' as const,
     date: new Date().toISOString().split('T')[0],
     notes: '',
@@ -50,7 +56,7 @@ export const PastoralCarePage: React.FC = () => {
     addPastoralCareLog({
       member_id: careForm.member_id,
       member_name: memberName,
-      pastor_name: careForm.pastor_name,
+      pastor_name: careForm.pastor_name || defaultPastorName,
       care_type: careForm.care_type,
       date: careForm.date,
       notes: careForm.notes,
@@ -61,7 +67,7 @@ export const PastoralCarePage: React.FC = () => {
     setIsCareModalOpen(false);
     setCareForm({
       member_id: members[0]?.id || '',
-      pastor_name: 'Prophet Elisha K. Richard',
+      pastor_name: defaultPastorName,
       care_type: 'counseling',
       date: new Date().toISOString().split('T')[0],
       notes: '',

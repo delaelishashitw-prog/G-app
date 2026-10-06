@@ -24,6 +24,8 @@ export interface ReportsSummaryCardsProps {
   offeringsIncome?: number;
   buildingFundIncome?: number;
   peakWeeklyAttendance?: number;
+  netQuarterlyGrowth?: number;
+  churchBranch?: string;
   periodLabel?: string;
   onFilterClick?: (type: 'membership' | 'financial' | 'attendance') => void;
   className?: string;
@@ -39,11 +41,13 @@ export const ReportsSummaryCards: React.FC<ReportsSummaryCardsProps> = ({
   offeringsIncome,
   buildingFundIncome,
   peakWeeklyAttendance,
+  netQuarterlyGrowth,
+  churchBranch,
   periodLabel = 'Current Reporting Period',
   onFilterClick,
   className = '',
 }) => {
-  const activeRate = totalMembers > 0 ? Math.round((activeMembers / totalMembers) * 100) : 92;
+  const activeRate = totalMembers > 0 ? Math.round((activeMembers / totalMembers) * 100) : 0;
 
   return (
     <div className={`space-y-2 no-print ${className}`}>
@@ -54,7 +58,7 @@ export const ReportsSummaryCards: React.FC<ReportsSummaryCardsProps> = ({
           High-Level Church Performance Metrics ({periodLabel})
         </span>
         <span className="text-[10px] text-emerald-800 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-          Greater Works City Church • Joma
+          {churchBranch || 'Greater Works City Church'}
         </span>
       </div>
 
@@ -107,7 +111,9 @@ export const ReportsSummaryCards: React.FC<ReportsSummaryCardsProps> = ({
                 Net Quarterly Growth
               </span>
               <span className="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md text-[11px]">
-                +16 disciples
+                {netQuarterlyGrowth !== undefined && netQuarterlyGrowth > 0
+                  ? `+${netQuarterlyGrowth} disciples`
+                  : `${netQuarterlyGrowth ?? 0} disciples`}
               </span>
             </div>
           </div>
@@ -154,7 +160,7 @@ export const ReportsSummaryCards: React.FC<ReportsSummaryCardsProps> = ({
                 Tithes Collected
               </span>
               <span className="font-bold font-mono text-emerald-800">
-                {tithesIncome !== undefined ? formatGHS(tithesIncome) : 'GH₵ 12,400.00'}
+                {formatGHS(tithesIncome ?? 0)}
               </span>
             </div>
 
@@ -164,7 +170,7 @@ export const ReportsSummaryCards: React.FC<ReportsSummaryCardsProps> = ({
                 Sunday Offerings
               </span>
               <span className="font-bold font-mono text-slate-800">
-                {offeringsIncome !== undefined ? formatGHS(offeringsIncome) : 'GH₵ 8,600.00'}
+                {formatGHS(offeringsIncome ?? 0)}
               </span>
             </div>
           </div>
@@ -207,7 +213,7 @@ export const ReportsSummaryCards: React.FC<ReportsSummaryCardsProps> = ({
                 Peak Celebration Turnout
               </span>
               <span className="font-bold text-sky-900 bg-sky-50 px-1.5 py-0.5 rounded-md text-[11px]">
-                {peakWeeklyAttendance ? `${peakWeeklyAttendance} souls` : '202 souls'}
+                {peakWeeklyAttendance ? `${peakWeeklyAttendance} souls` : '0 souls'}
               </span>
             </div>
 

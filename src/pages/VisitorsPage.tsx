@@ -39,7 +39,7 @@ import { PrintVisitorsModal } from '../components/visitors/PrintVisitorsModal';
 import { AssimilationKanbanBoard } from '../components/visitors/AssimilationKanbanBoard';
 
 export const VisitorsPage: React.FC = () => {
-  const { visitors, addVisitor, updateVisitor, deleteVisitor, convertVisitorToMember } = useChurchData();
+  const { visitors, services, settings, addVisitor, updateVisitor, deleteVisitor, convertVisitorToMember } = useChurchData();
   const { success, error: toastError, info } = useToast();
 
   // Search & Filtering
@@ -67,12 +67,12 @@ export const VisitorsPage: React.FC = () => {
     email: '',
     address: '',
     gps_address: 'GA-',
-    service_attended: 'Sunday 2nd Service (Celebration Service)',
+    service_attended: services[0]?.name || 'Sunday Service',
     invited_by: '',
     how_heard: 'Friend / Family',
     prayer_request: '',
     follow_up_status: 'new' as VisitorStatus,
-    assigned_to_name: 'Pastor David Osei-Tutu',
+    assigned_to_name: settings.senior_pastor || 'Pastoral Care Team',
     notes: '',
   });
 
@@ -578,7 +578,7 @@ export const VisitorsPage: React.FC = () => {
                       {/* Location & GPS */}
                       <td className="py-3 px-4 text-slate-700">
                         <span className="block truncate max-w-[140px]">
-                          {visitor.address || 'Joma area'}
+                          {visitor.address || settings.location || 'Local area'}
                         </span>
                         {visitor.gps_address ? (
                           <span className="font-mono text-[10px] text-slate-400 block">
@@ -844,7 +844,7 @@ export const VisitorsPage: React.FC = () => {
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-900">Convert Visitor to Official Member</h3>
-                <p className="text-xs text-slate-500">Greater Works City Church (GWCC)</p>
+                <p className="text-xs text-slate-500">{settings.church_name || 'Church Membership Registry'}</p>
               </div>
             </div>
 
@@ -920,7 +920,7 @@ export const VisitorsPage: React.FC = () => {
             <div className="px-6 py-4 bg-blue-800 text-white flex items-center justify-between">
               <div>
                 <h3 className="text-base font-bold">Register Church Visitor</h3>
-                <p className="text-xs text-blue-100">Greater Works City Church, Joma Assembly</p>
+                <p className="text-xs text-blue-100">{settings.church_name || 'Church'}{settings.branch_name ? `, ${settings.branch_name}` : ''}</p>
               </div>
               <button
                 onClick={() => setIsAddModalOpen(false)}

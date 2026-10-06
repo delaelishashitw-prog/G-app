@@ -124,16 +124,17 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
   isOpen,
   onClose,
   defaultTemplate = 'financial_executive_summary',
-  initialStartDate = '2026-09-01',
-  initialEndDate = '2026-09-30',
+  initialStartDate,
+  initialEndDate,
 }) => {
   const { members, visitors, attendance, giving, expenses, pledges, settings, smallGroups, ministries } = useChurchData();
   const { currentUser } = useAuth();
   const { success, error: toastError } = useToast();
 
+  const currentYear = new Date().getFullYear();
   const [selectedTemplate, setSelectedTemplate] = useState<ReportTemplateType>(defaultTemplate);
-  const [startDate, setStartDate] = useState(initialStartDate);
-  const [endDate, setEndDate] = useState(initialEndDate);
+  const [startDate, setStartDate] = useState(initialStartDate || `${currentYear}-01-01`);
+  const [endDate, setEndDate] = useState(initialEndDate || `${currentYear}-12-31`);
   const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
   const [includeSignatures, setIncludeSignatures] = useState(true);
   const [includeSummaryKpis, setIncludeSummaryKpis] = useState(true);

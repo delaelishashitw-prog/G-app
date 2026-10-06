@@ -666,7 +666,7 @@ export function generateChurchReportPdf(
       m.gender.toUpperCase(),
       m.phone,
       m.ministry_name || 'General Congregation',
-      m.small_group_name || 'Central',
+      m.small_group_name || '-',
       m.gps_address || '-',
       m.status.toUpperCase(),
     ]);
@@ -829,7 +829,7 @@ export function generateChurchReportPdf(
         g.leader_name || '-',
         g.leader_phone || '-',
         `${g.meeting_day || 'Weekly'}s @ ${g.meeting_time || '6:30 PM'}`,
-        g.meeting_address || g.meeting_location || 'Accra',
+        g.meeting_address || g.meeting_location || '-',
         disciples.toString(),
       ];
     });

@@ -29,7 +29,7 @@ export const DashboardSummary: React.FC<DashboardSummaryProps> = ({
   onOpenQuickAction,
 }) => {
   const navigate = useNavigate();
-  const { members, visitors, attendance, services, giving, pledges, settings } = useChurchData();
+  const { members, visitors, attendance, headcounts, services, giving, pledges, settings } = useChurchData();
 
   const handleNavigate = (path: string) => {
     if (onNavigateTab) {
@@ -39,40 +39,82 @@ export const DashboardSummary: React.FC<DashboardSummaryProps> = ({
     }
   };
 
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonthNum = now.getMonth() + 1; // 1-12
+  const currentYearMonth = `${currentYear}-${String(currentMonthNum).padStart(2, '0')}`;
+  const currentMonthName = now.toLocaleDateString('en-US', { month: 'long' });
+
   // 1. Total Members Metric
   const totalMembers = members.filter((m) => !m.is_archived).length;
   const activeMembers = members.filter((m) => m.status === 'active' && !m.is_archived).length;
+  const retentionRate = totalMembers > 0
+    ? ((activeMembers / totalMembers) * 100).toFixed(1)
+    : '100';
+
+  // Dynamic month determination for giving/records (fallback to latest data month if current month is new)
+  const hasGivingCurrentMonth = giving.some((g) => g.date && g.date.startsWith(currentYearMonth));
+  const activeGivingYearMonth = hasGivingCurrentMonth
+    ? currentYearMonth
+    : giving.length > 0
+    ? [...giving].sort((a, b) => b.date.localeCompare(a.date))[0]?.date?.slice(0, 7) || currentYearMonth
+    : currentYearMonth;
+
+  const [givingYear, givingMonth] = activeGivingYearMonth.split('-').map(Number);
+  const activeGivingMonthName = !Number.isNaN(givingYear) && !Number.isNaN(givingMonth)
+    ? new Date(givingYear, givingMonth - 1, 1).toLocaleDateString('en-US', { month: 'long' })
+    : currentMonthName;
+
   const newMembersThisMonth = members.filter((m) => {
-    if (!m.membership_date) return false;
-    const d = new Date(m.membership_date);
-    return d.getMonth() === 8 && d.getFullYear() === 2026; // September 2026
+    const raw = m.membership_date || (m as any).date_joined || m.created_at;
+    if (!raw || m.is_archived) return false;
+    return raw.startsWith(currentYearMonth) || raw.startsWith(activeGivingYearMonth);
   }).length;
   const newConvertsCount = members.filter((m) => m.status === 'new_convert' && !m.is_archived).length;
 
   // 2. Last Service Attendance & Percentage
-  const sortedDates = Array.from(new Set(attendance.map((a) => a.date))).sort().reverse();
-  const lastServiceDate = sortedDates[0] || '2026-09-20';
+  const allRecordedDates = Array.from(
+    new Set([...attendance.map((a) => a.date), ...headcounts.map((h) => h.date)].filter(Boolean))
+  ).sort().reverse();
+
+  const lastServiceDate = allRecordedDates[0] || currentYearMonth + '-01';
   const lastServiceAttendanceRecords = attendance.filter(
     (a) => a.date === lastServiceDate && a.status === 'present'
   );
+  const lastServiceHeadcount = headcounts.find((h) => h.date === lastServiceDate);
+
   const lastServiceName =
     lastServiceAttendanceRecords[0]?.service_name ||
-    services.find((s) => s.id === 'srv-002')?.name ||
-    'Sunday 2nd Service';
+    lastServiceHeadcount?.service_name ||
+    services[0]?.name ||
+    'Sunday Service';
 
-  const lastServiceAttendeesCount = lastServiceAttendanceRecords.length;
+  const lastServiceAttendeesCount =
+    lastServiceAttendanceRecords.length > 0
+      ? lastServiceAttendanceRecords.length
+      : lastServiceHeadcount
+      ? lastServiceHeadcount.total_auditorium ||
+        lastServiceHeadcount.men +
+          lastServiceHeadcount.women +
+          lastServiceHeadcount.youth +
+          lastServiceHeadcount.children +
+          lastServiceHeadcount.visitors
+      : 0;
+
   const attendanceRate = activeMembers > 0
     ? Math.min(100, Math.round((lastServiceAttendeesCount / activeMembers) * 100))
-    : 85;
+    : 0;
 
-  const formattedLastServiceDate = new Date(lastServiceDate).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+  const formattedLastServiceDate = allRecordedDates[0]
+    ? new Date(lastServiceDate).toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      })
+    : 'No recent service';
 
-  // 3. Total Contributions for Current Month
-  const currentMonthGivingRecords = giving.filter((g) => g.date.startsWith('2026-09'));
+  // 3. Total Contributions for Active Month
+  const currentMonthGivingRecords = giving.filter((g) => g.date && g.date.startsWith(activeGivingYearMonth));
   const totalContributionsMonth = currentMonthGivingRecords.reduce((sum, g) => sum + g.amount, 0);
 
   const titheContributions = currentMonthGivingRecords
@@ -85,10 +127,17 @@ export const DashboardSummary: React.FC<DashboardSummaryProps> = ({
 
   const moMoPercentage = totalContributionsMonth > 0
     ? Math.round((moMoContributions / totalContributionsMonth) * 100)
-    : 72;
+    : 0;
 
   // 4. Visitors & Follow-ups
-  const visitorsThisMonth = visitors.filter((v) => v.visit_date.startsWith('2026-09')).length;
+  const hasVisitorsCurrentMonth = visitors.some((v) => v.visit_date && v.visit_date.startsWith(currentYearMonth));
+  const activeVisitorYearMonth = hasVisitorsCurrentMonth
+    ? currentYearMonth
+    : visitors.length > 0
+    ? [...visitors].sort((a, b) => b.visit_date.localeCompare(a.visit_date))[0]?.visit_date?.slice(0, 7) || currentYearMonth
+    : currentYearMonth;
+
+  const visitorsThisMonth = visitors.filter((v) => v.visit_date && v.visit_date.startsWith(activeVisitorYearMonth)).length;
   const pendingFollowUps = visitors.filter(
     (v) => v.follow_up_status === 'new' || v.follow_up_status === 'follow_up_required'
   ).length;
@@ -98,6 +147,8 @@ export const DashboardSummary: React.FC<DashboardSummaryProps> = ({
   const totalPledged = pledges.reduce((acc, curr) => acc + curr.amount_pledged, 0);
   const totalPledgeRedeemed = pledges.reduce((acc, curr) => acc + curr.amount_paid, 0);
   const pledgeRedeemedPercent = totalPledged > 0 ? Math.round((totalPledgeRedeemed / totalPledged) * 100) : 0;
+  const pledgeCampaigns = Array.from(new Set(pledges.map((p) => p.campaign_name).filter(Boolean)));
+  const campaignSummary = pledgeCampaigns.slice(0, 2).join(' & ') || 'Church Campaigns';
 
   // Animation variants
   const containerVariants = {
@@ -192,7 +243,7 @@ export const DashboardSummary: React.FC<DashboardSummaryProps> = ({
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
             <span className="text-slate-600 font-medium flex items-center gap-1">
               <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-              <span>98.2% retention</span>
+              <span>{retentionRate}% retention</span>
             </span>
             <span className="text-emerald-700 font-semibold group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5">
               Directory <ArrowUpRight className="w-3.5 h-3.5" />
@@ -263,7 +314,7 @@ export const DashboardSummary: React.FC<DashboardSummaryProps> = ({
           <div>
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                September Giving
+                {activeGivingMonthName} Giving
               </span>
               <div className="p-2.5 rounded-xl bg-amber-50 text-amber-700 group-hover:bg-amber-600 group-hover:text-white transition-colors duration-200 shadow-2xs">
                 <Coins className="w-5 h-5" />
@@ -338,8 +389,8 @@ export const DashboardSummary: React.FC<DashboardSummaryProps> = ({
           </div>
 
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-            <span className="text-slate-600 font-medium truncate max-w-[150px]">
-              Cathedral & Buses
+            <span className="text-slate-600 font-medium truncate max-w-[150px]" title={campaignSummary}>
+              {campaignSummary}
             </span>
             <span className="text-purple-700 font-semibold group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5">
               Pledges <ArrowUpRight className="w-3.5 h-3.5" />

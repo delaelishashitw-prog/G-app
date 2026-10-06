@@ -31,15 +31,17 @@ import {
   DollarSign,
   UserCheck,
 } from 'lucide-react';
-import { GivingRecord, ExpenseRecord, AttendanceRecord } from '../types/database.types';
+import { GivingRecord, ExpenseRecord, AttendanceRecord, HeadcountRecord } from '../types/database.types';
 import { formatGHS } from '../lib/pdfReportGenerator';
 
 interface ReportsVisualChartsSectionProps {
   giving: GivingRecord[];
   expenses: ExpenseRecord[];
   attendance: AttendanceRecord[];
+  headcounts?: HeadcountRecord[];
   startDate?: string;
   endDate?: string;
+  branchName?: string;
   className?: string;
 }
 
@@ -47,8 +49,10 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
   giving,
   expenses,
   attendance,
+  headcounts = [],
   startDate,
   endDate,
+  branchName,
   className = '',
 }) => {
   // Chart layout view: 'both' | 'finance' | 'attendance'
@@ -60,17 +64,65 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
   // Attendance chart style: 'area' | 'bar' | 'stacked'
   const [attendanceChartStyle, setAttendanceChartStyle] = useState<'area' | 'bar' | 'stacked'>('area');
 
-  // 1. FINANCIAL TRENDS AGGREGATION (Monthly & Live)
+  // 1. FINANCIAL TRENDS AGGREGATION (Dynamic Monthly Inflow vs Outflow)
   const financialData = useMemo(() => {
-    // Aggregate the reporting window from live ledger records.
-    const months = [
-      { key: '2026-05', month: 'May 2026', short: 'May' },
-      { key: '2026-06', month: 'Jun 2026', short: 'Jun' },
-      { key: '2026-07', month: 'Jul 2026', short: 'Jul' },
-      { key: '2026-08', month: 'Aug 2026', short: 'Aug' },
-      { key: '2026-09', month: 'Sep 2026', short: 'Sep' },
-      { key: '2026-10', month: 'Oct 2026', short: 'Oct' },
+    const monthKeysSet = new Set<string>();
+
+    // If date filters provided, populate all months in the window
+    if (startDate && endDate) {
+      const startY = parseInt(startDate.slice(0, 4), 10);
+      const startM = parseInt(startDate.slice(5, 7), 10);
+      const endY = parseInt(endDate.slice(0, 4), 10);
+      const endM = parseInt(endDate.slice(5, 7), 10);
+      if (!isNaN(startY) && !isNaN(startM) && !isNaN(endY) && !isNaN(endM)) {
+        let curY = startY;
+        let curM = startM;
+        while (curY < endY || (curY === endY && curM <= endM)) {
+          monthKeysSet.add(`${curY}-${String(curM).padStart(2, '0')}`);
+          curM++;
+          if (curM > 12) {
+            curM = 1;
+            curY++;
+          }
+        }
+      }
+    }
+
+    // Include any months with actual giving or expense entries
+    giving.forEach((g) => {
+      if (g.date && g.date.length >= 7) monthKeysSet.add(g.date.slice(0, 7));
+    });
+    expenses.forEach((e) => {
+      if (e.date && e.date.length >= 7) monthKeysSet.add(e.date.slice(0, 7));
+    });
+
+    // Fallback: If no records, show the current month and prior 5 months
+    if (monthKeysSet.size === 0) {
+      const now = new Date();
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        monthKeysSet.add(k);
+      }
+    }
+
+    const sortedKeys = Array.from(monthKeysSet).sort();
+    // Cap visual bar chart at most recent 12 months for readable rendering
+    const displayKeys = sortedKeys.length > 12 ? sortedKeys.slice(-12) : sortedKeys;
+
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const fullMonthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
     ];
+
+    const months = displayKeys.map((key) => {
+      const [yStr, mStr] = key.split('-');
+      const mIdx = parseInt(mStr, 10) - 1;
+      const short = monthNames[mIdx] || mStr;
+      const month = `${fullMonthNames[mIdx] || mStr} ${yStr}`;
+      return { key, month, short };
+    });
 
     return months.map((m) => {
       const monthGiving = giving.filter((g) => g.date.startsWith(m.key));
@@ -106,7 +158,7 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
         otherGiving,
       };
     });
-  }, [giving, expenses]);
+  }, [giving, expenses, startDate, endDate]);
 
   // Aggregate Finance Totals
   const totalPeriodIncome = useMemo(
@@ -120,129 +172,141 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
   const totalPeriodSurplus = totalPeriodIncome - totalPeriodExpense;
   const overallSavingsRate = Math.round((totalPeriodSurplus / (totalPeriodIncome || 1)) * 100);
 
-  // 2. WEEKLY ATTENDANCE TRENDS AGGREGATION (Last 8 Weeks)
+  // 2. WEEKLY ATTENDANCE TRENDS AGGREGATION (Computed from real Database Records)
   const weeklyAttendanceData = useMemo(() => {
-    // 8-week structured tracking (August - October 2026)
-    const baseWeeks = [
+    const weekMap = new Map<
+      string,
       {
-        weekLabel: 'Aug 10 - 16',
-        weekShort: 'Wk 33',
-        members: 142,
-        visitors: 14,
-        sunday1st: 68,
-        sunday2nd: 88,
-        midweek: 52,
-      },
-      {
-        weekLabel: 'Aug 17 - 23',
-        weekShort: 'Wk 34',
-        members: 148,
-        visitors: 18,
-        sunday1st: 72,
-        sunday2nd: 94,
-        midweek: 56,
-      },
-      {
-        weekLabel: 'Aug 24 - 30',
-        weekShort: 'Wk 35',
-        members: 156,
-        visitors: 16,
-        sunday1st: 76,
-        sunday2nd: 96,
-        midweek: 60,
-      },
-      {
-        weekLabel: 'Aug 31 - Sep 06',
-        weekShort: 'Wk 36',
-        members: 164,
-        visitors: 22,
-        sunday1st: 80,
-        sunday2nd: 106,
-        midweek: 64,
-      },
-      {
-        weekLabel: 'Sep 07 - 13',
-        weekShort: 'Wk 37',
-        members: 172,
-        visitors: 19,
-        sunday1st: 84,
-        sunday2nd: 107,
-        midweek: 68,
-      },
-      {
-        weekLabel: 'Sep 14 - 20',
-        weekShort: 'Wk 38',
-        members: 181,
-        visitors: 24,
-        sunday1st: 88,
-        sunday2nd: 117,
-        midweek: 74,
-      },
-      {
-        weekLabel: 'Sep 21 - 27',
-        weekShort: 'Wk 39',
-        members: 188,
-        visitors: 21,
-        sunday1st: 92,
-        sunday2nd: 117,
-        midweek: 78,
-      },
-      {
-        weekLabel: 'Sep 28 - Oct 04',
-        weekShort: 'Wk 40',
-        members: 195,
-        visitors: 26,
-        sunday1st: 96,
-        sunday2nd: 125,
-        midweek: 82,
-      },
-    ];
-
-    // Compute actual live database attendance count
-    const liveAttendanceCount = attendance.length;
-    const memberAttendanceCount = attendance.filter(
-      (a) => a.person_type === 'member' || a.member_id
-    ).length;
-    const visitorAttendanceCount = liveAttendanceCount - memberAttendanceCount;
-
-    return baseWeeks.map((wk, idx) => {
-      let members = wk.members;
-      let visitors = wk.visitors;
-
-      // Ensure recent weeks reflect live check-in counts
-      if (idx >= 5) {
-        if (memberAttendanceCount > 0) {
-          members = Math.max(members, memberAttendanceCount);
-        }
-        if (visitorAttendanceCount > 0) {
-          visitors = Math.max(visitors, visitorAttendanceCount);
-        }
+        weekLabel: string;
+        weekShort: string;
+        year: number;
+        members: number;
+        visitors: number;
+        totalHeadcount: number;
+        sunday1st: number;
+        sunday2nd: number;
+        midweek: number;
       }
+    >();
 
-      const totalHeadcount = members + visitors;
-      const visitorRatio = Math.round((visitors / (totalHeadcount || 1)) * 100);
+    // 1. Process Headcounts
+    if (headcounts && headcounts.length > 0) {
+      headcounts.forEach((hc) => {
+        if (!hc.date) return;
+        if (startDate && hc.date < startDate) return;
+        if (endDate && hc.date > endDate) return;
 
-      return {
-        weekLabel: wk.weekLabel,
-        weekShort: wk.weekShort,
-        members,
-        visitors,
-        totalHeadcount,
-        visitorRatio,
-        sunday1st: wk.sunday1st,
-        sunday2nd: wk.sunday2nd,
-        midweek: wk.midweek,
-      };
+        const d = new Date(hc.date);
+        const y = d.getFullYear();
+        const oneJan = new Date(y, 0, 1);
+        const numberOfDays = Math.floor((d.getTime() - oneJan.getTime()) / (24 * 60 * 60 * 1000));
+        const weekNum = Math.ceil((d.getDay() + 1 + numberOfDays) / 7);
+        const weekKey = `${y}-W${String(weekNum).padStart(2, '0')}`;
+
+        const svcLower = (hc.service_name || '').toLowerCase();
+        const isMidweek = svcLower.includes('midweek') || svcLower.includes('vigil');
+        const is2nd = svcLower.includes('2nd') || svcLower.includes('second');
+
+        const mCount = (hc.men || 0) + (hc.women || 0) + (hc.youth || 0) + (hc.children || 0) + (hc.ushers_protocol || 0);
+        const vCount = hc.visitors || 0;
+        const total = hc.total_auditorium || (mCount + vCount);
+
+        const existing = weekMap.get(weekKey);
+        if (existing) {
+          existing.members += mCount;
+          existing.visitors += vCount;
+          existing.totalHeadcount += total;
+          if (isMidweek) existing.midweek += total;
+          else if (is2nd) existing.sunday2nd += total;
+          else existing.sunday1st += total;
+        } else {
+          const shortMonth = d.toLocaleDateString('en-US', { month: 'short' });
+          const day = d.getDate();
+          weekMap.set(weekKey, {
+            weekLabel: `${shortMonth} ${day}`,
+            weekShort: `Wk ${weekNum}`,
+            year: y,
+            members: mCount,
+            visitors: vCount,
+            totalHeadcount: total,
+            sunday1st: !isMidweek && !is2nd ? total : 0,
+            sunday2nd: is2nd ? total : 0,
+            midweek: isMidweek ? total : 0,
+          });
+        }
+      });
+    }
+
+    // 2. Process Individual Attendance Check-ins
+    attendance.forEach((att) => {
+      if (!att.date) return;
+      if (startDate && att.date < startDate) return;
+      if (endDate && att.date > endDate) return;
+
+      const d = new Date(att.date);
+      const y = d.getFullYear();
+      const oneJan = new Date(y, 0, 1);
+      const numberOfDays = Math.floor((d.getTime() - oneJan.getTime()) / (24 * 60 * 60 * 1000));
+      const weekNum = Math.ceil((d.getDay() + 1 + numberOfDays) / 7);
+      const weekKey = `${y}-W${String(weekNum).padStart(2, '0')}`;
+
+      const isVisitor = att.person_type === 'visitor' || Boolean(att.visitor_id);
+      const isMember = !isVisitor;
+      const svcLower = (att.service_name || '').toLowerCase();
+      const isMidweek = svcLower.includes('midweek');
+      const is2nd = svcLower.includes('2nd') || svcLower.includes('second');
+
+      const existing = weekMap.get(weekKey);
+      if (existing) {
+        if (existing.members === 0 && existing.visitors === 0) {
+          if (isMember) existing.members += 1;
+          if (isVisitor) existing.visitors += 1;
+          existing.totalHeadcount = existing.members + existing.visitors;
+        }
+      } else {
+        const shortMonth = d.toLocaleDateString('en-US', { month: 'short' });
+        const day = d.getDate();
+        weekMap.set(weekKey, {
+          weekLabel: `${shortMonth} ${day}`,
+          weekShort: `Wk ${weekNum}`,
+          year: y,
+          members: isMember ? 1 : 0,
+          visitors: isVisitor ? 1 : 0,
+          totalHeadcount: 1,
+          sunday1st: !isMidweek && !is2nd ? 1 : 0,
+          sunday2nd: is2nd ? 1 : 0,
+          midweek: isMidweek ? 1 : 0,
+        });
+      }
     });
-  }, [attendance]);
+
+    if (weekMap.size === 0) {
+      return [];
+    }
+
+    return Array.from(weekMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-10)
+      .map(([_, wk]) => {
+        const totalHeadcount = wk.totalHeadcount || (wk.members + wk.visitors);
+        const visitorRatio = Math.round((wk.visitors / (totalHeadcount || 1)) * 100);
+        return {
+          ...wk,
+          totalHeadcount,
+          visitorRatio,
+        };
+      });
+  }, [headcounts, attendance, startDate, endDate]);
 
   // Attendance summary metrics
   const avgWeeklyAttendance = useMemo(() => {
+    if (weeklyAttendanceData.length === 0) return 0;
     const sum = weeklyAttendanceData.reduce((s, w) => s + w.totalHeadcount, 0);
     return Math.round(sum / (weeklyAttendanceData.length || 1));
   }, [weeklyAttendanceData]);
 
   const peakWeeklyAttendance = useMemo(() => {
+    if (weeklyAttendanceData.length === 0) return 0;
     return Math.max(...weeklyAttendanceData.map((w) => w.totalHeadcount));
   }, [weeklyAttendanceData]);
 
@@ -251,9 +315,21 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
   }, [weeklyAttendanceData]);
 
   const avgVisitorPercentage = useMemo(() => {
+    if (totalWeeklySouls === 0) return 0;
     const totalVisitors = weeklyAttendanceData.reduce((s, w) => s + w.visitors, 0);
     return Math.round((totalVisitors / (totalWeeklySouls || 1)) * 100);
   }, [weeklyAttendanceData, totalWeeklySouls]);
+
+  const attendanceGrowthText = useMemo(() => {
+    if (weeklyAttendanceData.length < 2) {
+      return weeklyAttendanceData.length === 1 ? '1 service week recorded' : 'No attendance logs for this period';
+    }
+    const first = weeklyAttendanceData[0].totalHeadcount;
+    const last = weeklyAttendanceData[weeklyAttendanceData.length - 1].totalHeadcount;
+    if (first <= 0) return `${weeklyAttendanceData.length} weeks tracked`;
+    const diff = Math.round(((last - first) / first) * 100);
+    return `Turnout ${diff >= 0 ? '+' : ''}${diff}% over ${weeklyAttendanceData.length} weeks`;
+  }, [weeklyAttendanceData]);
 
   return (
     <div className={`space-y-5 no-print ${className}`}>
@@ -560,7 +636,9 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
             <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
               <span className="flex items-center gap-1.5 text-emerald-800 font-semibold">
                 <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                Strong treasury stability with positive surplus in all audited months
+                {totalPeriodSurplus >= 0
+                  ? 'Operating treasury surplus maintained across selected period'
+                  : 'Operating deficit noted in reporting period'}
               </span>
               <span className="font-mono text-slate-400">Currency: GH₵ (GHS)</span>
             </div>
@@ -581,7 +659,7 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
                     <h3 className="font-bold text-slate-900 text-base">Weekly Attendance Trends</h3>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    8-week worship turnout: Members vs First-Time Visitors
+                    Worship turnout analytics: Members vs First-Time Visitors
                   </p>
                 </div>
 
@@ -684,7 +762,8 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
                         }}
                         labelFormatter={(_, payload) => {
                           if (payload && payload[0] && payload[0].payload) {
-                            return `Week: ${payload[0].payload.weekLabel} 2026`;
+                            const item = payload[0].payload;
+                            return `Week: ${item.weekLabel} ${item.year || ''}`;
                           }
                           return 'Weekly Attendance';
                         }}
@@ -761,9 +840,9 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
             <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
               <span className="flex items-center gap-1.5 text-slate-700 font-semibold">
                 <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
-                Active discipleship growth: Turnout increased +37% over 8 weeks
+                Active discipleship: {attendanceGrowthText}
               </span>
-              <span className="text-slate-400">Joma Assembly</span>
+              <span className="text-slate-400">{branchName || 'Church Sanctuary'}</span>
             </div>
           </div>
         )}

@@ -67,6 +67,7 @@ export const DashboardPage: React.FC = () => {
     members,
     visitors,
     attendance,
+    headcounts,
     giving,
     pledges,
     events,
@@ -96,23 +97,46 @@ export const DashboardPage: React.FC = () => {
     'member' | 'visitor' | 'giving' | 'attendance' | 'event' | null
   >(null);
 
+  // Current calendar period helpers
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonthNum = now.getMonth() + 1; // 1-12
+  const currentYearMonth = `${currentYear}-${String(currentMonthNum).padStart(2, '0')}`;
+  const currentMonthName = now.toLocaleDateString('en-US', { month: 'long' });
+  const currentMonthShort = now.toLocaleDateString('en-US', { month: 'short' });
+
+  // Dynamic month determination for giving/records (fallback to latest data month if current month is new)
+  const hasGivingCurrentMonth = giving.some((g) => g.date && g.date.startsWith(currentYearMonth));
+  const activeGivingYearMonth = hasGivingCurrentMonth
+    ? currentYearMonth
+    : giving.length > 0
+    ? [...giving].sort((a, b) => b.date.localeCompare(a.date))[0]?.date?.slice(0, 7) || currentYearMonth
+    : currentYearMonth;
+
   // Metrics calculation
   const totalMembers = members.filter((m) => !m.is_archived).length;
   const activeMembers = members.filter((m) => m.status === 'active' && !m.is_archived).length;
   const newMembersThisMonth = members.filter((m) => {
-    if (!m.membership_date) return false;
-    const d = new Date(m.membership_date);
-    return d.getMonth() === 8 && d.getFullYear() === 2026; // September 2026
+    const raw = m.membership_date || (m as any).date_joined || m.created_at;
+    if (!raw) return false;
+    return (raw.startsWith(currentYearMonth) || raw.startsWith(activeGivingYearMonth)) && !m.is_archived;
   }).length;
 
   const totalVisitors = visitors.length;
-  const visitorsThisMonth = visitors.filter((v) => v.visit_date.startsWith('2026-09')).length;
+  const hasVisitorsCurrentMonth = visitors.some((v) => v.visit_date && v.visit_date.startsWith(currentYearMonth));
+  const activeVisitorYearMonth = hasVisitorsCurrentMonth
+    ? currentYearMonth
+    : visitors.length > 0
+    ? [...visitors].sort((a, b) => b.visit_date.localeCompare(a.visit_date))[0]?.visit_date?.slice(0, 7) || currentYearMonth
+    : currentYearMonth;
+
+  const visitorsThisMonth = visitors.filter((v) => v.visit_date && v.visit_date.startsWith(activeVisitorYearMonth)).length;
   const pendingFollowUps = visitors.filter(
     (v) => v.follow_up_status === 'new' || v.follow_up_status === 'follow_up_required'
   );
 
   const totalGivingMonth = giving
-    .filter((g) => g.date.startsWith('2026-09'))
+    .filter((g) => g.date && g.date.startsWith(activeGivingYearMonth))
     .reduce((acc, curr) => acc + curr.amount, 0);
 
   const totalOutstandingPledges = pledges.reduce((acc, curr) => acc + curr.balance, 0);
@@ -138,18 +162,34 @@ export const DashboardPage: React.FC = () => {
     value,
   }));
 
-  // Chart Data: Weekly Attendance from real attendance records
+  // Chart Data: Weekly Attendance from real attendance and headcount records
   const weeklyAttendanceData = React.useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    let anchor = new Date();
+    anchor.setHours(0, 0, 0, 0);
+
+    const allDates = [
+      ...attendance.map((a) => a.date),
+      ...headcounts.map((h) => h.date),
+    ].filter(Boolean).sort().reverse();
+
+    if (allDates.length > 0) {
+      const latestDataDate = new Date(allDates[0]);
+      if (!Number.isNaN(latestDataDate.getTime())) {
+        const diffDays = (anchor.getTime() - latestDataDate.getTime()) / (1000 * 60 * 60 * 24);
+        if (diffDays > 14 || diffDays < 0) {
+          anchor = new Date(latestDataDate);
+          anchor.setHours(0, 0, 0, 0);
+        }
+      }
+    }
 
     const weeks: Array<{ start: Date; end: Date }> = [];
-    const dayOfWeek = (today.getDay() + 6) % 7;
+    const dayOfWeek = (anchor.getDay() + 6) % 7;
 
     for (let index = 3; index >= 0; index -= 1) {
-      const start = new Date(today);
-      const offsetFromCurrentWeek = dayOfWeek + (index * 7);
-      start.setDate(today.getDate() - offsetFromCurrentWeek);
+      const start = new Date(anchor);
+      const offset = dayOfWeek + index * 7;
+      start.setDate(anchor.getDate() - offset);
       start.setHours(0, 0, 0, 0);
 
       const end = new Date(start);
@@ -167,24 +207,44 @@ export const DashboardPage: React.FC = () => {
         return entryDate >= week.start && entryDate <= week.end;
       });
 
-      const members = records.filter((entry) => entry.person_type === 'member' || Boolean(entry.member_id)).length;
-      const visitors = records.filter((entry) => entry.person_type === 'visitor' || Boolean(entry.visitor_id)).length;
+      const weekHeadcounts = headcounts.filter((h) => {
+        const hDate = new Date(h.date);
+        if (Number.isNaN(hDate.getTime())) return false;
+        return hDate >= week.start && hDate <= week.end;
+      });
+
+      let members = records.filter((entry) => entry.person_type === 'member' || Boolean(entry.member_id)).length;
+      let visitors = records.filter((entry) => entry.person_type === 'visitor' || Boolean(entry.visitor_id)).length;
+
+      if (weekHeadcounts.length > 0 && records.length === 0) {
+        const hcVisitors = weekHeadcounts.reduce((sum, h) => sum + (h.visitors || 0), 0);
+        const hcTotal = weekHeadcounts.reduce(
+          (sum, h) =>
+            sum +
+            (h.total_auditorium || (h.men + h.women + h.youth + h.children + h.visitors)),
+          0
+        );
+        visitors = hcVisitors;
+        members = Math.max(0, hcTotal - hcVisitors);
+      }
+
       const monthShort = week.start.toLocaleDateString('en-US', { month: 'short' });
 
       return {
-        week: index === weeks.length - 1 ? `Week ${index + 1} (Current)` : `Week ${index + 1} (${monthShort})`,
+        week: index === weeks.length - 1 ? `Week ${index + 1} (Latest)` : `Week ${index + 1} (${monthShort})`,
         members,
         visitors,
         total: members + visitors,
       };
     });
-  }, [attendance]);
+  }, [attendance, headcounts]);
 
   // Upcoming birthdays this month
   const birthdayMembers = members.filter((m) => {
     if (!m.date_of_birth) return false;
-    const month = parseInt(m.date_of_birth.split('-')[1], 10);
-    return month === 9; // September
+    const parts = m.date_of_birth.split('-');
+    const month = parseInt(parts[1], 10);
+    return month === currentMonthNum && !m.is_archived;
   });
 
   // Retention Alert: Members who haven't attended in the last 2 recorded services
@@ -228,7 +288,7 @@ export const DashboardPage: React.FC = () => {
                 </span>
                 <span className="text-xs text-emerald-200/90 font-medium flex items-center gap-1">
                   <MapPin className="w-3 h-3 text-emerald-300" />
-                  {settings.branch_name || 'Main Cathedral'}, Joma - Ablekuma, Accra
+                  {settings.branch_name || 'Main Cathedral'}{settings.location ? `, ${settings.location}` : settings.address ? `, ${settings.address}` : ''}
                 </span>
                 <span className="text-xs text-emerald-300/80 font-mono hidden sm:inline">
                   • {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
@@ -238,7 +298,7 @@ export const DashboardPage: React.FC = () => {
                 Welcome back, {currentUser.first_name}!
               </h1>
               <p className="text-emerald-100 text-xs sm:text-sm max-w-xl leading-relaxed">
-                Operating pulse for <strong>{settings.church_name}</strong>. Manage Sunday attendance, first-time guests, financial tithes, and pastoral care across Ablekuma North.
+                Operating pulse for <strong>{settings.church_name}</strong>. Manage Sunday attendance, first-time guests, financial tithes, and pastoral care across {settings.branch_name || settings.church_name}.
               </p>
             </div>
           </div>
@@ -425,7 +485,7 @@ export const DashboardPage: React.FC = () => {
                   <Bookmark className="w-4 h-4" />
                 </div>
                 <span className="font-bold text-xs text-slate-900 block">Capital Pledges</span>
-                <span className="text-[11px] text-slate-500 block truncate">Cathedral Expansion</span>
+                <span className="text-[11px] text-slate-500 block truncate">{pledges[0]?.campaign_name || 'Church Projects'}</span>
               </button>
 
               <button
@@ -618,10 +678,10 @@ export const DashboardPage: React.FC = () => {
                   <span className="p-1.5 bg-amber-50 text-amber-700 rounded-lg">
                     <Cake className="w-4 h-4" />
                   </span>
-                  <h3 className="font-bold text-slate-900 text-sm">September Birthdays</h3>
+                  <h3 className="font-bold text-slate-900 text-sm">{currentMonthName} Birthdays</h3>
                 </div>
                 <span className="text-xs font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded">
-                  GWCC Family
+                  {settings.short_name || 'Church'} Family
                 </span>
               </div>
 
@@ -636,7 +696,7 @@ export const DashboardPage: React.FC = () => {
                     const cleanPhone = m.phone.replace(/[^0-9]/g, '');
                     const whatsappUrl = `https://wa.me/${cleanPhone}?text=Happy%20Birthday%20${encodeURIComponent(
                       m.first_name
-                    )}!%20May%20the%20Lord%20continually%20bless%20you%20from%20Greater%20Works%20City%20Church!`;
+                    )}!%20May%20the%20Lord%20continually%20bless%20you%20from%20${encodeURIComponent(settings.church_name)}!`;
 
                     return (
                       <div
@@ -659,7 +719,7 @@ export const DashboardPage: React.FC = () => {
                             <p className="font-bold text-xs text-slate-900">
                               {m.first_name} {m.last_name}
                             </p>
-                            <p className="text-[11px] text-slate-500">Sept {birthDay} • {m.phone}</p>
+                            <p className="text-[11px] text-slate-500">{currentMonthShort} {birthDay} • {m.phone}</p>
                           </div>
                         </div>
 
@@ -778,7 +838,7 @@ export const DashboardPage: React.FC = () => {
                 <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-teal-100 text-teal-800">
                   Weekly Worship Operations
                 </span>
-                <span className="text-xs text-slate-500">Joma Main Cathedral</span>
+                <span className="text-xs text-slate-500">{settings.branch_name || settings.church_name}</span>
               </div>
               <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
                 Sunday Services & Liturgy Coordination
@@ -835,12 +895,22 @@ export const DashboardPage: React.FC = () => {
                   <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs space-y-1.5">
                     <span className="font-bold text-slate-700 block text-[11px]">Order of Service Flow:</span>
                     <div className="grid grid-cols-2 gap-2 text-slate-600 text-[11px]">
-                      <div>1. Opening Prayer & Scripture</div>
-                      <div>4. Offertory & Tithes</div>
-                      <div>2. Praise & Worship (Choir)</div>
-                      <div>5. The Word / Sermon</div>
-                      <div>3. Welcome First-Time Guests</div>
-                      <div>6. Altar Call & Benediction</div>
+                      {service.order_of_service && service.order_of_service.length > 0 ? (
+                        service.order_of_service.slice(0, 6).map((item, oIdx) => (
+                          <div key={item.id || oIdx} className="truncate">
+                            {oIdx + 1}. {item.title} {item.duration ? `(${item.duration})` : ''}
+                          </div>
+                        ))
+                      ) : (
+                        <>
+                          <div>1. Opening Prayer & Scripture</div>
+                          <div>4. Offertory & Tithes</div>
+                          <div>2. Praise & Worship (Choir)</div>
+                          <div>5. The Word / Sermon</div>
+                          <div>3. Welcome First-Time Guests</div>
+                          <div>6. Altar Call & Benediction</div>
+                        </>
+                      )}
                     </div>
                   </div>
 
@@ -917,7 +987,7 @@ export const DashboardPage: React.FC = () => {
                   const cleanPhone = m.phone.replace(/[^0-9]/g, '');
                   const whatsappUrl = `https://wa.me/${cleanPhone}?text=Hello%20${encodeURIComponent(
                     m.first_name
-                  )}!%20Greetings%20from%20Greater%20Works%20City%20Church.%20We%20missed%20you%20at%20service%20and%20wanted%20to%20check%20on%20you!`;
+                  )}!%20Greetings%20from%20${encodeURIComponent(settings.church_name)}.%20We%20missed%20you%20at%20service%20and%20wanted%20to%20check%20on%20you!`;
 
                   return (
                     <div
@@ -933,7 +1003,7 @@ export const DashboardPage: React.FC = () => {
                             {m.first_name} {m.last_name}
                           </span>
                           <span className="text-[11px] text-slate-500 font-mono">
-                            {m.phone} • {m.city || 'Accra'}
+                            {m.phone} • {m.city || settings.location || 'Local'}
                           </span>
                         </div>
                       </div>

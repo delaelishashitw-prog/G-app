@@ -297,8 +297,12 @@ export const ReportsPage: React.FC = () => {
       );
       return Math.round(sum / headcounts.length);
     }
-    return 194;
-  }, [headcounts]);
+    if (attendance && attendance.length > 0) {
+      const dates = new Set(attendance.map((a) => a.date));
+      return Math.round(attendance.length / (dates.size || 1));
+    }
+    return 0;
+  }, [headcounts, attendance]);
 
   const peakWeeklyAttendanceCount = useMemo(() => {
     if (headcounts && headcounts.length > 0) {
@@ -310,8 +314,26 @@ export const ReportsPage: React.FC = () => {
         )
       );
     }
-    return 202;
-  }, [headcounts]);
+    if (attendance && attendance.length > 0) {
+      const countsByDate = new Map<string, number>();
+      attendance.forEach((a) => {
+        countsByDate.set(a.date, (countsByDate.get(a.date) || 0) + 1);
+      });
+      return Math.max(...Array.from(countsByDate.values()));
+    }
+    return 0;
+  }, [headcounts, attendance]);
+
+  const netQuarterlyGrowthCount = useMemo(() => {
+    const now = new Date();
+    const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1).toISOString().split('T')[0];
+    const newMembers = members.filter((m) => {
+      const joinDate = m.membership_date || (m as any).date_joined || m.created_at;
+      return joinDate && joinDate >= threeMonthsAgo && !m.is_archived;
+    }).length;
+    const convertedSouls = visitors.filter((v) => v.follow_up_status === 'converted_to_member').length;
+    return newMembers > 0 ? newMembers : convertedSouls;
+  }, [members, visitors]);
 
   // Giving categories list for filter
   const givingCategories = useMemo(() => {
@@ -563,6 +585,8 @@ export const ReportsPage: React.FC = () => {
         offeringsIncome={monthlyOfferingsTotal}
         buildingFundIncome={monthlyBuildingFundTotal}
         peakWeeklyAttendance={peakWeeklyAttendanceCount}
+        netQuarterlyGrowth={netQuarterlyGrowthCount}
+        churchBranch={settings.branch_name || settings.church_name}
         periodLabel={startDate && endDate ? `${startDate} to ${endDate}` : `Year to Date ${currentYear}`}
         onFilterClick={(type) => {
           if (type === 'membership') setReportType('membership');
@@ -953,8 +977,10 @@ export const ReportsPage: React.FC = () => {
         giving={giving}
         expenses={expenses}
         attendance={attendance}
+        headcounts={headcounts}
         startDate={startDate}
         endDate={endDate}
+        branchName={settings.branch_name || settings.church_name}
       />
 
       {/* Generated Report View Container (Visible on screen and formatted for print) */}
@@ -1277,9 +1303,9 @@ export const ReportsPage: React.FC = () => {
                       <td className="p-2.5 capitalize">{m.gender}</td>
                       <td className="p-2.5 font-mono text-slate-600">{m.phone}</td>
                       <td className="p-2.5">{m.ministry_name || 'General Congregation'}</td>
-                      <td className="p-2.5 text-slate-500">{m.small_group_name || 'Central'}</td>
+                      <td className="p-2.5 text-slate-500">{m.small_group_name || '-'}</td>
                       <td className="p-2.5 text-slate-700">
-                        {(m as any).residential_address || (m as any).residence_location || (m as any).address || 'Joma'}
+                        {(m as any).residential_address || (m as any).residence_location || (m as any).address || '-'}
                       </td>
                       <td className="p-2.5">
                         <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold uppercase">

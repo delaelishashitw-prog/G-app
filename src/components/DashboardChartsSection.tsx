@@ -33,7 +33,7 @@ export interface DashboardChartsSectionProps {
 
 export const DashboardChartsSection: React.FC<DashboardChartsSectionProps> = ({ className = '' }) => {
   const navigate = useNavigate();
-  const { members, visitors, attendance } = useChurchData();
+  const { members, visitors, attendance, headcounts } = useChurchData();
 
   // Growth Chart Metric Mode: 'cumulative' | 'monthly_additions' | 'all'
   const [growthMetricMode, setGrowthMetricMode] = useState<'cumulative' | 'monthly_additions' | 'all'>('all');
@@ -107,7 +107,7 @@ export const DashboardChartsSection: React.FC<DashboardChartsSectionProps> = ({ 
     });
   }, [members]);
 
-  // 2. Attendance Distribution Data for the last 6 months based on actual attendance records
+  // 2. Attendance Distribution Data for the last 6 months based on actual attendance records and headcounts
   const attendanceDistributionData = useMemo(() => {
     const months: Array<{ label: string; short: string; start: Date; end: Date }> = [];
     const current = new Date();
@@ -135,12 +135,58 @@ export const DashboardChartsSection: React.FC<DashboardChartsSectionProps> = ({ 
         return recordDate >= start && recordDate <= end;
       });
 
-      const firstService = monthRecords.filter((record) => /1st|first/i.test(record.service_name || '')).length;
-      const secondService = monthRecords.filter((record) => /2nd|second|celebration/i.test(record.service_name || '')).length;
-      const midweekPrayer = monthRecords.filter((record) => /midweek|prayer|night/i.test(record.service_name || '')).length;
+      const monthHeadcounts = headcounts.filter((record) => {
+        const recordDate = new Date(record.date);
+        if (Number.isNaN(recordDate.getTime())) return false;
+        return recordDate >= start && recordDate <= end;
+      });
 
-      const regularMembers = monthRecords.filter((record) => record.person_type === 'member').length;
-      const visitors = monthRecords.filter((record) => record.person_type === 'visitor').length;
+      let firstService = monthRecords.filter((record) => /1st|first/i.test(record.service_name || '')).length;
+      let secondService = monthRecords.filter((record) => /2nd|second|celebration/i.test(record.service_name || '')).length;
+      let midweekPrayer = monthRecords.filter((record) => /midweek|prayer|night/i.test(record.service_name || '')).length;
+
+      let regularMembers = monthRecords.filter((record) => record.person_type === 'member').length;
+      let visitors = monthRecords.filter((record) => record.person_type === 'visitor').length;
+
+      if (monthRecords.length === 0 && monthHeadcounts.length > 0) {
+        firstService = monthHeadcounts
+          .filter((h) => /1st|first/i.test(h.service_name || ''))
+          .reduce(
+            (sum, h) =>
+              sum +
+              (h.total_auditorium ||
+                h.men + h.women + h.youth + h.children + h.visitors),
+            0
+          );
+        secondService = monthHeadcounts
+          .filter((h) => /2nd|second|celebration/i.test(h.service_name || ''))
+          .reduce(
+            (sum, h) =>
+              sum +
+              (h.total_auditorium ||
+                h.men + h.women + h.youth + h.children + h.visitors),
+            0
+          );
+        midweekPrayer = monthHeadcounts
+          .filter((h) => /midweek|prayer|night/i.test(h.service_name || ''))
+          .reduce(
+            (sum, h) =>
+              sum +
+              (h.total_auditorium ||
+                h.men + h.women + h.youth + h.children + h.visitors),
+            0
+          );
+
+        const totalAudit = monthHeadcounts.reduce(
+          (sum, h) =>
+            sum +
+            (h.total_auditorium ||
+              h.men + h.women + h.youth + h.children + h.visitors),
+          0
+        );
+        visitors = monthHeadcounts.reduce((sum, h) => sum + (h.visitors || 0), 0);
+        regularMembers = Math.max(0, totalAudit - visitors);
+      }
 
       return {
         month: label,
@@ -150,22 +196,55 @@ export const DashboardChartsSection: React.FC<DashboardChartsSectionProps> = ({ 
         midweekPrayer,
         regularMembers,
         visitors,
-        total: regularMembers + visitors,
+        total: regularMembers + visitors || firstService + secondService + midweekPrayer,
       };
     });
-  }, [attendance]);
+  }, [attendance, headcounts]);
 
   // Summary Metrics calculations
-  const aprTotal = memberGrowthData[0].totalMembers;
-  const sepTotal = memberGrowthData[memberGrowthData.length - 1].totalMembers;
-  const netGrowthPercent = Math.round(((sepTotal - aprTotal) / aprTotal) * 100);
-  const avgMonthlyAdditions = Math.round((sepTotal - aprTotal) / 5);
+  const startTotal = memberGrowthData[0]?.totalMembers || 0;
+  const endTotal = memberGrowthData[memberGrowthData.length - 1]?.totalMembers || 0;
+  const startMonthLabel = memberGrowthData[0]?.shortMonth || 'Start';
+  const endMonthLabel = memberGrowthData[memberGrowthData.length - 1]?.shortMonth || 'Current';
+  const startMonthFull = memberGrowthData[0]?.month || '';
+  const endMonthFull = memberGrowthData[memberGrowthData.length - 1]?.month || '';
+  const netGrowthPercent = startTotal > 0 ? Math.round(((endTotal - startTotal) / startTotal) * 100) : 0;
+  const avgMonthlyAdditions = Math.round((endTotal - startTotal) / (memberGrowthData.length - 1 || 1));
 
   const totalSixMonthAttendance = attendanceDistributionData.reduce((acc, curr) => acc + curr.total, 0);
-  const avgMonthlyAttendance = Math.round(totalSixMonthAttendance / attendanceDistributionData.length);
-  const peakAttendanceMonth = attendanceDistributionData.reduce((prev, curr) =>
-    curr.total > prev.total ? curr : prev
+  const avgMonthlyAttendance = Math.round(totalSixMonthAttendance / (attendanceDistributionData.length || 1));
+  const peakAttendanceMonth = attendanceDistributionData.reduce(
+    (prev, curr) => (curr.total > prev.total ? curr : prev),
+    attendanceDistributionData[0] || { month: 'N/A', total: 0 }
   );
+
+  const highestServiceInsight = useMemo(() => {
+    let firstTotal = 0;
+    let secondTotal = 0;
+    let midweekTotal = 0;
+    let totalAll = 0;
+
+    attendanceDistributionData.forEach((m) => {
+      firstTotal += m.firstService;
+      secondTotal += m.secondService;
+      midweekTotal += m.midweekPrayer;
+      totalAll += m.total;
+    });
+
+    if (totalAll === 0) {
+      return 'Regular Services';
+    }
+
+    const servicesList = [
+      { name: '2nd Celebration Service', count: secondTotal },
+      { name: '1st Prophetic Service', count: firstTotal },
+      { name: 'Midweek Service', count: midweekTotal },
+    ];
+    servicesList.sort((a, b) => b.count - a.count);
+    const top = servicesList[0];
+    const pct = Math.round((top.count / totalAll) * 100);
+    return `${top.name} (~${pct}% of volume)`;
+  }, [attendanceDistributionData]);
 
   return (
     <motion.section
@@ -187,14 +266,14 @@ export const DashboardChartsSection: React.FC<DashboardChartsSectionProps> = ({ 
               </h2>
             </div>
             <p className="text-xs text-slate-500">
-              Historical trends tracking total membership growth, new believer additions, and Sunday & midweek service attendance distribution (Apr 2026 – Sep 2026).
+              Historical trends tracking total membership growth, new believer additions, and Sunday & midweek service attendance distribution ({startMonthFull} – {endMonthFull}).
             </p>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200/80 text-xs font-bold">
               <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-              <span>+{netGrowthPercent}% 6-Mo Growth</span>
+              <span>{netGrowthPercent >= 0 ? `+${netGrowthPercent}` : netGrowthPercent}% 6-Mo Growth</span>
             </span>
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200/80 text-xs font-bold">
               <Award className="w-3.5 h-3.5 text-amber-600" />
@@ -207,9 +286,9 @@ export const DashboardChartsSection: React.FC<DashboardChartsSectionProps> = ({ 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 text-xs">
           <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
             <span className="text-[11px] text-slate-500 font-medium block">Current Congregation</span>
-            <span className="text-lg font-extrabold text-slate-900">{sepTotal}</span>
+            <span className="text-lg font-extrabold text-slate-900">{endTotal}</span>
             <span className="text-[10px] text-emerald-700 font-semibold block mt-0.5">
-              +{sepTotal - aprTotal} members since Apr
+              +{endTotal - startTotal} members since {startMonthLabel}
             </span>
           </div>
           <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
@@ -312,7 +391,7 @@ export const DashboardChartsSection: React.FC<DashboardChartsSectionProps> = ({ 
                     tick={{ fontSize: 11, fill: '#64748b' }}
                     axisLine={false}
                     tickLine={false}
-                    domain={growthMetricMode === 'monthly_additions' ? [0, 25] : [140, 'auto']}
+                    domain={growthMetricMode === 'monthly_additions' ? [0, 'auto'] : [0, 'auto']}
                   />
                   <Tooltip
                     contentStyle={{
@@ -329,7 +408,9 @@ export const DashboardChartsSection: React.FC<DashboardChartsSectionProps> = ({ 
                       if (name === 'New Converts') return [`+${value} souls`, 'New Converts'];
                       return [value, name];
                     }}
-                    labelFormatter={(label) => `Month: ${label} 2026`}
+                    labelFormatter={(label, payload) =>
+                      payload && payload[0]?.payload?.month ? payload[0].payload.month : `Month: ${label}`
+                    }
                   />
                   <Legend
                     verticalAlign="top"
@@ -396,7 +477,7 @@ export const DashboardChartsSection: React.FC<DashboardChartsSectionProps> = ({ 
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
               <span>
-                April ({aprTotal}) <span className="text-slate-400">→</span> September (<strong>{sepTotal}</strong>)
+                {startMonthLabel} ({startTotal}) <span className="text-slate-400">→</span> {endMonthLabel} (<strong>{endTotal}</strong>)
               </span>
             </div>
             <button
@@ -474,7 +555,9 @@ export const DashboardChartsSection: React.FC<DashboardChartsSectionProps> = ({ 
                       fontSize: '12px',
                     }}
                     formatter={(value: any, name: any) => [`${Number(value).toLocaleString()} attendees`, name]}
-                    labelFormatter={(label) => `Month: ${label} 2026`}
+                    labelFormatter={(label, payload) =>
+                      payload && payload[0]?.payload?.month ? payload[0].payload.month : `Month: ${label}`
+                    }
                   />
                   <Legend
                     verticalAlign="top"
@@ -533,7 +616,7 @@ export const DashboardChartsSection: React.FC<DashboardChartsSectionProps> = ({ 
           <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
             <div className="flex items-center gap-1.5 truncate">
               <span className="font-semibold text-slate-700">Highest Service:</span>
-              <span>2nd Celebration Service (~47% of total volume)</span>
+              <span>{highestServiceInsight}</span>
             </div>
             <button
               type="button"

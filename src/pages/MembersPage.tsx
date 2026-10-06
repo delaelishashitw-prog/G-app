@@ -669,7 +669,7 @@ export const MembersPage: React.FC = () => {
                 Member Directory & Profiles
               </h1>
               <p className="text-xs text-slate-500 mt-0.5">
-                Active congregation registry for Greater Works City Church (GWCC), Joma Assembly
+                Active congregation registry for {settings.church_name || 'the church'}{settings.branch_name ? `, ${settings.branch_name}` : ''}
               </p>
             </div>
 
@@ -779,7 +779,7 @@ export const MembersPage: React.FC = () => {
                   <h4 className="font-bold text-xs sm:text-sm text-pink-950 flex items-center gap-2">
                     {currentMonthName} Birthday Celebrations ({birthdayCelebrants.length} Members)
                     <span className="text-[10px] bg-pink-200/70 text-pink-900 font-extrabold px-2 py-0.5 rounded-full">
-                      Accra Joma Assembly
+                      {settings.branch_name || settings.church_name || 'Church Family'}
                     </span>
                   </h4>
                   <p className="text-xs text-pink-900/80 mt-0.5">
