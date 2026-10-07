@@ -41,11 +41,13 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useToast } from '../contexts/ToastContext';
-import { Member, GivingRecord, PledgeRecord, AttendanceRecord, PrayerRequest, PaymentMethod } from '../types/database.types';
+import { Member, GivingRecord, PledgeRecord, AttendanceRecord, PrayerRequest, PaymentMethod, WelfareClaimCategory } from '../types/database.types';
+import { ApplyWelfareClaimModal } from '../components/welfare/ApplyWelfareClaimModal';
 
 type PortalTab =
   | 'overview'
   | 'giving'
+  | 'welfare'
   | 'pledges'
   | 'attendance'
   | 'ministry'
@@ -75,6 +77,8 @@ export const MemberPortalPage: React.FC = () => {
     events,
     prayerRequests,
     pastoralCare,
+    welfareContributions,
+    welfareClaims,
     recordGiving,
     recordPledgePayment,
     addPrayerRequest,
@@ -89,6 +93,7 @@ export const MemberPortalPage: React.FC = () => {
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<PortalTab>('overview');
+  const [isMemberClaimModalOpen, setIsMemberClaimModalOpen] = useState(false);
 
   // Sign-in Form States (when not yet logged in as a member)
   const [identifier, setIdentifier] = useState('');
@@ -179,6 +184,25 @@ export const MemberPortalPage: React.FC = () => {
       )
       .sort((a, b) => new Date(b.created_at || b.date_submitted).getTime() - new Date(a.created_at || a.date_submitted).getTime());
   }, [activeMember, prayerRequests]);
+
+  // Member's Welfare Data
+  const memberWelfareDues = useMemo(() => {
+    if (!activeMember) return [];
+    return welfareContributions
+      .filter((c) => c.member_id === activeMember.id || c.member_id === activeMember.member_id)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [activeMember, welfareContributions]);
+
+  const totalWelfareContributed = useMemo(() => {
+    return memberWelfareDues.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+  }, [memberWelfareDues]);
+
+  const memberWelfareClaims = useMemo(() => {
+    if (!activeMember) return [];
+    return welfareClaims
+      .filter((c) => c.member_id === activeMember.id || c.member_id === activeMember.member_id)
+      .sort((a, b) => new Date(b.date_submitted).getTime() - new Date(a.date_submitted).getTime());
+  }, [activeMember, welfareClaims]);
 
   // Member's Ministry & Group
   const memberMinistry = useMemo(() => {
@@ -742,6 +766,7 @@ export const MemberPortalPage: React.FC = () => {
               {[
                 { id: 'overview', label: 'My Dashboard', icon: Church },
                 { id: 'giving', label: 'Tithes & Giving', icon: Wallet },
+                { id: 'welfare', label: 'Welfare & Relief', icon: HeartHandshake },
                 { id: 'pledges', label: 'My Pledges', icon: Coins },
                 { id: 'attendance', label: 'Attendance & Pass', icon: CalendarCheck },
                 { id: 'ministry', label: 'Ministry & Cell', icon: Users },
@@ -1179,6 +1204,171 @@ export const MemberPortalPage: React.FC = () => {
                   <p className="text-[10px] text-slate-400 mt-1">Swift: GCBGHAC</p>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB: WELFARE & BENEVOLENCE */}
+        {activeTab === 'welfare' && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-xs">
+              <div>
+                <h2 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+                  <HeartHandshake className="w-5 h-5 text-emerald-700" />
+                  My Welfare Dues & Benevolence Care
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Track your monthly welfare contributions and manage your pastoral relief requests.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsMemberClaimModalOpen(true)}
+                className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Request Benevolence Assistance</span>
+              </button>
+            </div>
+
+            {/* Welfare Stats */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  Total Welfare Dues Paid
+                </span>
+                <div className="text-2xl font-black text-emerald-800 mt-1">
+                  GH₵ {totalWelfareContributed.toFixed(2)}
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {memberWelfareDues.length} recorded monthly receipts
+                </p>
+              </div>
+
+              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  Mutual Fund Standing
+                </span>
+                <div className="text-2xl font-black text-slate-900 mt-1">
+                  {memberWelfareDues.length >= 2 ? (
+                    <span className="text-emerald-700">Good Standing</span>
+                  ) : (
+                    <span className="text-amber-700">Pending Dues</span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5">Standard dues: GH₵ 50 / month</p>
+              </div>
+
+              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  My Benevolence Applications
+                </span>
+                <div className="text-2xl font-black text-slate-900 mt-1">
+                  {memberWelfareClaims.length}
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5">Submitted pastoral claims</p>
+              </div>
+            </div>
+
+            {/* Benevolence Claims Section */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+                <h3 className="font-bold text-sm text-slate-900">My Benevolence Aid Applications</h3>
+                <span className="text-[11px] text-slate-500">Confidential pastoral review</span>
+              </div>
+
+              {memberWelfareClaims.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-xs">
+                  You have not submitted any benevolence assistance claims.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500 font-bold border-b border-slate-200">
+                      <tr>
+                        <th className="py-3 px-4">Claim Ref</th>
+                        <th className="py-3 px-4">Category</th>
+                        <th className="py-3 px-4">Title / Purpose</th>
+                        <th className="py-3 px-4 text-right">Requested</th>
+                        <th className="py-3 px-4 text-right">Approved</th>
+                        <th className="py-3 px-4">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {memberWelfareClaims.map((c) => (
+                        <tr key={c.id} className="hover:bg-slate-50/70 transition">
+                          <td className="py-3 px-4 font-mono font-bold text-slate-900">{c.claim_number}</td>
+                          <td className="py-3 px-4 capitalize text-slate-700">{c.category.replace('_', ' ')}</td>
+                          <td className="py-3 px-4 font-semibold text-slate-900">{c.title}</td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-slate-800">
+                            GH₵ {c.amount_requested.toFixed(2)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">
+                            {c.amount_approved ? `GH₵ ${c.amount_approved.toFixed(2)}` : '—'}
+                          </td>
+                          <td className="py-3 px-4">
+                            <span
+                              className={`font-semibold text-[10px] uppercase px-2 py-0.5 rounded-lg border ${
+                                c.status === 'disbursed'
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                  : c.status === 'approved'
+                                  ? 'bg-blue-50 text-blue-800 border-blue-200'
+                                  : c.status === 'declined'
+                                  ? 'bg-rose-50 text-rose-800 border-rose-200'
+                                  : 'bg-amber-50 text-amber-800 border-amber-200'
+                              }`}
+                            >
+                              {c.status.replace('_', ' ')}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Dues History Section */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+                <h3 className="font-bold text-sm text-slate-900">My Welfare Dues Receipts</h3>
+                <span className="text-[11px] text-slate-500">Official church records</span>
+              </div>
+
+              {memberWelfareDues.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-xs">
+                  No welfare dues contributions recorded yet.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500 font-bold border-b border-slate-200">
+                      <tr>
+                        <th className="py-3 px-4">Date</th>
+                        <th className="py-3 px-4">Month Applicable</th>
+                        <th className="py-3 px-4">Receipt Ref</th>
+                        <th className="py-3 px-4">Payment Method</th>
+                        <th className="py-3 px-4 text-right">Amount (GH₵)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {memberWelfareDues.map((due) => (
+                        <tr key={due.id} className="hover:bg-slate-50/70 transition">
+                          <td className="py-3 px-4 text-slate-600">{due.date}</td>
+                          <td className="py-3 px-4 font-bold text-slate-800">{due.month}</td>
+                          <td className="py-3 px-4 font-mono text-slate-500">{due.reference_no || '—'}</td>
+                          <td className="py-3 px-4 text-slate-700">{due.payment_channel || due.payment_method}</td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">
+                            GH₵ {due.amount.toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -2026,6 +2216,15 @@ export const MemberPortalPage: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Member Benevolence Application Modal */}
+      {activeMember && (
+        <ApplyWelfareClaimModal
+          isOpen={isMemberClaimModalOpen}
+          onClose={() => setIsMemberClaimModalOpen(false)}
+          preselectedMemberId={activeMember.id}
+        />
       )}
     </div>
   );

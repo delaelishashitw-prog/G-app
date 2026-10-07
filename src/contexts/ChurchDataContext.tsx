@@ -19,6 +19,9 @@ import {
   AuditLog,
   ChurchSettings,
   PaymentMethod,
+  WelfareContribution,
+  WelfareClaim,
+  ChildCheckInRecord,
 } from '../types/database.types';
 import {
   initialSettings,
@@ -38,6 +41,9 @@ import {
   samplePrayerRequests,
   sampleCommunications,
   sampleAuditLogs,
+  sampleWelfareContributions,
+  sampleWelfareClaims,
+  sampleChildCheckIns,
 } from '../lib/initialData';
 import { useAuth } from './AuthContext';
 import {
@@ -168,6 +174,37 @@ interface ChurchDataContextType {
   // Audit Logs
   auditLogs: AuditLog[];
   logAction: (action: string, module: string, details: string, recordId?: string) => void;
+
+  // Welfare & Benevolence
+  welfareContributions: WelfareContribution[];
+  recordWelfareContribution: (record: Omit<WelfareContribution, 'id' | 'created_at'>) => WelfareContribution;
+  deleteWelfareContribution: (id: string) => void;
+  welfareClaims: WelfareClaim[];
+  submitWelfareClaim: (claim: Omit<WelfareClaim, 'id' | 'claim_number' | 'created_at'>) => WelfareClaim;
+  updateWelfareClaim: (id: string, updates: Partial<WelfareClaim>) => void;
+  deleteWelfareClaim: (id: string) => void;
+  disburseWelfareClaim: (
+    id: string,
+    details: {
+      disbursement_method: PaymentMethod;
+      disbursement_channel?: string;
+      disbursement_voucher_no: string;
+      amount_approved: number;
+      pastoral_notes?: string;
+    }
+  ) => void;
+
+  // Children's Ministry Safety & Pickup Tags
+  childCheckIns: ChildCheckInRecord[];
+  checkInChild: (
+    record: Omit<ChildCheckInRecord, 'id' | 'security_code' | 'created_at' | 'status'> & { security_code?: string }
+  ) => ChildCheckInRecord;
+  checkOutChild: (
+    id: string,
+    details: { checked_out_to_person: string; verified_by_leader: string }
+  ) => void;
+  summonChildParent: (id: string, notes?: string) => void;
+  deleteChildCheckIn: (id: string) => void;
 
   // Supabase Integration State & Actions
   isSupabaseConfigured: boolean;
@@ -311,6 +348,21 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return loaded && loaded.length > 0 ? loaded : sampleAuditLogs;
   });
 
+  const [welfareContributions, setWelfareContributions] = useState<WelfareContribution[]>(() => {
+    const loaded = loadFromStorage<WelfareContribution[]>('welfareContributions', []);
+    return loaded && loaded.length > 0 ? loaded : sampleWelfareContributions;
+  });
+
+  const [welfareClaims, setWelfareClaims] = useState<WelfareClaim[]>(() => {
+    const loaded = loadFromStorage<WelfareClaim[]>('welfareClaims', []);
+    return loaded && loaded.length > 0 ? loaded : sampleWelfareClaims;
+  });
+
+  const [childCheckIns, setChildCheckIns] = useState<ChildCheckInRecord[]>(() => {
+    const loaded = loadFromStorage<ChildCheckInRecord[]>('childCheckIns', []);
+    return loaded && loaded.length > 0 ? loaded : sampleChildCheckIns;
+  });
+
   // Supabase states
   const [supabaseConfig, setSupabaseConfig] = useState(getStoredSupabaseConfig());
   const [supabaseStatus, setSupabaseStatus] = useState<SupabaseStatus>(() =>
@@ -413,6 +465,21 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (isInitialMount.current) return;
     saveToStorage('auditLogs', auditLogs);
   }, [auditLogs]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('welfareContributions', welfareContributions);
+  }, [welfareContributions]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('welfareClaims', welfareClaims);
+  }, [welfareClaims]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('childCheckIns', childCheckIns);
+  }, [childCheckIns]);
 
   // Initial Supabase check and hydration
   useEffect(() => {
@@ -1736,6 +1803,209 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return newRecord;
   };
 
+  // WELFARE & BENEVOLENCE
+  const recordWelfareContribution = (
+    data: Omit<WelfareContribution, 'id' | 'created_at'>
+  ): WelfareContribution => {
+    const newRecord: WelfareContribution = {
+      ...data,
+      id: `wlf-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      created_at: new Date().toISOString(),
+    };
+    setWelfareContributions((prev) => [newRecord, ...prev]);
+    logAction(
+      'RECORD_WELFARE_DUES',
+      'Welfare',
+      `Recorded GH₵ ${data.amount.toFixed(2)} welfare contribution for ${data.member_name} (${data.month})`,
+      newRecord.id
+    );
+    return newRecord;
+  };
+
+  const deleteWelfareContribution = (id: string) => {
+    const toDelete = welfareContributions.find((w) => w.id === id);
+    setWelfareContributions((prev) => prev.filter((w) => w.id !== id));
+    if (toDelete) {
+      logAction(
+        'DELETE_WELFARE_DUES',
+        'Welfare',
+        `Deleted welfare contribution of GH₵ ${toDelete.amount.toFixed(2)} for ${toDelete.member_name}`,
+        id
+      );
+    }
+  };
+
+  const submitWelfareClaim = (
+    data: Omit<WelfareClaim, 'id' | 'claim_number' | 'created_at'>
+  ): WelfareClaim => {
+    const claimSeq = String(welfareClaims.length + 1).padStart(3, '0');
+    const claimNumber = `BEN-${new Date().getFullYear()}-${claimSeq}`;
+    const newClaim: WelfareClaim = {
+      ...data,
+      id: `claim-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      claim_number: claimNumber,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    setWelfareClaims((prev) => [newClaim, ...prev]);
+    logAction(
+      'SUBMIT_WELFARE_CLAIM',
+      'Welfare',
+      `Submitted benevolence claim ${claimNumber} for ${data.member_name} (GH₵ ${data.amount_requested.toFixed(2)} - ${data.title})`,
+      newClaim.id
+    );
+    return newClaim;
+  };
+
+  const updateWelfareClaim = (id: string, updates: Partial<WelfareClaim>) => {
+    setWelfareClaims((prev) =>
+      prev.map((c) => {
+        if (c.id === id) {
+          const updated = {
+            ...c,
+            ...updates,
+            updated_at: new Date().toISOString(),
+          };
+          logAction(
+            'UPDATE_WELFARE_CLAIM',
+            'Welfare',
+            `Updated claim ${c.claim_number} status to ${updates.status || c.status}`,
+            id
+          );
+          return updated;
+        }
+        return c;
+      })
+    );
+  };
+
+  const deleteWelfareClaim = (id: string) => {
+    const toDelete = welfareClaims.find((c) => c.id === id);
+    setWelfareClaims((prev) => prev.filter((c) => c.id !== id));
+    if (toDelete) {
+      logAction(
+        'DELETE_WELFARE_CLAIM',
+        'Welfare',
+        `Deleted benevolence claim ${toDelete.claim_number} (${toDelete.member_name})`,
+        id
+      );
+    }
+  };
+
+  const disburseWelfareClaim = (
+    id: string,
+    details: {
+      disbursement_method: PaymentMethod;
+      disbursement_channel?: string;
+      disbursement_voucher_no: string;
+      amount_approved: number;
+      pastoral_notes?: string;
+    }
+  ) => {
+    const now = new Date().toISOString().split('T')[0];
+    setWelfareClaims((prev) =>
+      prev.map((c) => {
+        if (c.id === id) {
+          const updated: WelfareClaim = {
+            ...c,
+            status: 'disbursed',
+            amount_approved: details.amount_approved,
+            disbursement_date: now,
+            disbursement_method: details.disbursement_method,
+            disbursement_channel: details.disbursement_channel,
+            disbursement_voucher_no: details.disbursement_voucher_no,
+            pastoral_notes: details.pastoral_notes || c.pastoral_notes,
+            updated_at: new Date().toISOString(),
+          };
+          logAction(
+            'DISBURSE_WELFARE_CLAIM',
+            'Welfare',
+            `Disbursed benevolence payment of GH₵ ${details.amount_approved.toFixed(2)} to ${c.member_name} (Voucher ${details.disbursement_voucher_no})`,
+            id
+          );
+          return updated;
+        }
+        return c;
+      })
+    );
+  };
+
+  // CHILDREN'S MINISTRY SAFETY & PICKUP TAGS
+  const checkInChild = (
+    data: Omit<ChildCheckInRecord, 'id' | 'security_code' | 'created_at' | 'status'> & { security_code?: string }
+  ): ChildCheckInRecord => {
+    const randomCode = data.security_code || `GWCC-K${Math.floor(100 + Math.random() * 900)}`;
+    const newRecord: ChildCheckInRecord = {
+      ...data,
+      id: `chk-child-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      security_code: randomCode,
+      status: 'checked_in',
+      created_at: new Date().toISOString(),
+    };
+    setChildCheckIns((prev) => [newRecord, ...prev]);
+    logAction(
+      'CHILD_CHECK_IN',
+      'Attendance',
+      `Checked in ${data.child_name} into ${data.class_room} (Security Code: ${randomCode})`,
+      newRecord.id
+    );
+    return newRecord;
+  };
+
+  const checkOutChild = (
+    id: string,
+    details: { checked_out_to_person: string; verified_by_leader: string }
+  ) => {
+    const nowTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    setChildCheckIns((prev) =>
+      prev.map((ch) => {
+        if (ch.id === id) {
+          const updated: ChildCheckInRecord = {
+            ...ch,
+            status: 'checked_out',
+            check_out_time: nowTime,
+            checked_out_to_person: details.checked_out_to_person,
+            verified_by_leader: details.verified_by_leader,
+          };
+          logAction(
+            'CHILD_CHECK_OUT',
+            'Attendance',
+            `Safely checked out ${ch.child_name} to ${details.checked_out_to_person} (Verified by ${details.verified_by_leader})`,
+            id
+          );
+          return updated;
+        }
+        return ch;
+      })
+    );
+  };
+
+  const summonChildParent = (id: string, notes?: string) => {
+    setChildCheckIns((prev) =>
+      prev.map((ch) => {
+        if (ch.id === id) {
+          const updated: ChildCheckInRecord = {
+            ...ch,
+            emergency_parent_called: true,
+            emergency_call_notes: notes || 'Parent summoned to Sunday School',
+          };
+          logAction(
+            'SUMMON_CHILD_PARENT',
+            'Attendance',
+            `Triggered emergency summon to parent ${ch.parent_name} (${ch.parent_phone}) for child ${ch.child_name}`,
+            id
+          );
+          return updated;
+        }
+        return ch;
+      })
+    );
+  };
+
+  const deleteChildCheckIn = (id: string) => {
+    setChildCheckIns((prev) => prev.filter((c) => c.id !== id));
+  };
+
   // RESET
   const resetToSampleData = () => {
     setSettings(initialSettings);
@@ -1755,6 +2025,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPrayerRequests(samplePrayerRequests);
     setCommunications(sampleCommunications);
     setAuditLogs(sampleAuditLogs);
+    setWelfareContributions(sampleWelfareContributions);
+    setWelfareClaims(sampleWelfareClaims);
+    setChildCheckIns(sampleChildCheckIns);
 
     saveToStorage('settings', initialSettings);
     saveToStorage('members', sampleMembers);
@@ -1773,6 +2046,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     saveToStorage('prayerRequests', samplePrayerRequests);
     saveToStorage('communications', sampleCommunications);
     saveToStorage('auditLogs', sampleAuditLogs);
+    saveToStorage('welfareContributions', sampleWelfareContributions);
+    saveToStorage('welfareClaims', sampleWelfareClaims);
+    saveToStorage('childCheckIns', sampleChildCheckIns);
 
     logAction('RESET_SAMPLE_DATA', 'System', 'Populated Greater Works City Church sample data');
   };
@@ -1849,6 +2125,19 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       sendSMSMessage,
       auditLogs,
       logAction,
+      welfareContributions,
+      recordWelfareContribution,
+      deleteWelfareContribution,
+      welfareClaims,
+      submitWelfareClaim,
+      updateWelfareClaim,
+      deleteWelfareClaim,
+      disburseWelfareClaim,
+      childCheckIns,
+      checkInChild,
+      checkOutChild,
+      summonChildParent,
+      deleteChildCheckIn,
       isSupabaseConfigured: isSupabaseConfigured(),
       supabaseStatus,
       supabaseError,
@@ -1881,6 +2170,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       prayerRequests,
       communications,
       auditLogs,
+      welfareContributions,
+      welfareClaims,
+      childCheckIns,
       supabaseStatus,
       supabaseError,
       lastSyncTime,

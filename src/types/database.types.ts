@@ -475,3 +475,103 @@ export interface ChurchSettings {
   currency_symbol: string;
   timezone: string;
 }
+
+// ==========================================
+// WELFARE & BENEVOLENCE TYPES
+// ==========================================
+
+export type WelfareClaimCategory =
+  | 'bereavement'
+  | 'hospital_medical'
+  | 'childbirth_naming'
+  | 'wedding_marriage'
+  | 'education_welfare'
+  | 'emergency_relief';
+
+export type WelfareClaimStatus =
+  | 'pending'
+  | 'under_review'
+  | 'approved'
+  | 'disbursed'
+  | 'declined';
+
+export interface WelfareContribution {
+  id: string;
+  member_id: string;
+  member_name: string;
+  tithe_number?: string;
+  date: string;
+  month: string; // YYYY-MM
+  amount: number;
+  payment_method: PaymentMethod;
+  payment_channel?: string;
+  reference_no?: string;
+  notes?: string;
+  recorded_by: string;
+  created_at: string;
+}
+
+export interface WelfareClaim {
+  id: string;
+  claim_number: string;
+  member_id: string;
+  member_name: string;
+  member_phone?: string;
+  category: WelfareClaimCategory;
+  title: string;
+  description: string;
+  amount_requested: number;
+  amount_approved?: number;
+  status: WelfareClaimStatus;
+  emergency_level: 'normal' | 'urgent' | 'critical';
+  date_submitted: string;
+  date_reviewed?: string;
+  reviewed_by?: string;
+  pastoral_notes?: string;
+  disbursement_date?: string;
+  disbursement_method?: PaymentMethod;
+  disbursement_channel?: string;
+  disbursement_voucher_no?: string;
+  supporting_documents?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+// ==========================================
+// CHILDREN'S MINISTRY SAFETY & PICKUP TYPES
+// ==========================================
+
+export type ChildAgeGroup =
+  | 'nursery_toddler'
+  | 'beginners'
+  | 'juniors'
+  | 'pre_teens';
+
+export interface ChildCheckInRecord {
+  id: string;
+  security_code: string; // High-visibility security code (e.g. TAG-482)
+  child_name: string;
+  age_group: ChildAgeGroup;
+  class_room: string;
+  service_id: string;
+  service_name: string;
+  date: string;
+  check_in_time: string;
+  parent_name: string;
+  parent_phone: string;
+  parent_member_id?: string;
+  alternate_pickup_name?: string;
+  alternate_pickup_phone?: string;
+  allergies_medical_notes?: string;
+  has_allergy_alert: boolean;
+  special_instructions?: string;
+  status: 'checked_in' | 'checked_out';
+  checked_in_by: string;
+  check_out_time?: string;
+  checked_out_to_person?: string;
+  verified_by_leader?: string;
+  emergency_parent_called?: boolean;
+  emergency_call_notes?: string;
+  created_at: string;
+}
+

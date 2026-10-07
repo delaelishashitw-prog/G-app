@@ -61,6 +61,8 @@ import { AttendanceKioskModal } from '../components/attendance/AttendanceKioskMo
 import { QuickAddVisitorModal } from '../components/attendance/QuickAddVisitorModal';
 import { PrintAttendanceRegisterModal } from '../components/attendance/PrintAttendanceRegisterModal';
 import { DigitalPassModal } from '../components/attendance/DigitalPassModal';
+import { ChildSafetyPickupModal } from '../components/attendance/ChildSafetyPickupModal';
+import { ChildCheckInRecord } from '../types/database.types';
 
 export const AttendancePage: React.FC = () => {
   const {
@@ -70,6 +72,8 @@ export const AttendancePage: React.FC = () => {
     ministries,
     attendance,
     headcounts,
+    childCheckIns,
+    summonChildParent,
     recordAttendance,
     batchRecordAttendance,
     removeAttendance,
@@ -94,19 +98,22 @@ export const AttendancePage: React.FC = () => {
 
   // Active navigation tab
   const [activeTab, setActiveTab] = useState<
-    'checkin' | 'headcount' | 'batch' | 'absentees' | 'analytics' | 'history'
+    'checkin' | 'headcount' | 'batch' | 'absentees' | 'children_security' | 'analytics' | 'history'
   >('checkin');
 
   // Search & Filters in Check-in terminal
   const [searchMemberTerm, setSearchMemberTerm] = useState('');
   const [attendeeFilter, setAttendeeFilter] = useState<'all' | 'member' | 'visitor'>('all');
   const [attendeeSearch, setAttendeeSearch] = useState('');
+  const [childSearchTerm, setChildSearchTerm] = useState('');
 
   // Modals state
   const [isKioskOpen, setIsKioskOpen] = useState(false);
   const [isQuickVisitorOpen, setIsQuickVisitorOpen] = useState(false);
   const [isPrintRegisterOpen, setIsPrintRegisterOpen] = useState(false);
   const [digitalPassMember, setDigitalPassMember] = useState<Member | null>(null);
+  const [isChildSafetyModalOpen, setIsChildSafetyModalOpen] = useState(false);
+  const [selectedChildRecordForPass, setSelectedChildRecordForPass] = useState<ChildCheckInRecord | null>(null);
 
   // In-app confirmations (replaces window.confirm)
   const [recordToUndo, setRecordToUndo] = useState<AttendanceRecord | null>(null);
@@ -558,6 +565,17 @@ export const AttendancePage: React.FC = () => {
           </button>
 
           <button
+            onClick={() => {
+              setSelectedChildRecordForPass(null);
+              setIsChildSafetyModalOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-bold transition shadow-xs"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>Child Safety Tags</span>
+          </button>
+
+          <button
             onClick={() => setIsKioskOpen(true)}
             className="flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-teal-700 to-emerald-700 hover:from-teal-800 hover:to-emerald-800 text-white rounded-xl text-xs font-bold transition shadow-md shadow-teal-700/20"
           >
@@ -775,6 +793,21 @@ export const AttendancePage: React.FC = () => {
         </button>
 
         <button
+          onClick={() => setActiveTab('children_security')}
+          className={`flex items-center gap-2 px-4 py-2.5 border-b-2 rounded-t-xl transition whitespace-nowrap ${
+            activeTab === 'children_security'
+              ? 'border-emerald-700 text-emerald-800 bg-emerald-50/50'
+              : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+          }`}
+        >
+          <ShieldCheck className="w-4 h-4 text-emerald-600" />
+          <span>Children & Security Passes</span>
+          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-emerald-100 text-emerald-800">
+            {childCheckIns.filter((c) => c.status === 'checked_in').length} In Hall
+          </span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('analytics')}
           className={`flex items-center gap-2 px-4 py-2.5 border-b-2 rounded-t-xl transition whitespace-nowrap ${
             activeTab === 'analytics'
@@ -798,6 +831,190 @@ export const AttendancePage: React.FC = () => {
           <span>Session History</span>
         </button>
       </div>
+
+      {/* TAB: CHILDREN'S MINISTRY SAFETY & SECURITY PASSES */}
+      {activeTab === 'children_security' && (
+        <div className="space-y-4 animate-in fade-in">
+          {/* Summary KPIs */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Children in Sunday School
+              </span>
+              <div className="text-2xl font-black text-emerald-800 mt-1">
+                {childCheckIns.filter((c) => c.status === 'checked_in').length}
+              </div>
+              <p className="text-[11px] text-emerald-700 mt-0.5">Currently under church supervision</p>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Safely Released
+              </span>
+              <div className="text-2xl font-black text-slate-900 mt-1">
+                {childCheckIns.filter((c) => c.status === 'checked_out').length}
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5">Checked out with verified pass</p>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Medical / Allergy Alerts
+              </span>
+              <div className="text-2xl font-black text-rose-700 mt-1">
+                {childCheckIns.filter((c) => c.status === 'checked_in' && c.has_allergy_alert).length}
+              </div>
+              <p className="text-[11px] text-rose-600 mt-0.5">High-priority care required</p>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Quick Security Actions
+              </span>
+              <div className="flex items-center gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedChildRecordForPass(null);
+                    setIsChildSafetyModalOpen(true);
+                  }}
+                  className="w-full py-1.5 px-3 bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs rounded-xl shadow-xs transition"
+                >
+                  + Check In Child
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Search bar */}
+          <div className="bg-white p-3 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="relative w-full sm:w-80">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                placeholder="Search child name, tag code (e.g. GWCC-K412), or parent..."
+                value={childSearchTerm}
+                onChange={(e) => setChildSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-3 py-1.5 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedChildRecordForPass(null);
+                  setIsChildSafetyModalOpen(true);
+                }}
+                className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5"
+              >
+                <QrCode className="w-3.5 h-3.5 text-emerald-700" />
+                <span>Verify Pickup Stub</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Children Roster Table */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500 font-bold border-b border-slate-200">
+                  <tr>
+                    <th className="py-3 px-4">Tag Code</th>
+                    <th className="py-3 px-4">Child Name</th>
+                    <th className="py-3 px-4">Class Room</th>
+                    <th className="py-3 px-4">Parent / Guardian</th>
+                    <th className="py-3 px-4">Medical / Allergy Notes</th>
+                    <th className="py-3 px-4">Time & Status</th>
+                    <th className="py-3 px-4 text-center">Safety Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {childCheckIns
+                    .filter((c) => {
+                      if (!childSearchTerm.trim()) return true;
+                      const term = childSearchTerm.toLowerCase();
+                      return (
+                        c.child_name.toLowerCase().includes(term) ||
+                        c.security_code.toLowerCase().includes(term) ||
+                        c.parent_name.toLowerCase().includes(term) ||
+                        c.parent_phone.includes(term)
+                      );
+                    })
+                    .map((rec) => (
+                      <tr key={rec.id} className="hover:bg-slate-50 transition">
+                        <td className="py-3 px-4 font-mono font-black text-slate-900 text-sm">
+                          <span className="bg-slate-900 text-white px-2 py-0.5 rounded-lg shadow-2xs">
+                            {rec.security_code}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 font-bold text-slate-900">
+                          {rec.child_name}
+                        </td>
+                        <td className="py-3 px-4 text-slate-700">{rec.class_room}</td>
+                        <td className="py-3 px-4">
+                          <span className="font-bold text-slate-900 block">{rec.parent_name}</span>
+                          <span className="text-[10px] text-slate-500 font-mono">{rec.parent_phone}</span>
+                        </td>
+                        <td className="py-3 px-4">
+                          {rec.has_allergy_alert ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-800 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                              <AlertCircle className="w-3 h-3 text-rose-600" />
+                              {rec.allergies_medical_notes}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-slate-400">None</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4">
+                          <span
+                            className={`font-semibold text-[10px] uppercase px-2 py-0.5 rounded border ${
+                              rec.status === 'checked_in'
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                : 'bg-slate-100 text-slate-600 border-slate-200'
+                            }`}
+                          >
+                            {rec.status === 'checked_in' ? 'In Sunday School' : `Released (${rec.check_out_time})`}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedChildRecordForPass(rec);
+                                setIsChildSafetyModalOpen(true);
+                              }}
+                              className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-lg text-[11px] transition flex items-center gap-1"
+                              title="View & Print Badges"
+                            >
+                              <Printer className="w-3 h-3" />
+                              Tag
+                            </button>
+                            {rec.status === 'checked_in' && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  summonChildParent(rec.id, 'Summoned to Sunday School');
+                                  warning('Parent Alert Sent', `Summoned ${rec.parent_name} (${rec.parent_phone})`);
+                                }}
+                                className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold rounded-lg text-[11px] transition flex items-center gap-1 border border-amber-200"
+                                title="Summon Parent from Main Sanctuary"
+                              >
+                                <Phone className="w-3 h-3" />
+                                Summon
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* TAB 1: LIVE CHECK-IN TERMINAL */}
       {activeTab === 'checkin' && (
@@ -1872,6 +2089,12 @@ export const AttendancePage: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Child Safety & Pickup Tags Modal */}
+      <ChildSafetyPickupModal
+        isOpen={isChildSafetyModalOpen}
+        onClose={() => setIsChildSafetyModalOpen(false)}
+        targetRecord={selectedChildRecordForPass}
+      />
     </div>
   );
 };

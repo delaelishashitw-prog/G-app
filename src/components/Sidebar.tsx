@@ -41,7 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setMobileOpen,
 }) => {
   const { canAccess, currentUser, logout } = useAuth();
-  const { visitors, prayerRequests } = useChurchData();
+  const { visitors, prayerRequests, welfareClaims } = useChurchData();
   const navigate = useNavigate();
 
   const pendingVisitorsCount = visitors.filter(
@@ -50,6 +50,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const pendingPrayersCount = prayerRequests.filter(
     (p) => p.status === 'new' || p.status === 'praying'
+  ).length;
+
+  const pendingWelfareCount = welfareClaims.filter(
+    (w) => w.status === 'pending' || w.status === 'under_review'
   ).length;
 
   const navSections = [
@@ -74,6 +78,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       group: 'Financial Stewardship',
       items: [
         { name: 'Finance & Giving', path: '/finance', icon: Wallet, module: 'finance' },
+        {
+          name: 'Welfare & Relief',
+          path: '/welfare',
+          icon: HeartHandshake,
+          module: 'finance',
+          badge: pendingWelfareCount > 0 ? pendingWelfareCount : undefined,
+          badgeColor: 'bg-emerald-600 text-white',
+        },
         { name: 'Pledges', path: '/pledges', icon: Coins, module: 'pledges' },
       ],
     },
