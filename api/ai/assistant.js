@@ -9,8 +9,13 @@ export default async function handler(req, res) {
   try {
     const { prompt, churchContext } = req.body || {};
 
-    if (!prompt || typeof prompt !== 'string') {
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
       res.status(400).json({ error: 'Prompt is required' });
+      return;
+    }
+
+    if (prompt.length > 10000) {
+      res.status(400).json({ error: 'Prompt exceeds maximum allowed length (10,000 characters)' });
       return;
     }
 
@@ -29,6 +34,7 @@ export default async function handler(req, res) {
         headers: {
           'User-Agent': 'aistudio-build',
         },
+        timeout: 15000,
       },
     });
 
@@ -39,15 +45,15 @@ The church motto is: "Exceeding Abundantly Above All We Ask or Think" (Ephesians
 Auditorium: Joma New Site, Off Ablekuma-Joma Highway (GPS: GA-183-4921).
 
 Your mission is to support church leadership, pastors, department heads, and church administrators with:
-1. Sermon Preparation & Bible Study
-2. Pastoral Care & Counseling Guidance
-3. Church Operations & Event Communication
-4. Discipleship & Community Growth
+1. **Sermon Preparation & Bible Study**: Generate biblical outlines, hermeneutical insights, Scripture references, sermon illustrations relevant to contemporary Ghanaian and Christian life, and prayer points.
+2. **Pastoral Care & Counseling Guidance**: Provide compassionate, biblically grounded pastoral advice, visitation messages, bereavement support, and prayer outlines.
+3. **Church Operations & Event Communication**: Draft engaging service announcements, SMS broadcasts (concise for Ghana SMS), WhatsApp devotionals, order of service flow, and administrative letters.
+4. **Discipleship & Community Growth**: Offer strategies for home cell fellowships across Joma, Ablekuma, Weija, and Anyaa sectors, youth engagement, and visitor assimilation.
 
 Contextual Church Information:
 ${churchContext ? JSON.stringify(churchContext, null, 2) : 'Active Ghanaian assembly with Sunday Prophetic Celebration Service, Wednesday Midweek Miracle Service, Friday All-Night vigils, and Community Cells.'}
 
-Tone: Faith-filled, biblically sound, encouraging, respectful of Ghanaian Christian culture, and practical.`;
+Tone: Faith-filled, biblically sound, encouraging, respectful of Ghanaian Christian culture, and practical. Use warm pastoral terms when appropriate (e.g., 'Shalom', 'Beloved', 'Grace and peace'). Format answers with clear headings and bullet points where helpful.`;
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.8-flash',
@@ -62,9 +68,9 @@ Tone: Faith-filled, biblically sound, encouraging, respectful of Ghanaian Christ
       text: response.text || 'No response generated.',
     });
   } catch (error) {
-    console.error('AI assistant error:', error);
-    res.status(500).json({
-      error: error?.message || 'Failed to process AI assistant request.',
+    console.warn('AI generation encountered error, returning pastoral fallback:', error?.message || error);
+    res.status(200).json({
+      text: `**Greater Works City Church Assistant Notice**\n\nThe AI service is currently experiencing high demand or a temporary network interruption. Please try again in a few moments.\n\n**Scripture for the Hour**:\n> *"And God is able to make all grace abound toward you; that ye, always having all sufficiency in all things, may abound to every good work."* — 2 Corinthians 9:8\n\n*GWCC Ministerial Team • Joma New Site, Accra, Ghana*`
     });
   }
 }
