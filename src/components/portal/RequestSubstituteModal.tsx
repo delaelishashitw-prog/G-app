@@ -50,11 +50,8 @@ export const RequestSubstituteModal: React.FC<RequestSubstituteModalProps> = ({
     onClose();
   };
 
-  const handleNotifyCoordinatorWhatsApp = () => {
-    const text = `Shalom Leader, I am writing regarding my service roster assignment for *${assignment.service_name}* on *${assignment.date}* (${assignment.department.replace('_', ' ')} - ${assignment.role_title}).\n\nI need to respectfully request a substitute due to: *${selectedReason}*.\nNote: ${note || 'Unable to attend duty as scheduled'}.\n\nThank you for understanding and God bless you!`;
-    const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
-  };
+  const whatsAppText = `Shalom Leader, I am writing regarding my service roster assignment for *${assignment.service_name}* on *${assignment.date}* (${assignment.department.replace('_', ' ')} - ${assignment.role_title}).\n\nI need to respectfully request a substitute due to: *${selectedReason}*.\nNote: ${note || 'Unable to attend duty as scheduled'}.\n\nThank you for understanding and God bless you!`;
+  const whatsAppUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(whatsAppText)}`;
 
   return (
     <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
@@ -151,15 +148,16 @@ export const RequestSubstituteModal: React.FC<RequestSubstituteModalProps> = ({
 
           {/* Footer Actions */}
           <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={handleNotifyCoordinatorWhatsApp}
+            <a
+              href={whatsAppUrl}
+              target="_blank"
+              rel="noopener noreferrer"
               className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition flex items-center gap-1.5 border border-emerald-200 cursor-pointer"
               title="Notify coordinator via WhatsApp"
             >
               <MessageCircle className="w-4 h-4 text-emerald-600" />
               <span>Notify Coordinator</span>
-            </button>
+            </a>
 
             <div className="flex items-center gap-2">
               <button

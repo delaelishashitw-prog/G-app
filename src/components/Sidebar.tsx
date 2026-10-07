@@ -43,7 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setMobileOpen,
 }) => {
   const { canAccess, currentUser, logout } = useAuth();
-  const { visitors, prayerRequests, welfareClaims, rosterConflicts, pastoralVisitations } = useChurchData();
+  const { visitors, prayerRequests, welfareClaims, rosterConflicts, pastoralVisitations, members } = useChurchData();
   const navigate = useNavigate();
 
   const pendingVisitorsCount = visitors.filter(
@@ -63,6 +63,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const pendingWelfareCount = welfareClaims.filter(
     (w) => w.status === 'pending' || w.status === 'under_review'
   ).length;
+
+  const todayCelebrantsCount = (members || []).filter((m) => {
+    const today = new Date();
+    const curMonth = today.getMonth() + 1;
+    const curDay = today.getDate();
+    if (m.date_of_birth) {
+      const parts = m.date_of_birth.split('-');
+      if (parseInt(parts[1], 10) === curMonth && parseInt(parts[2], 10) === curDay) return true;
+    }
+    if (m.wedding_anniversary) {
+      const parts = m.wedding_anniversary.split('-');
+      if (parseInt(parts[1], 10) === curMonth && parseInt(parts[2], 10) === curDay) return true;
+    }
+    return false;
+  }).length;
 
   const navSections = [
     {
@@ -139,7 +154,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           badge: pastoralBadgeCount > 0 ? pastoralBadgeCount : undefined,
           badgeColor: urgentVisitationsCount > 0 ? 'bg-rose-500 text-white animate-pulse' : 'bg-emerald-500 text-white',
         },
-        { name: 'Communication', path: '/communication', icon: MessageSquare, module: 'communication' },
+        {
+          name: 'Communication',
+          path: '/communication',
+          icon: MessageSquare,
+          module: 'communication',
+          badge: todayCelebrantsCount > 0 ? `${todayCelebrantsCount} Radar` : 'Radar',
+          badgeColor: 'bg-emerald-600 text-white font-medium text-[10px]',
+        },
         {
           name: 'AI Pastoral Assistant',
           path: '/assistant',

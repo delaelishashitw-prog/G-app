@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { Session, User } from '@supabase/supabase-js';
 import { Member, UserProfile, UserRole } from '../types/database.types';
 import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
-import { sampleUsers } from '../lib/initialData';
+import { sampleUsers, sampleMembers } from '../lib/initialData';
 
 interface AuthContextType {
   currentUser: UserProfile;
@@ -623,6 +623,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
     } catch {}
+
+    if (allMembers.length === 0) {
+      allMembers = sampleMembers;
+    }
 
     const cleanDigits = clean.replace(/[^0-9]/g, '');
     const cleanAlphaNum = clean.replace(/[^a-z0-9]/g, '');

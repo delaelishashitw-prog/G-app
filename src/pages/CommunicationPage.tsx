@@ -27,11 +27,26 @@ import {
   ShieldCheck,
   Tag,
   Radio,
-  Share2
+  Share2,
+  Cake,
+  Heart,
+  Video,
+  Play,
+  CheckCircle2,
+  ExternalLink,
+  BellRing,
+  Gift,
+  Timer,
+  CalendarCheck,
+  ArrowRight
 } from 'lucide-react';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useToast } from '../contexts/ToastContext';
 import { formatGHS } from '../lib/currencyUtils';
+import { Member, Visitor } from '../types/database.types';
+import { BlessingGeneratorModal } from '../components/communication/BlessingGeneratorModal';
+import { PastorWelcomeVideoModal } from '../components/communication/PastorWelcomeVideoModal';
+import { FirstTimerWelcomeModal } from '../components/communication/FirstTimerWelcomeModal';
 
 interface BroadcastLog {
   id: string;
@@ -46,12 +61,110 @@ interface BroadcastLog {
   recipients_sample: string[];
 }
 
+export interface CelebrantItem {
+  id: string;
+  member: Member;
+  type: 'birthday' | 'anniversary';
+  dateStr: string;
+  daysUntil: number;
+  isToday: boolean;
+  yearsCount: number;
+  milestoneTitle: string;
+  spouseName?: string;
+  suggestedScripture: string;
+  personalizedBlessing: string;
+  smsMessage: string;
+}
+
+function getDaysUntil(dateString?: string, baseDate: Date = new Date()): { daysUntil: number; isToday: boolean; yearsCount: number } | null {
+  if (!dateString) return null;
+  const parts = dateString.split('-');
+  if (parts.length < 3) return null;
+
+  const eventYear = parseInt(parts[0], 10);
+  const eventMonth = parseInt(parts[1], 10);
+  const eventDay = parseInt(parts[2], 10);
+  if (isNaN(eventMonth) || isNaN(eventDay)) return null;
+
+  const currentYear = baseDate.getFullYear();
+  const currentMonth = baseDate.getMonth() + 1;
+  const currentDay = baseDate.getDate();
+
+  if (eventMonth === currentMonth && eventDay === currentDay) {
+    return {
+      daysUntil: 0,
+      isToday: true,
+      yearsCount: Math.max(1, currentYear - eventYear),
+    };
+  }
+
+  const todayMidnight = new Date(currentYear, currentMonth - 1, currentDay).getTime();
+  let targetTime = new Date(currentYear, eventMonth - 1, eventDay).getTime();
+  let diffDays = Math.round((targetTime - todayMidnight) / (1000 * 60 * 60 * 24));
+  let yearsCount = currentYear - eventYear;
+
+  if (diffDays < 0) {
+    targetTime = new Date(currentYear + 1, eventMonth - 1, eventDay).getTime();
+    diffDays = Math.round((targetTime - todayMidnight) / (1000 * 60 * 60 * 24));
+    yearsCount = currentYear + 1 - eventYear;
+  }
+
+  return {
+    daysUntil: diffDays,
+    isToday: false,
+    yearsCount: Math.max(1, yearsCount),
+  };
+}
+
+function generateBirthdayBlessing(member: Member, yearsCount: number) {
+  const firstName = member.first_name;
+  return `Shalom ${firstName}! 🎉🎂 Prophet Elisha K. Richard, the ministerial council, and the entire Greater Works City Church (GWCC) family joyfully celebrate you on your ${yearsCount}th birthday today!\n\nAs Psalm 20:1-4 declares:\n"The Lord hear thee in the day of trouble; the name of the God of Jacob defend thee; Send thee help from the sanctuary, and strengthen thee out of Zion..."\n\nMay this new year usher in supernatural favor, long life, divine health, open heavens, and continuous kingdom elevation for you and your household! Have a glorious birthday celebration!\n\nWith pastoral blessings,\nProphet Elisha K. Richard • Greater Works City Church, Joma, Accra`;
+}
+
+function generateAnniversaryBlessing(member: Member, yearsCount: number) {
+  const firstName = member.first_name;
+  const spouse = member.spouse_name || 'your beloved spouse';
+  return `Shalom ${firstName} & ${spouse}! 💍✨ Prophet Elisha K. Richard and the entire Greater Works City Church (GWCC) family rejoice with you on your ${yearsCount}th Wedding Anniversary today!\n\n"Therefore shall a man leave his father and his mother, and shall cleave unto his wife: and they shall be one flesh." — Genesis 2:24\n\nMay the God of peace continually preserve your home, renew your marital joy, guard your family against every trial, and multiply your generational blessings exceedingly abundantly!\n\nProphet Elisha K. Richard & GWCC Ministerial Council • Joma, Accra`;
+}
+
+function generateBirthdaySms(member: Member, yearsCount: number) {
+  return `Happy ${yearsCount}th Birthday ${member.first_name}! GWCC speaks Psalm 20:1-4 blessings over your new age: divine favor, sound health & elevation. Prophet Elisha & GWCC Family.`;
+}
+
+function generateAnniversarySms(member: Member, yearsCount: number) {
+  const spouse = member.spouse_name ? ` & ${member.spouse_name}` : '';
+  return `Happy ${yearsCount}th Wedding Anniversary ${member.first_name}${spouse}! GWCC speaks divine peace & increasing joy over your holy union. Prophet Elisha & GWCC Council.`;
+}
+
+function generateFirstTimerWelcome(visitor: Visitor, videoLink: string) {
+  const firstName = visitor.full_name.split(' ')[0];
+  const prayerPart = visitor.prayer_request ? ` concerning your prayer request: "${visitor.prayer_request}"` : '';
+  return `Shalom ${firstName}! 🕊️✨ Thank you for worshipping with Greater Works City Church (GWCC), Joma this Sunday! Prophet Elisha K. Richard and our entire church family were truly honored by your fellowship.\n\nPlease watch Prophet Elisha's personal welcome message and sanctuary orientation video for you here:\n👉 ${videoLink}\n\nOur pastoral intercessors are praying in faith with you${prayerPart}. You are warmly welcome to our Midweek Miracle Service this Wednesday at 6:30 PM!\n\nPastoral Care Secretariat • Greater Works City Church, Joma New Site, Accra`;
+}
+
+function generateFirstTimerSms(visitor: Visitor, videoLink: string) {
+  const firstName = visitor.full_name.split(' ')[0];
+  return `Shalom ${firstName}! Thank you for worshipping with GWCC Joma. Watch Prophet Elisha's welcome video for you: ${videoLink}. We are praying with you!`;
+}
+
 export const CommunicationPage: React.FC = () => {
-  const { members, visitors, ministries, smallGroups } = useChurchData();
-  const { error: toastError, info: toastInfo, warning: toastWarning } = useToast();
+  const { members, visitors, ministries, smallGroups, updateVisitor, logAction } = useChurchData();
+  const { error: toastError, info: toastInfo, warning: toastWarning, success: toastSuccess } = useToast();
 
   // Navigation & Channels
-  const [activeTab, setActiveTab] = useState<'sms' | 'whatsapp' | 'automations' | 'history'>('sms');
+  const [activeTab, setActiveTab] = useState<'radar' | 'sms' | 'whatsapp' | 'automations' | 'history'>('radar');
+
+  // Automated Radar & Touchpoints States
+  const [radarDateStr, setRadarDateStr] = useState<string>('2026-10-07');
+  const [celebrantsView, setCelebrantsView] = useState<'today' | 'upcoming' | 'all'>('today');
+  const [selectedCelebrantForBlessing, setSelectedCelebrantForBlessing] = useState<CelebrantItem | null>(null);
+  const [customBlessingText, setCustomBlessingText] = useState('');
+  const [pastorWelcomeVideoLink, setPastorWelcomeVideoLink] = useState('https://greaterworkscitychurch.org/welcome-video');
+  const [isTwoHourTriggerArmed, setIsTwoHourTriggerArmed] = useState(true);
+  const [selectedVisitorForWelcome, setSelectedVisitorForWelcome] = useState<Visitor | null>(null);
+  const [customVisitorWelcomeText, setCustomVisitorWelcomeText] = useState('');
+  const [isVideoPreviewOpen, setIsVideoPreviewOpen] = useState(false);
+  const [visitorFilter, setVisitorFilter] = useState<'pending' | 'all'>('pending');
 
   // SMS Form State
   const [targetGroup, setTargetGroup] = useState<
@@ -295,6 +408,219 @@ export const CommunicationPage: React.FC = () => {
     a.click();
   };
 
+  const baseDate = useMemo(() => {
+    if (!radarDateStr) return new Date();
+    const parts = radarDateStr.split('-');
+    if (parts.length < 3) return new Date();
+    return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 12, 0, 0);
+  }, [radarDateStr]);
+
+  // Automated Celebrant Radar Computation
+  const celebrants = useMemo<CelebrantItem[]>(() => {
+    const list: CelebrantItem[] = [];
+
+    members.forEach((m) => {
+      // 1. Birthday
+      if (m.date_of_birth) {
+        const res = getDaysUntil(m.date_of_birth, baseDate);
+        if (res && res.daysUntil <= 7) {
+          list.push({
+            id: `bday-${m.id}`,
+            member: m,
+            type: 'birthday',
+            dateStr: m.date_of_birth,
+            daysUntil: res.daysUntil,
+            isToday: res.isToday,
+            yearsCount: res.yearsCount,
+            milestoneTitle: `Turning ${res.yearsCount} Years`,
+            suggestedScripture: 'Psalm 20:1-4 & Numbers 6:24-26',
+            personalizedBlessing: generateBirthdayBlessing(m, res.yearsCount),
+            smsMessage: generateBirthdaySms(m, res.yearsCount),
+          });
+        }
+      }
+
+      // 2. Wedding Anniversary
+      if (m.wedding_anniversary) {
+        const res = getDaysUntil(m.wedding_anniversary, baseDate);
+        if (res && res.daysUntil <= 7) {
+          const spouse = m.spouse_name ? ` (with ${m.spouse_name})` : '';
+          list.push({
+            id: `anniv-${m.id}`,
+            member: m,
+            type: 'anniversary',
+            dateStr: m.wedding_anniversary,
+            daysUntil: res.daysUntil,
+            isToday: res.isToday,
+            yearsCount: res.yearsCount,
+            milestoneTitle: `${res.yearsCount}th Wedding Anniversary${spouse}`,
+            spouseName: m.spouse_name,
+            suggestedScripture: 'Genesis 2:24 & Ephesians 5:31-33',
+            personalizedBlessing: generateAnniversaryBlessing(m, res.yearsCount),
+            smsMessage: generateAnniversarySms(m, res.yearsCount),
+          });
+        }
+      }
+    });
+
+    return list.sort((a, b) => a.daysUntil - b.daysUntil);
+  }, [members, baseDate]);
+
+  const todayCelebrants = useMemo(() => celebrants.filter((c) => c.isToday), [celebrants]);
+  const upcomingCelebrants = useMemo(() => celebrants.filter((c) => !c.isToday), [celebrants]);
+
+  // Post-Service First-Timer Queue
+  const pendingFirstTimers = useMemo(() => {
+    return visitors.filter((v) => v.follow_up_status === 'new' || v.visit_date >= '2026-10-01');
+  }, [visitors]);
+
+  // Actions for Birthday & Anniversary Engine
+  const handleOpenBlessingModal = (c: CelebrantItem) => {
+    setSelectedCelebrantForBlessing(c);
+    setCustomBlessingText(c.personalizedBlessing);
+  };
+
+  const handleSendCelebrantSms = (c: CelebrantItem, customText?: string) => {
+    const textToSend = customText || c.smsMessage;
+    const charCount = textToSend.length;
+    const pages = charCount <= 160 ? 1 : Math.ceil(charCount / 153);
+    if (smsCredits < pages) {
+      toastError('Insufficient Credits', `Requires ${pages} SMS credits.`);
+      return;
+    }
+    setSmsCredits((prev) => Math.max(0, prev - pages));
+    const newLog: BroadcastLog = {
+      id: `log-${Date.now()}`,
+      date: new Date().toISOString().replace('T', ' ').substring(0, 16),
+      recipient_group: c.type === 'birthday' ? 'Birthday Celebrant' : 'Anniversary Celebrant',
+      recipient_count: 1,
+      sender_id: senderId,
+      channel: 'SMS',
+      cost_ghs: Number((pages * 0.045).toFixed(3)),
+      message: textToSend,
+      status: 'Delivered',
+      recipients_sample: [`${c.member.first_name} ${c.member.last_name}`],
+    };
+    setSentBroadcasts((prev) => [newLog, ...prev]);
+    logAction(
+      'CELEBRANT_SMS_DISPATCH',
+      'Communication',
+      `Sent ${c.type} blessing SMS to ${c.member.first_name} ${c.member.last_name} (${c.member.phone})`,
+      c.member.id
+    );
+    toastSuccess('SMS Blessing Dispatched', `Sent scheduled ${c.type} blessing to ${c.member.first_name} ${c.member.last_name}!`);
+  };
+
+  const handleBroadcastAllTodayCelebrants = () => {
+    if (todayCelebrants.length === 0) {
+      toastWarning('No Celebrants', 'There are no active celebrants identified for today.');
+      return;
+    }
+    if (smsCredits < todayCelebrants.length) {
+      toastError('Insufficient Credits', `Requires ${todayCelebrants.length} SMS units.`);
+      return;
+    }
+    setSmsCredits((prev) => Math.max(0, prev - todayCelebrants.length));
+    const newLog: BroadcastLog = {
+      id: `log-${Date.now()}`,
+      date: new Date().toISOString().replace('T', ' ').substring(0, 16),
+      recipient_group: "Today's Daily Celebrants Radar",
+      recipient_count: todayCelebrants.length,
+      sender_id: senderId,
+      channel: 'SMS',
+      cost_ghs: Number((todayCelebrants.length * 0.045).toFixed(2)),
+      message: 'Automated morning radar birthday & wedding anniversary blessings broadcast.',
+      status: 'Delivered',
+      recipients_sample: todayCelebrants.map((c) => `${c.member.first_name} ${c.member.last_name}`),
+    };
+    setSentBroadcasts((prev) => [newLog, ...prev]);
+    logAction(
+      'MORNING_RADAR_BROADCAST',
+      'Communication',
+      `Dispatched morning radar broadcast to ${todayCelebrants.length} daily celebrants`
+    );
+    toastSuccess('Morning Radar Broadcast Executed', `Delivered personalized blessing SMS to all ${todayCelebrants.length} today's celebrants!`);
+  };
+
+  // Actions for Post-Service First-Timer Trigger
+  const handleOpenVisitorWelcomeModal = (v: Visitor) => {
+    setSelectedVisitorForWelcome(v);
+    setCustomVisitorWelcomeText(generateFirstTimerWelcome(v, pastorWelcomeVideoLink));
+  };
+
+  const handleExecuteFirstTimerTrigger = () => {
+    if (pendingFirstTimers.length === 0) {
+      toastInfo('No Pending First-Timers', 'All first-timers have already received their post-service welcome.');
+      return;
+    }
+    if (smsCredits < pendingFirstTimers.length) {
+      toastError('Insufficient Credits', `Requires ${pendingFirstTimers.length} SMS credits.`);
+      return;
+    }
+    setSmsCredits((prev) => Math.max(0, prev - pendingFirstTimers.length));
+
+    // Update visitor follow_up_status
+    pendingFirstTimers.forEach((v) => {
+      updateVisitor(v.id, {
+        follow_up_status: 'contacted',
+        notes: `${v.notes ? v.notes + ' • ' : ''}Automated post-service thank-you with welcome video link dispatched`,
+      });
+    });
+
+    const newLog: BroadcastLog = {
+      id: `log-${Date.now()}`,
+      date: new Date().toISOString().replace('T', ' ').substring(0, 16),
+      recipient_group: 'Post-Service First-Timers (2-Hour Window)',
+      recipient_count: pendingFirstTimers.length,
+      sender_id: senderId,
+      channel: 'SMS',
+      cost_ghs: Number((pendingFirstTimers.length * 0.045).toFixed(2)),
+      message: `Shalom! Thank you for worshipping with GWCC Joma. Watch Prophet Elisha's welcome video: ${pastorWelcomeVideoLink}. We are praying with you!`,
+      status: 'Delivered',
+      recipients_sample: pendingFirstTimers.map((v) => v.full_name),
+    };
+    setSentBroadcasts((prev) => [newLog, ...prev]);
+    logAction(
+      'POST_SERVICE_TRIGGER_EXECUTE',
+      'Communication',
+      `Executed 2-hour post-service dispatch with welcome video link to ${pendingFirstTimers.length} first-timers`
+    );
+    toastSuccess(
+      'Post-Service Trigger Executed',
+      `Dispatched automated thank-you messages with Prophet Elisha's welcome video link to ${pendingFirstTimers.length} first-timers!`
+    );
+  };
+
+  const handleSendSingleFirstTimerSms = (v: Visitor, customText?: string) => {
+    const textToSend = customText || generateFirstTimerSms(v, pastorWelcomeVideoLink);
+    const charCount = textToSend.length;
+    const pages = charCount <= 160 ? 1 : Math.ceil(charCount / 153);
+    if (smsCredits < pages) {
+      toastError('Insufficient Credits', `Requires ${pages} SMS credits.`);
+      return;
+    }
+    setSmsCredits((prev) => Math.max(0, prev - pages));
+    updateVisitor(v.id, {
+      follow_up_status: 'contacted',
+      notes: `${v.notes ? v.notes + ' • ' : ''}Post-service welcome video SMS sent`,
+    });
+    const newLog: BroadcastLog = {
+      id: `log-${Date.now()}`,
+      date: new Date().toISOString().replace('T', ' ').substring(0, 16),
+      recipient_group: 'First-Timer Post-Service Welcome',
+      recipient_count: 1,
+      sender_id: senderId,
+      channel: 'SMS',
+      cost_ghs: Number((pages * 0.045).toFixed(3)),
+      message: textToSend,
+      status: 'Delivered',
+      recipients_sample: [v.full_name],
+    };
+    setSentBroadcasts((prev) => [newLog, ...prev]);
+    logAction('FIRST_TIMER_SMS', 'Communication', `Sent welcome video SMS to ${v.full_name}`, v.id);
+    toastSuccess('First-Timer Welcome Sent', `Sent thank-you SMS with video link to ${v.full_name}!`);
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Banner */}
@@ -356,6 +682,28 @@ export const CommunicationPage: React.FC = () => {
       {/* Main Tabs Navigation */}
       <div className="flex border-b border-slate-200 gap-4 overflow-x-auto pb-px">
         <button
+          onClick={() => setActiveTab('radar')}
+          className={`pb-3 text-xs font-bold border-b-2 flex items-center gap-2 transition shrink-0 ${
+            activeTab === 'radar'
+              ? 'border-[#064e3b] text-[#064e3b]'
+              : 'border-transparent text-slate-500 hover:text-slate-900'
+          }`}
+        >
+          <Radio className="w-4 h-4 text-emerald-600 animate-pulse" />
+          <span>Automated Broadcast Radar</span>
+          {todayCelebrants.length > 0 && (
+            <span className="px-1.5 py-0.5 bg-rose-500 text-white text-[10px] font-extrabold rounded-full">
+              {todayCelebrants.length} Today
+            </span>
+          )}
+          {pendingFirstTimers.length > 0 && (
+            <span className="px-1.5 py-0.5 bg-amber-500 text-white text-[10px] font-extrabold rounded-full">
+              {pendingFirstTimers.length} New
+            </span>
+          )}
+        </button>
+
+        <button
           onClick={() => setActiveTab('sms')}
           className={`pb-3 text-xs font-bold border-b-2 flex items-center gap-2 transition shrink-0 ${
             activeTab === 'sms'
@@ -403,6 +751,516 @@ export const CommunicationPage: React.FC = () => {
           <span>Dispatch History & Logs ({sentBroadcasts.length})</span>
         </button>
       </div>
+
+      {/* TAB 0: AUTOMATED BROADCAST RADAR & PASTORAL TOUCHPOINTS */}
+      {activeTab === 'radar' && (
+        <div className="space-y-6">
+          {/* Top Live Touchpoints Control Bar */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Radar Card 1: Morning Celebrants Radar */}
+            <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex flex-col justify-between space-y-4">
+              <div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="p-2 bg-rose-50 text-rose-600 rounded-2xl">
+                      <Radio className="w-4 h-4 animate-pulse" />
+                    </span>
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                      Morning Celebrants Radar
+                    </span>
+                  </div>
+                  <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-extrabold rounded-full flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-ping" />
+                    Active (06:00 GMT)
+                  </span>
+                </div>
+                <div className="mt-3">
+                  <p className="text-2xl font-black text-slate-900 tracking-tight">
+                    {todayCelebrants.length}{' '}
+                    <span className="text-sm font-semibold text-slate-500">Today</span>
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {todayCelebrants.filter((c) => c.type === 'birthday').length} Birthdays •{' '}
+                    {todayCelebrants.filter((c) => c.type === 'anniversary').length} Wedding Anniversaries
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                <span className="text-[11px] text-slate-400">1-click automated SMS/WhatsApp</span>
+                <button
+                  type="button"
+                  disabled={todayCelebrants.length === 0}
+                  onClick={handleBroadcastAllTodayCelebrants}
+                  className="px-3 py-1.5 bg-[#064e3b] hover:bg-[#047857] disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Broadcast All ({todayCelebrants.length})</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Radar Card 2: Post-Service First-Timer Trigger */}
+            <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex flex-col justify-between space-y-4">
+              <div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="p-2 bg-amber-50 text-amber-600 rounded-2xl">
+                      <Timer className="w-4 h-4" />
+                    </span>
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                      Post-Service 2-Hour Trigger
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsTwoHourTriggerArmed(!isTwoHourTriggerArmed)}
+                    className={`px-2 py-0.5 text-[10px] font-extrabold rounded-full transition flex items-center gap-1 ${
+                      isTwoHourTriggerArmed
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${isTwoHourTriggerArmed ? 'bg-emerald-600 animate-pulse' : 'bg-slate-400'}`} />
+                    {isTwoHourTriggerArmed ? 'Armed' : 'Standby'}
+                  </button>
+                </div>
+                <div className="mt-3">
+                  <p className="text-2xl font-black text-slate-900 tracking-tight">
+                    {pendingFirstTimers.length}{' '}
+                    <span className="text-sm font-semibold text-slate-500">First-Timers</span>
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Sunday Prophetic Service dismissal • 2-hour window active
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setIsVideoPreviewOpen(true)}
+                  className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 hover:underline"
+                >
+                  <Video className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Welcome Video Link</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={pendingFirstTimers.length === 0}
+                  onClick={handleExecuteFirstTimerTrigger}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Execute Dispatch</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Radar Card 3: Live Radar Engine Date Simulator */}
+            <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex flex-col justify-between space-y-4">
+              <div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="p-2 bg-blue-50 text-blue-600 rounded-2xl">
+                      <Calendar className="w-4 h-4" />
+                    </span>
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                      Radar Schedule & Test Date
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                    Ghana GMT
+                  </span>
+                </div>
+                <div className="mt-3">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={radarDateStr}
+                      onChange={(e) => setRadarDateStr(e.target.value)}
+                      className="px-3 py-1.5 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-800 bg-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setRadarDateStr('2026-10-07')}
+                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold transition"
+                      title="Set to today (Oct 7, 2026)"
+                    >
+                      Today
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Allows simulating morning radar scans across any church date.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                <span>Total GWCC Members: <strong className="font-bold text-slate-800">{members.length}</strong></span>
+                <span>Gateway Units: <strong className="font-mono text-emerald-800 font-bold">{smsCredits}</strong></span>
+              </div>
+            </div>
+          </div>
+
+          {/* SECTION 1: CONGREGATIONAL BIRTHDAY & ANNIVERSARY ENGINE */}
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 bg-amber-50 text-amber-600 rounded-xl">
+                    <Cake className="w-4 h-4" />
+                  </span>
+                  <h3 className="font-extrabold text-slate-900 text-sm">
+                    Congregational Birthday & Anniversary Engine
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Automated morning radar scans identify celebrants with 1-click personalized WhatsApp blessings & scheduled SMS broadcast.
+                </p>
+              </div>
+
+              {/* View filters & Action */}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex bg-slate-100 p-1 rounded-xl text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setCelebrantsView('today')}
+                    className={`px-3 py-1 rounded-lg font-bold transition ${
+                      celebrantsView === 'today'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                  >
+                    Today's Celebrants ({todayCelebrants.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCelebrantsView('upcoming')}
+                    className={`px-3 py-1 rounded-lg font-bold transition ${
+                      celebrantsView === 'upcoming'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                  >
+                    Upcoming 7 Days ({upcomingCelebrants.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCelebrantsView('all')}
+                    className={`px-3 py-1 rounded-lg font-bold transition ${
+                      celebrantsView === 'all'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                  >
+                    All Window ({celebrants.length})
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={todayCelebrants.length === 0}
+                  onClick={handleBroadcastAllTodayCelebrants}
+                  className="px-3.5 py-2 bg-[#064e3b] hover:bg-[#047857] disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Broadcast Today's Celebrants ({todayCelebrants.length})</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Celebrants Grid */}
+            {celebrantsView === 'today' && todayCelebrants.length === 0 ? (
+              <div className="py-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                <Sparkles className="w-8 h-8 text-slate-400 mx-auto" />
+                <p className="text-sm font-bold text-slate-700">No Celebrants Identified for Today ({radarDateStr})</p>
+                <p className="text-xs text-slate-400 max-w-md mx-auto">
+                  Click "Upcoming 7 Days" to review the week's celebrants, or switch the date above to test other calendar dates.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setCelebrantsView('upcoming')}
+                  className="mt-2 px-3.5 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded-xl text-xs font-bold"
+                >
+                  View Upcoming 7 Days ({upcomingCelebrants.length})
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {(celebrantsView === 'today' ? todayCelebrants : celebrantsView === 'upcoming' ? upcomingCelebrants : celebrants).map((c) => {
+                  const isBirthday = c.type === 'birthday';
+                  return (
+                    <div
+                      key={c.id}
+                      className={`p-5 rounded-2xl border transition shadow-xs space-y-3 ${
+                        c.isToday
+                          ? isBirthday
+                            ? 'border-amber-200 bg-amber-50/20'
+                            : 'border-emerald-200 bg-emerald-50/20'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      {/* Celebrant Card Header */}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${
+                            isBirthday ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'
+                          }`}>
+                            {isBirthday ? <Cake className="w-5 h-5" /> : <Heart className="w-5 h-5" />}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-bold text-sm text-slate-900">
+                                {c.member.first_name} {c.member.last_name}
+                              </h4>
+                              <span className={`px-2 py-0.5 text-[10px] font-extrabold rounded-full ${
+                                c.isToday
+                                  ? 'bg-rose-500 text-white animate-pulse'
+                                  : 'bg-slate-100 text-slate-700'
+                              }`}>
+                                {c.isToday ? 'Today!' : `In ${c.daysUntil} days`}
+                              </span>
+                            </div>
+                            <p className="text-xs font-semibold text-slate-600 mt-0.5">
+                              {c.milestoneTitle}
+                            </p>
+                          </div>
+                        </div>
+
+                        <span className="text-[11px] font-mono text-slate-400">
+                          {c.dateStr}
+                        </span>
+                      </div>
+
+                      {/* Ministry, Cell & Scripture Pills */}
+                      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                        {c.member.phone && (
+                          <span className="px-2 py-0.5 bg-slate-100 font-mono text-slate-700 rounded-lg">
+                            {c.member.phone}
+                          </span>
+                        )}
+                        {c.member.ministry_name && (
+                          <span className="px-2 py-0.5 bg-emerald-50 text-emerald-800 rounded-lg border border-emerald-100">
+                            {c.member.ministry_name}
+                          </span>
+                        )}
+                        {c.member.small_group_name && (
+                          <span className="px-2 py-0.5 bg-blue-50 text-blue-800 rounded-lg border border-blue-100">
+                            {c.member.small_group_name}
+                          </span>
+                        )}
+                        <span className="px-2 py-0.5 bg-purple-50 text-purple-800 rounded-lg border border-purple-100 font-medium">
+                          📖 {c.suggestedScripture}
+                        </span>
+                      </div>
+
+                      {/* Blessing Text Snippet */}
+                      <div className="p-3 bg-white/80 rounded-xl border border-slate-200 text-xs text-slate-700 leading-relaxed font-sans line-clamp-3">
+                        {c.personalizedBlessing}
+                      </div>
+
+                      {/* Actions */}
+                      <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenBlessingModal(c)}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-2xs"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>WhatsApp Blessing Studio</span>
+                        </button>
+
+                        <div className="flex items-center gap-1.5">
+                          {c.member.phone && (
+                            <button
+                              type="button"
+                              onClick={() => handleLaunchWhatsApp(c.member.phone, c.personalizedBlessing)}
+                              className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold transition flex items-center gap-1"
+                              title="Direct WhatsApp"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>WhatsApp</span>
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => handleSendCelebrantSms(c)}
+                            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1"
+                            title="Send scheduled Ghana SMS"
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            <span>SMS</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* SECTION 2: POST-SERVICE FIRST-TIMER TRIGGER (2-HOUR WINDOW) */}
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 bg-emerald-50 text-emerald-700 rounded-xl">
+                    <Users className="w-4 h-4" />
+                  </span>
+                  <h3 className="font-extrabold text-slate-900 text-sm">
+                    Post-Service First-Timer Trigger (2-Hour Window)
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Automated thank-you messages and personal orientation videos dispatched to first-timers within 2 hours of Sunday service dismissal.
+                </p>
+              </div>
+
+              {/* Action */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsVideoPreviewOpen(true)}
+                  className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5"
+                >
+                  <Video className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>Preview Welcome Video</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={pendingFirstTimers.length === 0}
+                  onClick={handleExecuteFirstTimerTrigger}
+                  className="px-3.5 py-2 bg-[#064e3b] hover:bg-[#047857] disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Execute 2-Hour Dispatch ({pendingFirstTimers.length})</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Video Link & Trigger Bar */}
+            <div className="p-4 bg-emerald-50/60 border border-emerald-200/80 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-emerald-950">Active Welcome Video Link:</span>
+                  <span className="font-mono text-emerald-800 bg-white px-2 py-0.5 rounded border border-emerald-200 font-semibold truncate max-w-xs">
+                    {pastorWelcomeVideoLink}
+                  </span>
+                </div>
+                <p className="text-[11px] text-emerald-800">
+                  Prophet Elisha K. Richard welcome orientation & sanctuary tour link is automatically embedded into all touchpoints.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsVideoPreviewOpen(true)}
+                  className="px-3 py-1.5 bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-xs font-bold transition flex items-center gap-1"
+                >
+                  <Play className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>Test Video Link</span>
+                </button>
+              </div>
+            </div>
+
+            {/* First Timers List */}
+            {pendingFirstTimers.length === 0 ? (
+              <div className="py-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
+                <p className="text-sm font-bold text-slate-700">All First-Timers Have Received Welcome Messages</p>
+                <p className="text-xs text-slate-400">
+                  No pending first-time visitors in the 2-hour post-service dispatch queue.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {pendingFirstTimers.map((v) => {
+                  const welcomeMsg = generateFirstTimerWelcome(v, pastorWelcomeVideoLink);
+                  return (
+                    <div
+                      key={v.id}
+                      className="p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-white transition space-y-3"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center text-xs">
+                            {v.full_name.split(' ').map((n) => n[0]).join('').substring(0, 2)}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-bold text-sm text-slate-900">{v.full_name}</h4>
+                              <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-bold rounded-full">
+                                2-Hour Window Pending
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500">
+                              Attended {v.service_attended || 'Sunday Service'} • Visited {v.visit_date}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 text-[11px] font-mono text-slate-500">
+                          <span>{v.phone || 'No phone'}</span>
+                        </div>
+                      </div>
+
+                      {v.prayer_request && (
+                        <div className="p-2.5 bg-amber-50/80 border border-amber-200/80 rounded-xl text-xs text-amber-900">
+                          <strong>Personal Prayer Request:</strong> "{v.prayer_request}"
+                        </div>
+                      )}
+
+                      {/* Message Preview */}
+                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-700 leading-relaxed font-sans line-clamp-2">
+                        {welcomeMsg}
+                      </div>
+
+                      {/* Actions */}
+                      <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenVisitorWelcomeModal(v)}
+                          className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>Customize & Review Message</span>
+                        </button>
+
+                        <div className="flex items-center gap-2">
+                          {v.phone && (
+                            <button
+                              type="button"
+                              onClick={() => handleLaunchWhatsApp(v.phone, welcomeMsg)}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-2xs"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              <span>WhatsApp Welcome</span>
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => handleSendSingleFirstTimerSms(v)}
+                            className="px-3 py-1.5 bg-[#064e3b] hover:bg-[#047857] text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-2xs"
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            <span>Send Ghana SMS</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* TAB 1: BULK SMS GATEWAY */}
       {activeTab === 'sms' && (
@@ -1026,6 +1884,36 @@ export const CommunicationPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Interactive Blessing Generator Modal */}
+      <BlessingGeneratorModal
+        isOpen={Boolean(selectedCelebrantForBlessing)}
+        onClose={() => setSelectedCelebrantForBlessing(null)}
+        celebrant={selectedCelebrantForBlessing}
+        onSendSms={(c, customText) => handleSendCelebrantSms(c, customText)}
+        onLaunchWhatsApp={(phone, text) => handleLaunchWhatsApp(phone, text)}
+        smsCredits={smsCredits}
+      />
+
+      {/* Pastor Welcome Video Preview Modal */}
+      <PastorWelcomeVideoModal
+        isOpen={isVideoPreviewOpen}
+        onClose={() => setIsVideoPreviewOpen(false)}
+        videoLink={pastorWelcomeVideoLink}
+        onUpdateVideoLink={(newLink) => setPastorWelcomeVideoLink(newLink)}
+      />
+
+      {/* First-Timer Welcome Customizer Modal */}
+      <FirstTimerWelcomeModal
+        isOpen={Boolean(selectedVisitorForWelcome)}
+        onClose={() => setSelectedVisitorForWelcome(null)}
+        visitor={selectedVisitorForWelcome}
+        videoLink={pastorWelcomeVideoLink}
+        onSendSms={(v, customText) => handleSendSingleFirstTimerSms(v, customText)}
+        onLaunchWhatsApp={(phone, text) => handleLaunchWhatsApp(phone, text)}
+        onOpenVideoPreview={() => setIsVideoPreviewOpen(true)}
+        smsCredits={smsCredits}
+      />
     </div>
   );
 };

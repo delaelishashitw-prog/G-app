@@ -402,11 +402,25 @@ export const MemberPortalPage: React.FC = () => {
     toastSuccess('Substitute Requested', 'Your substitute request has been logged. The department coordinator has been notified.');
   };
 
+  const handleOpenSubstituteModal = (assignment: RosterAssignment) => {
+    setSelectedSubstituteAssignment(assignment);
+  };
+
   const handleSelfEnrollFoundation = () => {
     if (!activeMember) return;
     const activeCohort = foundationCohorts.find((c) => c.status === 'active') || foundationCohorts[0];
     if (activeCohort) {
-      enrollMemberInFoundationSchool(activeCohort.id, activeMember.id);
+      enrollMemberInFoundationSchool({
+        cohort_id: activeCohort.id,
+        cohort_name: activeCohort.name,
+        member_id: activeMember.id,
+        member_name: `${activeMember.first_name} ${activeMember.last_name}`,
+        member_phone: activeMember.phone || undefined,
+        enrollment_date: new Date().toISOString().split('T')[0],
+        completed_modules: [],
+        water_baptism_status: Boolean(activeMember.baptism_status),
+        status: 'in_progress',
+      });
       toastSuccess('Enrolled in Foundation School', `You have been enrolled into ${activeCohort.name}!`);
     } else {
       toastInfo('Enrollment Notice', 'Foundation School enrollment request submitted to the secretariat.');
@@ -3215,6 +3229,28 @@ export const MemberPortalPage: React.FC = () => {
           isOpen={isMemberClaimModalOpen}
           onClose={() => setIsMemberClaimModalOpen(false)}
           preselectedMemberId={activeMember.id}
+        />
+      )}
+
+      {/* Member Foundation School Certificate Modal */}
+      {isCertificateModalOpen && activeMember && memberFoundationStudent && (
+        <MemberCertificateModal
+          isOpen={isCertificateModalOpen}
+          onClose={() => setIsCertificateModalOpen(false)}
+          member={activeMember}
+          student={memberFoundationStudent}
+          settings={settings}
+        />
+      )}
+
+      {/* Roster Substitute Request Modal */}
+      {selectedSubstituteAssignment && (
+        <RequestSubstituteModal
+          isOpen={Boolean(selectedSubstituteAssignment)}
+          onClose={() => setSelectedSubstituteAssignment(null)}
+          assignment={selectedSubstituteAssignment}
+          onConfirmSubstitute={handleConfirmSubstitute}
+          settings={settings}
         />
       )}
     </div>

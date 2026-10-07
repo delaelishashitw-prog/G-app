@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Calendar,
 } from 'lucide-react';
+import { jsPDF } from 'jspdf';
 import { FoundationStudent, ChurchSettings, Member } from '../../types/database.types';
 
 interface MemberCertificateModalProps {
@@ -35,6 +36,131 @@ export const MemberCertificateModal: React.FC<MemberCertificateModalProps> = ({
   const certNumber = student.certificate_no || `GWCC-FND-2026-${member.member_id.replace('GWCC-', '')}`;
   const graduationDate = student.graduation_date || new Date().toISOString().split('T')[0];
 
+  const handleDownloadPdf = () => {
+    try {
+      const doc = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4',
+      });
+
+      // Background
+      doc.setFillColor(255, 255, 255);
+      doc.rect(0, 0, 297, 210, 'F');
+
+      // Outer & Inner Borders
+      doc.setDrawColor(6, 78, 59); // emerald-900
+      doc.setLineWidth(2.5);
+      doc.rect(10, 10, 277, 190);
+
+      doc.setDrawColor(217, 119, 6); // amber-600
+      doc.setLineWidth(0.8);
+      doc.rect(14, 14, 269, 182);
+
+      // Church Header
+      doc.setFont('times', 'bold');
+      doc.setTextColor(6, 78, 59);
+      doc.setFontSize(22);
+      doc.text(settings.church_name || 'GREATER WORKS CITY CHURCH', 148.5, 33, { align: 'center' });
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.text(
+        `${settings.branch_name || 'City of Refuge - Joma Central'} • Discipleship & Ministerial Academy`,
+        148.5,
+        41,
+        { align: 'center' }
+      );
+
+      // Title
+      doc.setFont('times', 'bold');
+      doc.setFontSize(26);
+      doc.setTextColor(15, 23, 42);
+      doc.text('CERTIFICATE OF DISCIPLESHIP', 148.5, 57, { align: 'center' });
+
+      // Amber Accent line
+      doc.setDrawColor(217, 119, 6);
+      doc.setLineWidth(1);
+      doc.line(95, 62, 202, 62);
+
+      // Certification statement
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.setTextColor(71, 85, 105);
+      doc.text('This is to officially certify that', 148.5, 75, { align: 'center' });
+
+      // Member Name
+      doc.setFont('times', 'bold');
+      doc.setFontSize(24);
+      doc.setTextColor(6, 78, 59);
+      doc.text(student.member_name, 148.5, 88, { align: 'center' });
+
+      // Underline under member name
+      doc.setDrawColor(6, 78, 59);
+      doc.setLineWidth(0.7);
+      doc.line(60, 91, 237, 91);
+
+      // Member ID
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Member ID: ${member.member_id}`, 148.5, 98, { align: 'center' });
+
+      // Body text
+      doc.setFont('times', 'normal');
+      doc.setFontSize(12);
+      doc.setTextColor(51, 65, 85);
+      const textDesc = `has successfully fulfilled all curriculum requirements, tests, and spiritual disciplines of the Believers Foundation School (${student.cohort_name}), covering New Creation Realities, The Holy Spirit, Christian Stewardship, Sound Doctrine, and the Great Commission.`;
+      const splitText = doc.splitTextToSize(textDesc, 230);
+      doc.text(splitText, 148.5, 110, { align: 'center' });
+
+      // Water Baptism & Modules Badges
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(6, 78, 59);
+      const baptismText = student.water_baptism_status
+        ? `Water Immersion Baptism: Confirmed (${student.water_baptism_date || 'August 2026'})`
+        : 'Water Immersion Baptism: Scheduled';
+      doc.text(`Curriculum: 5 of 5 Modules Completed  •  ${baptismText}`, 148.5, 136, { align: 'center' });
+
+      // Signature Lines
+      doc.setDrawColor(148, 163, 184);
+      doc.setLineWidth(0.5);
+      doc.line(45, 165, 115, 165);
+      doc.line(182, 165, 252, 165);
+
+      doc.setFont('times', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text('Pastor Emmanuel Osei', 80, 171, { align: 'center' });
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(100, 116, 139);
+      doc.text('Dean & Director, Foundation School', 80, 176, { align: 'center' });
+
+      doc.setFont('times', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text(settings.senior_pastor || 'Prophet Elisha K. Richard', 217, 171, { align: 'center' });
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(100, 116, 139);
+      doc.text('Senior Pastor & General Overseer', 217, 176, { align: 'center' });
+
+      // Serial & Date
+      doc.setFont('courier', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Serial: ${certNumber}   |   Issued: ${graduationDate}   |   Ephesians 4:12-14`, 148.5, 194, { align: 'center' });
+
+      doc.save(`GWCC_Certificate_${student.member_name.replace(/\s+/g, '_')}.pdf`);
+    } catch (e) {
+      console.warn('Direct PDF export error, triggering print fallback:', e);
+      window.print();
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-60 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
       <div className="relative w-full max-w-3xl bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-200 flex flex-col">
@@ -52,11 +178,18 @@ export const MemberCertificateModal: React.FC<MemberCertificateModalProps> = ({
 
           <div className="flex items-center gap-2">
             <button
+              onClick={handleDownloadPdf}
+              className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+            >
+              <Download className="w-4 h-4" />
+              <span>Download PDF</span>
+            </button>
+            <button
               onClick={handlePrint}
-              className="px-4 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+              className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition shadow-sm cursor-pointer"
             >
               <Printer className="w-4 h-4" />
-              <span>Print / Download PDF</span>
+              <span>Print</span>
             </button>
             <button
               onClick={onClose}
