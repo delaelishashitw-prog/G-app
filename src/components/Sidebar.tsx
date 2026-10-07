@@ -23,6 +23,7 @@ import {
   Flame,
   LogOut,
   Sparkles,
+  Package,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
@@ -41,7 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setMobileOpen,
 }) => {
   const { canAccess, currentUser, logout } = useAuth();
-  const { visitors, prayerRequests, welfareClaims } = useChurchData();
+  const { visitors, prayerRequests, welfareClaims, rosterConflicts } = useChurchData();
   const navigate = useNavigate();
 
   const pendingVisitorsCount = visitors.filter(
@@ -71,7 +72,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           badgeColor: 'bg-amber-500 text-white',
         },
         { name: 'Attendance', path: '/attendance', icon: ClipboardCheck, module: 'attendance' },
-        { name: 'Services', path: '/services', icon: CalendarDays, module: 'services' },
+        {
+          name: 'Services',
+          path: '/services',
+          icon: CalendarDays,
+          module: 'services',
+          badge: rosterConflicts.length > 0 ? `${rosterConflicts.length} Conflict` : undefined,
+          badgeColor: 'bg-rose-500 text-white animate-pulse',
+        },
       ],
     },
     {
@@ -131,6 +139,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       group: 'Management & System',
       items: [
         { name: 'Reports & Analytics', path: '/reports', icon: BarChart3, module: 'reports' },
+        { name: 'Asset Inventory', path: '/inventory', icon: Package, module: 'settings' },
         { name: 'Users & Roles', path: '/users', icon: ShieldCheck, module: 'users' },
         { name: 'Audit Logs', path: '/audit-logs', icon: History, module: 'audit_logs' },
         { name: 'Settings & Supabase', path: '/settings', icon: Settings, module: 'settings' },

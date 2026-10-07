@@ -22,6 +22,12 @@ import {
   WelfareContribution,
   WelfareClaim,
   ChildCheckInRecord,
+  ChurchAsset,
+  AssetMaintenanceLog,
+  RosterAssignment,
+  RosterConflict,
+  FoundationCohort,
+  FoundationStudent,
 } from '../types/database.types';
 import {
   initialSettings,
@@ -44,6 +50,10 @@ import {
   sampleWelfareContributions,
   sampleWelfareClaims,
   sampleChildCheckIns,
+  sampleAssets,
+  sampleRosterAssignments,
+  sampleFoundationCohorts,
+  sampleFoundationStudents,
 } from '../lib/initialData';
 import { useAuth } from './AuthContext';
 import {
@@ -69,6 +79,7 @@ interface ChurchDataContextType {
   members: Member[];
   addMember: (member: Omit<Member, 'id' | 'member_id' | 'created_at' | 'updated_at'>) => Member;
   updateMember: (id: string, updates: Partial<Member>) => void;
+  bulkUpdateMembers: (memberIds: string[], updates: Partial<Member>) => void;
   archiveMember: (id: string) => void;
   unarchiveMember: (id: string) => void;
   getMember: (id: string) => Member | undefined;
@@ -205,6 +216,30 @@ interface ChurchDataContextType {
   ) => void;
   summonChildParent: (id: string, notes?: string) => void;
   deleteChildCheckIn: (id: string) => void;
+
+  // Church Assets & Equipment Inventory
+  assets: ChurchAsset[];
+  addAsset: (asset: Omit<ChurchAsset, 'id' | 'created_at'>) => ChurchAsset;
+  updateAsset: (id: string, updates: Partial<ChurchAsset>) => void;
+  deleteAsset: (id: string) => void;
+  addAssetMaintenanceLog: (assetId: string, log: Omit<AssetMaintenanceLog, 'id'>) => void;
+
+  // Volunteer & Multi-Department Duty Roster
+  rosterAssignments: RosterAssignment[];
+  addRosterAssignment: (record: Omit<RosterAssignment, 'id' | 'created_at'>) => RosterAssignment;
+  updateRosterAssignment: (id: string, updates: Partial<RosterAssignment>) => void;
+  deleteRosterAssignment: (id: string) => void;
+  rosterConflicts: RosterConflict[];
+
+  // Foundation School & Believers Academy Discipleship
+  foundationCohorts: FoundationCohort[];
+  createFoundationCohort: (cohort: Omit<FoundationCohort, 'id' | 'created_at'>) => FoundationCohort;
+  updateFoundationCohort: (id: string, updates: Partial<FoundationCohort>) => void;
+  foundationStudents: FoundationStudent[];
+  enrollMemberInFoundationSchool: (data: Omit<FoundationStudent, 'id' | 'created_at'>) => FoundationStudent;
+  updateFoundationStudent: (id: string, updates: Partial<FoundationStudent>) => void;
+  toggleFoundationModule: (studentId: string, moduleNumber: number) => void;
+  graduateFoundationStudent: (studentId: string, certificateNo?: string) => void;
 
   // Supabase Integration State & Actions
   isSupabaseConfigured: boolean;
@@ -363,6 +398,16 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return loaded && loaded.length > 0 ? loaded : sampleChildCheckIns;
   });
 
+  const [assets, setAssets] = useState<ChurchAsset[]>(() => {
+    const loaded = loadFromStorage<ChurchAsset[]>('assets', []);
+    return loaded && loaded.length > 0 ? loaded : sampleAssets;
+  });
+
+  const [rosterAssignments, setRosterAssignments] = useState<RosterAssignment[]>(() => {
+    const loaded = loadFromStorage<RosterAssignment[]>('rosterAssignments', []);
+    return loaded && loaded.length > 0 ? loaded : sampleRosterAssignments;
+  });
+
   // Supabase states
   const [supabaseConfig, setSupabaseConfig] = useState(getStoredSupabaseConfig());
   const [supabaseStatus, setSupabaseStatus] = useState<SupabaseStatus>(() =>
@@ -480,6 +525,16 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (isInitialMount.current) return;
     saveToStorage('childCheckIns', childCheckIns);
   }, [childCheckIns]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('assets', assets);
+  }, [assets]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('rosterAssignments', rosterAssignments);
+  }, [rosterAssignments]);
 
   // Initial Supabase check and hydration
   useEffect(() => {
@@ -2006,6 +2061,185 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setChildCheckIns((prev) => prev.filter((c) => c.id !== id));
   };
 
+  // CHURCH ASSETS & INVENTORY
+  const addAsset = (
+    data: Omit<ChurchAsset, 'id' | 'created_at'>
+  ): ChurchAsset => {
+    const newAsset: ChurchAsset = {
+      ...data,
+      id: `ast-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    setAssets((prev) => [newAsset, ...prev]);
+    logAction(
+      'CREATE_ASSET',
+      'Inventory',
+      `Registered asset [${data.asset_tag}] ${data.name} (${data.category}) valued at GH₵ ${data.purchase_cost.toFixed(2)}`,
+      newAsset.id
+    );
+    return newAsset;
+  };
+
+  const updateAsset = (id: string, updates: Partial<ChurchAsset>) => {
+    setAssets((prev) =>
+      prev.map((a) => {
+        if (a.id === id) {
+          const updated = {
+            ...a,
+            ...updates,
+            updated_at: new Date().toISOString(),
+          };
+          logAction(
+            'UPDATE_ASSET',
+            'Inventory',
+            `Updated asset [${a.asset_tag}] ${a.name} (Condition: ${updates.current_condition || a.current_condition})`,
+            id
+          );
+          return updated;
+        }
+        return a;
+      })
+    );
+  };
+
+  const deleteAsset = (id: string) => {
+    const toDelete = assets.find((a) => a.id === id);
+    setAssets((prev) => prev.filter((a) => a.id !== id));
+    if (toDelete) {
+      logAction(
+        'DELETE_ASSET',
+        'Inventory',
+        `Decommissioned/deleted asset [${toDelete.asset_tag}] ${toDelete.name}`,
+        id
+      );
+    }
+  };
+
+  const addAssetMaintenanceLog = (
+    assetId: string,
+    logData: Omit<AssetMaintenanceLog, 'id'>
+  ) => {
+    const newLog: AssetMaintenanceLog = {
+      ...logData,
+      id: `mlog-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    };
+    setAssets((prev) =>
+      prev.map((a) => {
+        if (a.id === assetId) {
+          const existingLogs = a.maintenance_logs || [];
+          const updated = {
+            ...a,
+            last_service_date: logData.service_date,
+            maintenance_logs: [newLog, ...existingLogs],
+            updated_at: new Date().toISOString(),
+          };
+          logAction(
+            'RECORD_MAINTENANCE',
+            'Inventory',
+            `Logged ${logData.service_type} for asset [${a.asset_tag}] ${a.name} by ${logData.technician_vendor} (GH₵ ${logData.cost.toFixed(2)})`,
+            assetId
+          );
+          return updated;
+        }
+        return a;
+      })
+    );
+  };
+
+  // MULTI-DEPARTMENT DUTY ROSTER
+  const addRosterAssignment = (
+    data: Omit<RosterAssignment, 'id' | 'created_at'>
+  ): RosterAssignment => {
+    const newAssignment: RosterAssignment = {
+      ...data,
+      id: `rst-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      created_at: new Date().toISOString(),
+    };
+    setRosterAssignments((prev) => [newAssignment, ...prev]);
+    logAction(
+      'ASSIGN_ROSTER_DUTY',
+      'Services',
+      `Assigned ${data.member_name} to ${data.department} as ${data.role_title} for ${data.service_name} on ${data.date}`,
+      newAssignment.id
+    );
+    return newAssignment;
+  };
+
+  const updateRosterAssignment = (
+    id: string,
+    updates: Partial<RosterAssignment>
+  ) => {
+    setRosterAssignments((prev) =>
+      prev.map((r) => {
+        if (r.id === id) {
+          const updated = {
+            ...r,
+            ...updates,
+          };
+          logAction(
+            'UPDATE_ROSTER_DUTY',
+            'Services',
+            `Updated roster duty for ${r.member_name} (${r.role_title}) to status ${updates.status || r.status}`,
+            id
+          );
+          return updated;
+        }
+        return r;
+      })
+    );
+  };
+
+  const deleteRosterAssignment = (id: string) => {
+    const toDelete = rosterAssignments.find((r) => r.id === id);
+    setRosterAssignments((prev) => prev.filter((r) => r.id !== id));
+    if (toDelete) {
+      logAction(
+        'REMOVE_ROSTER_DUTY',
+        'Services',
+        `Removed roster duty for ${toDelete.member_name} from ${toDelete.department} (${toDelete.service_name})`,
+        id
+      );
+    }
+  };
+
+  // Automated Roster Conflict Detection
+  const rosterConflicts = React.useMemo<RosterConflict[]>(() => {
+    const conflicts: RosterConflict[] = [];
+    const memberDateGroups = new Map<string, RosterAssignment[]>();
+
+    rosterAssignments.forEach((assignment) => {
+      const key = `${assignment.member_id}__${assignment.date}`;
+      const group = memberDateGroups.get(key) || [];
+      group.push(assignment);
+      memberDateGroups.set(key, group);
+    });
+
+    memberDateGroups.forEach((assignments) => {
+      if (assignments.length > 1) {
+        const first = assignments[0];
+        // Check if multiple assignments exist for the exact same service or report time
+        const sameService = assignments.every((a) => a.service_id === first.service_id);
+        const roles = assignments.map((a) => `${a.department} (${a.role_title})`).join(' and ');
+        
+        conflicts.push({
+          member_id: first.member_id,
+          member_name: first.member_name,
+          date: first.date,
+          service_id: first.service_id,
+          service_name: first.service_name,
+          assignments,
+          conflict_type: sameService ? 'double_booked' : 'back_to_back',
+          message: sameService
+            ? `${first.member_name} is double-booked across ${roles} during the same service!`
+            : `${first.member_name} has multiple assignments across services on ${first.date}.`,
+        });
+      }
+    });
+
+    return conflicts;
+  }, [rosterAssignments]);
+
   // RESET
   const resetToSampleData = () => {
     setSettings(initialSettings);
@@ -2028,6 +2262,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setWelfareContributions(sampleWelfareContributions);
     setWelfareClaims(sampleWelfareClaims);
     setChildCheckIns(sampleChildCheckIns);
+    setAssets(sampleAssets);
+    setRosterAssignments(sampleRosterAssignments);
 
     saveToStorage('settings', initialSettings);
     saveToStorage('members', sampleMembers);
@@ -2049,6 +2285,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     saveToStorage('welfareContributions', sampleWelfareContributions);
     saveToStorage('welfareClaims', sampleWelfareClaims);
     saveToStorage('childCheckIns', sampleChildCheckIns);
+    saveToStorage('assets', sampleAssets);
+    saveToStorage('rosterAssignments', sampleRosterAssignments);
 
     logAction('RESET_SAMPLE_DATA', 'System', 'Populated Greater Works City Church sample data');
   };
@@ -2138,6 +2376,16 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       checkOutChild,
       summonChildParent,
       deleteChildCheckIn,
+      assets,
+      addAsset,
+      updateAsset,
+      deleteAsset,
+      addAssetMaintenanceLog,
+      rosterAssignments,
+      addRosterAssignment,
+      updateRosterAssignment,
+      deleteRosterAssignment,
+      rosterConflicts,
       isSupabaseConfigured: isSupabaseConfigured(),
       supabaseStatus,
       supabaseError,
@@ -2173,6 +2421,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       welfareContributions,
       welfareClaims,
       childCheckIns,
+      assets,
+      rosterAssignments,
+      rosterConflicts,
       supabaseStatus,
       supabaseError,
       lastSyncTime,

@@ -31,14 +31,16 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useToast } from '../contexts/ToastContext';
-import { ChurchService, ServiceProgramItem } from '../types/database.types';
-import { formatGHS } from '../lib/currencyUtils';
+import { ChurchService, ServiceProgramItem, RosterAssignment, RosterDepartment, RosterAssignmentStatus } from '../types/database.types';
+import { formatGHS, cleanGhanaPhone } from '../lib/currencyUtils';
 
 // Modals
 import { ServiceFormModal } from '../components/services/ServiceFormModal';
 import { ServiceBulletinModal } from '../components/services/ServiceBulletinModal';
 import { OrderOfServiceEditorModal } from '../components/services/OrderOfServiceEditorModal';
 import { DutyRosterModal } from '../components/services/DutyRosterModal';
+import { AssignRosterModal } from '../components/services/AssignRosterModal';
+import { PrintRosterModal } from '../components/services/PrintRosterModal';
 
 export const ServicesPage: React.FC = () => {
   const {
@@ -50,15 +52,27 @@ export const ServicesPage: React.FC = () => {
     createService,
     updateService,
     deleteService,
+    rosterAssignments,
+    addRosterAssignment,
+    updateRosterAssignment,
+    deleteRosterAssignment,
+    rosterConflicts,
   } = useChurchData();
   const { success, info } = useToast();
   const navigate = useNavigate();
 
   // View state & filters
-  const [viewMode, setViewMode] = useState<'cards' | 'timeline' | 'bulletins'>('cards');
+  const [viewMode, setViewMode] = useState<'cards' | 'timeline' | 'bulletins' | 'roster'>('cards');
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+
+  // Roster filters & modals
+  const [rosterServiceFilter, setRosterServiceFilter] = useState<string>('ALL');
+  const [rosterDeptFilter, setRosterDeptFilter] = useState<string>('ALL');
+  const [rosterDateFilter, setRosterDateFilter] = useState<string>('ALL');
+  const [isAssignRosterOpen, setIsAssignRosterOpen] = useState(false);
+  const [isPrintMasterRosterOpen, setIsPrintMasterRosterOpen] = useState(false);
 
   // Modals state
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
@@ -320,6 +334,25 @@ export const ServicesPage: React.FC = () => {
             }`}
           >
             Liturgies & Bulletins
+          </button>
+          <button
+            onClick={() => setViewMode('roster')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+              viewMode === 'roster'
+                ? 'bg-white text-emerald-950 shadow-xs font-black'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <span>Duty Roster & Conflict Radar</span>
+            {rosterConflicts.length > 0 ? (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200 animate-pulse">
+                {rosterConflicts.length} Conflict{rosterConflicts.length > 1 ? 's' : ''}
+              </span>
+            ) : (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">
+                {rosterAssignments.length}
+              </span>
+            )}
           </button>
         </div>
 
@@ -686,8 +719,352 @@ export const ServicesPage: React.FC = () => {
       )}
 
       {/* ============================================================ */}
+      {/* VIEW 4: MULTI-DEPARTMENT DUTY ROSTER & CONFLICT RADAR        */}
+      {/* ============================================================ */}
+      {viewMode === 'roster' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Conflict Radar Alert Banner if conflicts exist */}
+          {rosterConflicts.length > 0 && (
+            <div className="p-4 bg-rose-50 border-2 border-rose-300 rounded-2xl shadow-sm text-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 bg-rose-200 text-rose-800 rounded-lg">
+                    <AlertCircle className="w-5 h-5 text-rose-700" />
+                  </span>
+                  <div>
+                    <h3 className="font-extrabold text-rose-950 text-sm">
+                      Volunteer Scheduling Conflicts Detected ({rosterConflicts.length})
+                    </h3>
+                    <p className="text-[11px] text-rose-700">
+                      The automated conflict radar detected volunteer double-bookings or concurrent duties.
+                    </p>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 bg-rose-200 text-rose-900 font-bold rounded-full text-[10px] uppercase">
+                  Action Required
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {rosterConflicts.map((conf, idx) => (
+                  <div
+                    key={`${conf.member_id}-${conf.date}-${idx}`}
+                    className="p-3 bg-white border border-rose-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                  >
+                    <div>
+                      <span className="font-bold text-slate-900">{conf.member_name}</span>
+                      <span className="text-slate-400 mx-1.5">•</span>
+                      <span className="font-semibold text-rose-800">{conf.service_name}</span>
+                      <span className="text-slate-400 mx-1.5">•</span>
+                      <span className="text-slate-600">{conf.date}</span>
+                      <p className="text-[11px] text-rose-700 font-medium mt-0.5">{conf.message}</p>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {conf.assignments.map((asgn) => (
+                        <button
+                          key={asgn.id}
+                          onClick={() => {
+                            deleteRosterAssignment(asgn.id);
+                            info('Assignment Removed', `Unscheduled ${asgn.member_name} from ${asgn.role_title}.`);
+                          }}
+                          className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 rounded-lg text-[10px] font-bold transition"
+                        >
+                          Remove [{asgn.department.replace('_', ' ')}]
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Roster Controls & Action Bar */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-center gap-2 flex-wrap flex-1">
+              {/* Department Filter */}
+              <select
+                value={rosterDeptFilter}
+                onChange={(e) => setRosterDeptFilter(e.target.value)}
+                className="px-3 py-1.5 border border-slate-200 rounded-xl bg-slate-50 text-xs font-semibold text-slate-800 focus:bg-white"
+              >
+                <option value="ALL">All Departments</option>
+                <option value="sound_media">Sound & Media Technical</option>
+                <option value="praise_team">Voice of Dominion (Choir & Band)</option>
+                <option value="ushers_protocol">Ushers & Protocol</option>
+                <option value="intercessors">Altar Intercessors</option>
+                <option value="children_ministry">Children's Ministry</option>
+                <option value="car_park_security">Car Park & Security</option>
+                <option value="sanctuary_cleaning">Sanctuary Cleaning</option>
+              </select>
+
+              {/* Service Filter */}
+              <select
+                value={rosterServiceFilter}
+                onChange={(e) => setRosterServiceFilter(e.target.value)}
+                className="px-3 py-1.5 border border-slate-200 rounded-xl bg-slate-50 text-xs font-semibold text-slate-800 focus:bg-white"
+              >
+                <option value="ALL">All Services ({services.length})</option>
+                {services.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+
+              {/* Date Filter */}
+              <select
+                value={rosterDateFilter}
+                onChange={(e) => setRosterDateFilter(e.target.value)}
+                className="px-3 py-1.5 border border-slate-200 rounded-xl bg-slate-50 text-xs font-semibold text-slate-800 focus:bg-white"
+              >
+                <option value="ALL">All Scheduled Dates</option>
+                {Array.from(new Set(rosterAssignments.map((a) => a.date)))
+                  .sort()
+                  .reverse()
+                  .map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsPrintMasterRosterOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl shadow-xs transition"
+              >
+                <Printer className="w-4 h-4 text-slate-500" />
+                <span>Print Master Roster</span>
+              </button>
+              <button
+                onClick={() => setIsAssignRosterOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs transition"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Assign Volunteer</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Roster Assignment List */}
+          {rosterAssignments.length === 0 ? (
+            <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 shadow-xs">
+              <Users className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+              <h3 className="text-base font-bold text-slate-800">No duty assignments yet</h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+                Schedule ministers and technical volunteers across all 7 departments for upcoming services.
+              </p>
+              <button
+                onClick={() => setIsAssignRosterOpen(true)}
+                className="mt-4 px-4 py-2 bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition"
+              >
+                Assign First Volunteer
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Filter roster assignments */}
+              {(() => {
+                const filtered = rosterAssignments.filter((a) => {
+                  const matchService = rosterServiceFilter === 'ALL' || a.service_id === rosterServiceFilter;
+                  const matchDept = rosterDeptFilter === 'ALL' || a.department === rosterDeptFilter;
+                  const matchDate = rosterDateFilter === 'ALL' || a.date === rosterDateFilter;
+                  const matchSearch =
+                    a.member_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    a.role_title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    (a.notes && a.notes.toLowerCase().includes(searchTerm.toLowerCase()));
+                  return matchService && matchDept && matchDate && matchSearch;
+                });
+
+                // Group filtered items by date and service
+                const groups = new Map<string, RosterAssignment[]>();
+                filtered.forEach((item) => {
+                  const key = `${item.date} — ${item.service_name}`;
+                  const list = groups.get(key) || [];
+                  list.push(item);
+                  groups.set(key, list);
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="p-8 text-center bg-white rounded-2xl border border-slate-200 text-slate-500 text-xs">
+                      No duty assignments match your selected department or service filter.
+                    </div>
+                  );
+                }
+
+                return Array.from(groups.entries()).map(([groupKey, groupItems]) => (
+                  <div
+                    key={groupKey}
+                    className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden"
+                  >
+                    {/* Group Header */}
+                    <div className="px-5 py-3 bg-[#064e3b] text-white flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-emerald-200" />
+                        <span className="font-bold tracking-wide">{groupKey}</span>
+                      </div>
+                      <span className="bg-emerald-800/80 px-2.5 py-0.5 rounded-full text-[10px] font-bold text-emerald-100 border border-emerald-600">
+                        {groupItems.length} Assigned Steward{groupItems.length > 1 ? 's' : ''}
+                      </span>
+                    </div>
+
+                    {/* Table of assignments */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                            <th className="py-2.5 px-4">Volunteer / Minister</th>
+                            <th className="py-2.5 px-4">Department & Ministry</th>
+                            <th className="py-2.5 px-4">Assigned Role</th>
+                            <th className="py-2.5 px-4">Call Time</th>
+                            <th className="py-2.5 px-4">Status</th>
+                            <th className="py-2.5 px-4">Notes</th>
+                            <th className="py-2.5 px-4 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {groupItems.map((assignment) => {
+                            const isConflicted = rosterConflicts.some(
+                              (c) => c.member_id === assignment.member_id && c.date === assignment.date
+                            );
+
+                            const waPhone = cleanGhanaPhone(assignment.member_phone);
+                            const waMessage = `Calvary greetings ${assignment.member_name}! You are scheduled on duty at Greater Works City Church as [${assignment.role_title}] for ${assignment.service_name} on ${assignment.date}. Required call time is ${assignment.report_time}. Pre-service prayer begins promptly. God bless you!`;
+                            const waLink = `https://wa.me/${waPhone}?text=${encodeURIComponent(waMessage)}`;
+
+                            return (
+                              <tr
+                                key={assignment.id}
+                                className={`hover:bg-slate-50/70 transition ${
+                                  isConflicted ? 'bg-rose-50/40' : ''
+                                }`}
+                              >
+                                <td className="py-3 px-4">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-slate-900">
+                                      {assignment.member_name}
+                                    </span>
+                                    {isConflicted && (
+                                      <span
+                                        title="Double-booked on this service date!"
+                                        className="px-1.5 py-0.2 bg-rose-100 text-rose-800 border border-rose-200 rounded text-[9px] font-bold"
+                                      >
+                                        Conflict
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="font-mono text-[10px] text-slate-400">
+                                    {assignment.member_phone || 'No phone'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-4 font-semibold text-slate-700 capitalize">
+                                  <span className="bg-slate-100 px-2 py-0.5 rounded text-[11px] border border-slate-200">
+                                    {assignment.department.replace('_', ' ')}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-4 font-bold text-emerald-950">
+                                  {assignment.role_title}
+                                </td>
+                                <td className="py-3 px-4 font-mono font-medium text-slate-700">
+                                  {assignment.report_time}
+                                </td>
+                                <td className="py-3 px-4">
+                                  <select
+                                    value={assignment.status}
+                                    onChange={(e) =>
+                                      updateRosterAssignment(assignment.id, {
+                                        status: e.target.value as RosterAssignmentStatus,
+                                      })
+                                    }
+                                    className={`text-[11px] font-bold px-2 py-1 rounded-lg border focus:outline-emerald-600 ${
+                                      assignment.status === 'confirmed'
+                                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                        : assignment.status === 'pending'
+                                        ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                        : assignment.status === 'substituted'
+                                        ? 'bg-purple-50 text-purple-800 border-purple-200'
+                                        : 'bg-rose-50 text-rose-800 border-rose-200'
+                                    }`}
+                                  >
+                                    <option value="confirmed">Confirmed</option>
+                                    <option value="pending">Pending</option>
+                                    <option value="substituted">Substituted</option>
+                                    <option value="declined">Declined</option>
+                                  </select>
+                                </td>
+                                <td className="py-3 px-4 text-[11px] text-slate-500 max-w-xs truncate">
+                                  {assignment.notes || '—'}
+                                </td>
+                                <td className="py-3 px-4 text-right whitespace-nowrap">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    {waPhone && (
+                                      <a
+                                        href={waLink}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        title="Send WhatsApp Duty Reminder"
+                                        className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold rounded-lg text-[10px] transition"
+                                      >
+                                        WhatsApp
+                                      </a>
+                                    )}
+                                    <button
+                                      onClick={() => {
+                                        deleteRosterAssignment(assignment.id);
+                                        info('Removed', `Unassigned ${assignment.member_name}.`);
+                                      }}
+                                      title="Remove from roster"
+                                      className="p-1 text-slate-400 hover:text-rose-600 transition"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ============================================================ */}
       {/* ALL MODALS                                                   */}
       {/* ============================================================ */}
+
+      {/* Assign Volunteer Modal */}
+      {isAssignRosterOpen && (
+        <AssignRosterModal
+          isOpen={isAssignRosterOpen}
+          onClose={() => setIsAssignRosterOpen(false)}
+          services={services}
+          members={members}
+          existingAssignments={rosterAssignments}
+          onSave={addRosterAssignment}
+        />
+      )}
+
+      {/* Print Master Roster Modal */}
+      {isPrintMasterRosterOpen && (
+        <PrintRosterModal
+          isOpen={isPrintMasterRosterOpen}
+          onClose={() => setIsPrintMasterRosterOpen(false)}
+          assignments={rosterAssignments}
+          settings={settings}
+          selectedDate={rosterDateFilter !== 'ALL' ? rosterDateFilter : new Date().toISOString().split('T')[0]}
+          selectedServiceName={rosterServiceFilter !== 'ALL' ? services.find((s) => s.id === rosterServiceFilter)?.name : undefined}
+        />
+      )}
 
       {/* Add / Edit Service Modal */}
       {isFormModalOpen && (

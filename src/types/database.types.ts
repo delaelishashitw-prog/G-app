@@ -575,3 +575,143 @@ export interface ChildCheckInRecord {
   created_at: string;
 }
 
+// ==========================================
+// CHURCH ASSET & INVENTORY TYPES
+// ==========================================
+
+export type AssetCategory =
+  | 'audio_sound'
+  | 'musical_instruments'
+  | 'multimedia_broadcast'
+  | 'power_facility'
+  | 'furniture_sanctuary'
+  | 'communion_liturgical';
+
+export type AssetCondition =
+  | 'working'
+  | 'under_maintenance'
+  | 'faulty'
+  | 'decommissioned';
+
+export interface AssetMaintenanceLog {
+  id: string;
+  asset_id: string;
+  service_date: string;
+  service_type: 'routine_maintenance' | 'repair' | 'inspection' | 'replacement';
+  technician_vendor: string;
+  cost: number;
+  details: string;
+  performed_by: string;
+}
+
+export interface ChurchAsset {
+  id: string;
+  asset_tag: string;
+  name: string;
+  category: AssetCategory;
+  department: string;
+  brand?: string;
+  model?: string;
+  serial_number?: string;
+  purchase_date: string;
+  purchase_cost: number;
+  current_condition: AssetCondition;
+  location: string;
+  custodian_name: string;
+  last_service_date?: string;
+  next_service_date?: string;
+  notes?: string;
+  maintenance_logs?: AssetMaintenanceLog[];
+  created_at: string;
+  updated_at?: string;
+}
+
+// ==========================================
+// VOLUNTEER & MULTI-DEPARTMENT DUTY ROSTER TYPES
+// ==========================================
+
+export type RosterDepartment =
+  | 'sound_media'
+  | 'praise_team'
+  | 'ushers_protocol'
+  | 'intercessors'
+  | 'children_ministry'
+  | 'car_park_security'
+  | 'sanctuary_cleaning';
+
+export type RosterAssignmentStatus =
+  | 'confirmed'
+  | 'pending'
+  | 'declined'
+  | 'substituted';
+
+export interface RosterAssignment {
+  id: string;
+  service_id: string;
+  service_name: string;
+  date: string;
+  member_id: string;
+  member_name: string;
+  member_phone?: string;
+  department: RosterDepartment;
+  role_title: string;
+  report_time: string;
+  status: RosterAssignmentStatus;
+  notes?: string;
+  created_at: string;
+}
+
+export interface RosterConflict {
+  member_id: string;
+  member_name: string;
+  date: string;
+  service_id: string;
+  service_name: string;
+  assignments: RosterAssignment[];
+  conflict_type: 'double_booked' | 'back_to_back';
+  message: string;
+}
+
+// ==========================================
+// FOUNDATION SCHOOL & DISCIPLESHIP TYPES
+// ==========================================
+
+export type FoundationCohortStatus = 'upcoming' | 'active' | 'graduated';
+
+export type FoundationStudentStatus =
+  | 'in_progress'
+  | 'ready_for_baptism'
+  | 'graduated'
+  | 'dropped_out';
+
+export interface FoundationCohort {
+  id: string;
+  name: string;
+  start_date: string;
+  target_graduation_date: string;
+  instructor_name: string;
+  status: FoundationCohortStatus;
+  notes?: string;
+  created_at: string;
+}
+
+export interface FoundationStudent {
+  id: string;
+  cohort_id: string;
+  cohort_name: string;
+  member_id: string;
+  member_name: string;
+  member_phone?: string;
+  enrollment_date: string;
+  completed_modules: number[]; // e.g. [1, 2, 3, 4, 5]
+  water_baptism_status: boolean;
+  water_baptism_date?: string;
+  status: FoundationStudentStatus;
+  graduation_date?: string;
+  certificate_no?: string;
+  notes?: string;
+  created_at: string;
+}
+
+
+

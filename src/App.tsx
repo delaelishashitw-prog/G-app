@@ -27,6 +27,7 @@ const UsersPage = lazy(() => import('./pages/UsersPage').then(m => ({ default: m
 const AuditLogsPage = lazy(() => import('./pages/AuditLogsPage').then(m => ({ default: m.AuditLogsPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const WelfarePage = lazy(() => import('./pages/WelfarePage').then(m => ({ default: m.WelfarePage })));
+const InventoryPage = lazy(() => import('./pages/InventoryPage').then(m => ({ default: m.InventoryPage })));
 const AiAssistantPage = lazy(() => import('./pages/AiAssistantPage').then(m => ({ default: m.AiAssistantPage })));
 const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
 const MemberPortalPage = lazy(() => import('./pages/MemberPortalPage').then(m => ({ default: m.MemberPortalPage })));
@@ -54,6 +55,7 @@ export default function App() {
                     <Route path="services" element={<ServicesPage />} />
                     <Route path="finance" element={<FinancePage />} />
                     <Route path="welfare" element={<WelfarePage />} />
+                    <Route path="inventory" element={<InventoryPage />} />
                     <Route path="pledges" element={<PledgesPage />} />
                     <Route path="ministries" element={<MinistriesPage />} />
                     <Route path="small-groups" element={<SmallGroupsPage />} />
