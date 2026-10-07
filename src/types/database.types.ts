@@ -713,5 +713,78 @@ export interface FoundationStudent {
   created_at: string;
 }
 
+// ==========================================
+// PASTORAL CARE & SHEPHERDING EXPANDED TYPES
+// ==========================================
 
+export type PastoralVisitationType =
+  | 'home_visit'
+  | 'hospital_visit'
+  | 'bereavement'
+  | 'new_born'
+  | 'elderly_care'
+  | 'crisis_outreach';
 
+export type PastoralVisitationStatus =
+  | 'scheduled'
+  | 'completed'
+  | 'urgent_followup'
+  | 'cancelled';
+
+export interface PastoralVisitationRecord {
+  id: string;
+  member_id: string;
+  member_name: string;
+  member_phone?: string;
+  visitation_type: PastoralVisitationType;
+  date: string;
+  time: string;
+  location: string;
+  pastor_in_charge: string;
+  visitation_team: string[];
+  status: PastoralVisitationStatus;
+  spiritual_condition?: 'strengthened' | 'healing_received' | 'critical' | 'needs_counseling' | 'peace_comfort';
+  scripture_shared?: string;
+  prayer_points?: string;
+  follow_up_date?: string;
+  notes: string;
+  created_at: string;
+}
+
+export type CounselingSessionType =
+  | 'pre_marital'
+  | 'marital'
+  | 'spiritual_deliverance'
+  | 'bereavement_grief'
+  | 'financial_vocational'
+  | 'youth_guidance'
+  | 'confidential_pastoral';
+
+export interface PastoralCounselingSession {
+  id: string;
+  member_id: string;
+  member_name: string;
+  member_phone?: string;
+  counselor_name: string;
+  session_type: CounselingSessionType;
+  date: string;
+  session_number: number;
+  status: 'scheduled' | 'in_progress' | 'concluded' | 'referred';
+  key_discussion: string;
+  action_plan?: string;
+  next_session_date?: string;
+  is_confidential: boolean;
+  created_at: string;
+}
+
+export interface IntercessoryWatchSlot {
+  id: string;
+  watch_name: 'Midnight Battle Watch (12 AM - 3 AM)' | 'Dawn Apostolic Watch (5 AM - 6 AM)' | 'Midday Breakthrough Altar (12 PM - 1 PM)' | 'Evening Incense Altar (6 PM - 7 PM)';
+  day_of_week: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';
+  intercessor_name: string;
+  intercessor_phone?: string;
+  focus_scripture: string;
+  prayer_focus: string;
+  status: 'active' | 'substitute_needed';
+  created_at: string;
+}

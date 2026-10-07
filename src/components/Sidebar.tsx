@@ -43,16 +43,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setMobileOpen,
 }) => {
   const { canAccess, currentUser, logout } = useAuth();
-  const { visitors, prayerRequests, welfareClaims, rosterConflicts } = useChurchData();
+  const { visitors, prayerRequests, welfareClaims, rosterConflicts, pastoralVisitations } = useChurchData();
   const navigate = useNavigate();
 
   const pendingVisitorsCount = visitors.filter(
     (v) => v.follow_up_status === 'new' || v.follow_up_status === 'follow_up_required'
   ).length;
 
+  const urgentVisitationsCount = pastoralVisitations?.filter(
+    (v) => v.status === 'urgent_followup' || v.spiritual_condition === 'critical'
+  ).length || 0;
+
   const pendingPrayersCount = prayerRequests.filter(
     (p) => p.status === 'new' || p.status === 'praying'
   ).length;
+
+  const pastoralBadgeCount = urgentVisitationsCount > 0 ? urgentVisitationsCount : pendingPrayersCount;
 
   const pendingWelfareCount = welfareClaims.filter(
     (w) => w.status === 'pending' || w.status === 'under_review'
@@ -130,8 +136,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           path: '/pastoral-care',
           icon: HeartHandshake,
           module: 'pastoral_care',
-          badge: pendingPrayersCount > 0 ? pendingPrayersCount : undefined,
-          badgeColor: 'bg-emerald-500 text-white',
+          badge: pastoralBadgeCount > 0 ? pastoralBadgeCount : undefined,
+          badgeColor: urgentVisitationsCount > 0 ? 'bg-rose-500 text-white animate-pulse' : 'bg-emerald-500 text-white',
         },
         { name: 'Communication', path: '/communication', icon: MessageSquare, module: 'communication' },
         {

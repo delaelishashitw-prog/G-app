@@ -37,15 +37,36 @@ import {
   Users,
   Award,
   BookOpen,
+  GraduationCap,
+  UserCheck,
+  Check,
+  RotateCcw,
+  HelpCircle,
+  DownloadCloud,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useToast } from '../contexts/ToastContext';
-import { Member, GivingRecord, PledgeRecord, AttendanceRecord, PrayerRequest, PaymentMethod, WelfareClaimCategory } from '../types/database.types';
+import {
+  Member,
+  GivingRecord,
+  PledgeRecord,
+  AttendanceRecord,
+  PrayerRequest,
+  PaymentMethod,
+  WelfareClaimCategory,
+  RosterAssignment,
+  FoundationStudent,
+  FoundationCohort,
+} from '../types/database.types';
 import { ApplyWelfareClaimModal } from '../components/welfare/ApplyWelfareClaimModal';
+import { MemberCertificateModal } from '../components/portal/MemberCertificateModal';
+import { RequestSubstituteModal } from '../components/portal/RequestSubstituteModal';
 
 type PortalTab =
   | 'overview'
+  | 'discipleship'
+  | 'roster'
   | 'giving'
   | 'welfare'
   | 'pledges'
@@ -54,6 +75,99 @@ type PortalTab =
   | 'prayers'
   | 'events'
   | 'profile';
+
+const FOUNDATION_CURRICULUM = [
+  {
+    moduleNumber: 1,
+    title: 'New Creation Realities & Salvation',
+    subtitle: 'Regeneration & Eternal Life',
+    scriptures: '2 Corinthians 5:17 • Romans 10:9-10 • Ephesians 2:8-9',
+    description: 'The spiritual significance of the new birth, redemption in Christ Jesus, assurance of salvation, and freedom from condemnation.',
+    coreTopics: ['Nature of the Fall & Redemption', 'Assurance of Eternal Life', 'Our Identity in Christ Jesus', 'Overcoming Guilt & the Past'],
+  },
+  {
+    moduleNumber: 2,
+    title: 'The Holy Spirit & Divine Fellowship',
+    subtitle: 'The Infilling & Spiritual Gifts',
+    scriptures: 'Acts 1:8 • 1 Corinthians 12:4-11 • Jude 1:20',
+    description: 'The Person and ministry of the Holy Spirit, baptism with evidence of speaking in unknown tongues, and spiritual discernment.',
+    coreTopics: ['Who is the Holy Spirit?', 'Speaking in Tongues as a Weapon', 'The 9 Spiritual Gifts', 'Daily Communion with the Spirit'],
+  },
+  {
+    moduleNumber: 3,
+    title: 'Christian Stewardship & Kingdom Finances',
+    subtitle: 'Tithes, Offerings & Favour',
+    scriptures: 'Malachi 3:10 • 2 Corinthians 9:6-8 • Luke 6:38',
+    description: 'Biblical stewardship of financial resources, holy tithes, kingdom investments, and unlocking supernatural provision.',
+    coreTopics: ['The Law of the Tithe', 'Seedtime and Harvest Principles', 'Stewardship of Talents & Time', 'Financial Integrity in Ministry'],
+  },
+  {
+    moduleNumber: 4,
+    title: 'Christian Character & Sound Doctrine',
+    subtitle: 'Discipline, Warfare & Holiness',
+    scriptures: 'Ephesians 6:10-18 • 2 Timothy 3:16-17 • Galatians 5:22-23',
+    description: 'Developing spiritual stamina, personal prayer altars, fasting, fruit of the Spirit, and triumph in spiritual warfare.',
+    coreTopics: ['Whole Armor of God', 'Personal Prayer Altar & Fasting', 'Sound Biblical Doctrine', 'Christian Character & Fruit of Spirit'],
+  },
+  {
+    moduleNumber: 5,
+    title: 'Water Baptism & The Great Commission',
+    subtitle: 'Immersion & Soul Winning',
+    scriptures: 'Matthew 28:19-20 • Romans 6:3-4 • Mark 16:15-18',
+    description: 'Immersion water baptism, burial of the old man, public dedication, personal evangelism, and placement in church ministry.',
+    coreTopics: ['Significance of Water Immersion', 'Personal Soul Winning Skills', 'Connecting in Cell / Small Groups', 'Active Ministry Deployment'],
+  },
+];
+
+function getReportTimeCountdown(dateStr: string, timeStr: string) {
+  try {
+    const parts = (timeStr || '08:00').split(':');
+    const hours = parseInt(parts[0], 10) || 8;
+    const minutes = parseInt(parts[1], 10) || 0;
+    const targetDate = new Date(`${dateStr}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`);
+    const diffMs = targetDate.getTime() - Date.now();
+    if (diffMs < 0) {
+      return { isPast: true, text: 'Service Concluded' };
+    }
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffHours / 24);
+    const remHours = diffHours % 24;
+
+    if (diffDays > 0) {
+      return { isPast: false, text: `In ${diffDays}d ${remHours}h` };
+    }
+    if (diffHours > 0) {
+      return { isPast: false, text: `In ${diffHours} hour${diffHours > 1 ? 's' : ''}` };
+    }
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+    return { isPast: false, text: `In ${Math.max(1, diffMinutes)} mins (Today)` };
+  } catch {
+    return { isPast: false, text: 'Upcoming Service' };
+  }
+}
+
+function getRosterDeptBadge(department: string) {
+  const d = (department || '').toLowerCase();
+  if (d.includes('choir') || d.includes('praise') || d.includes('dominion')) {
+    return { label: 'Voice of Dominion Choir', bg: 'bg-amber-100 text-amber-900 border-amber-200', dot: 'bg-amber-500' };
+  }
+  if (d.includes('media') || d.includes('sound')) {
+    return { label: 'Sound & Media Technical', bg: 'bg-sky-100 text-sky-900 border-sky-200', dot: 'bg-sky-500' };
+  }
+  if (d.includes('usher') || d.includes('protocol')) {
+    return { label: 'Ushers & Protocol', bg: 'bg-emerald-100 text-emerald-900 border-emerald-200', dot: 'bg-emerald-500' };
+  }
+  if (d.includes('intercessor') || d.includes('prayer')) {
+    return { label: 'Altar Intercessors', bg: 'bg-purple-100 text-purple-900 border-purple-200', dot: 'bg-purple-500' };
+  }
+  if (d.includes('child')) {
+    return { label: "Children's Ministry", bg: 'bg-pink-100 text-pink-900 border-pink-200', dot: 'bg-pink-500' };
+  }
+  if (d.includes('car') || d.includes('security')) {
+    return { label: 'Car Park & Security', bg: 'bg-blue-100 text-blue-900 border-blue-200', dot: 'bg-blue-500' };
+  }
+  return { label: 'Sanctuary Protocol', bg: 'bg-slate-100 text-slate-800 border-slate-200', dot: 'bg-slate-500' };
+}
 
 export const MemberPortalPage: React.FC = () => {
   const {
@@ -86,6 +200,12 @@ export const MemberPortalPage: React.FC = () => {
     addEventAttendee,
     updateMember,
     settings,
+    foundationCohorts,
+    foundationStudents,
+    rosterAssignments,
+    updateRosterAssignment,
+    updateFoundationStudent,
+    enrollMemberInFoundationSchool,
   } = useChurchData();
 
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
@@ -222,6 +342,76 @@ export const MemberPortalPage: React.FC = () => {
       ) || null
     );
   }, [activeMember, smallGroups]);
+
+  // Member's Foundation School Record
+  const memberFoundationStudent: FoundationStudent | null = useMemo(() => {
+    if (!activeMember) return null;
+    return (
+      foundationStudents.find(
+        (s) =>
+          s.member_id === activeMember.id ||
+          s.member_id === activeMember.member_id ||
+          (s.member_name &&
+            s.member_name.toLowerCase().includes(activeMember.last_name.toLowerCase()) &&
+            s.member_name.toLowerCase().includes(activeMember.first_name.toLowerCase()))
+      ) || null
+    );
+  }, [activeMember, foundationStudents]);
+
+  // Member's Service Duty Roster Assignments
+  const memberRosterAssignments: RosterAssignment[] = useMemo(() => {
+    if (!activeMember) return [];
+    return rosterAssignments
+      .filter(
+        (r) =>
+          r.member_id === activeMember.id ||
+          r.member_id === activeMember.member_id ||
+          (r.member_name &&
+            r.member_name.toLowerCase().includes(activeMember.last_name.toLowerCase()) &&
+            r.member_name.toLowerCase().includes(activeMember.first_name.toLowerCase()))
+      )
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [activeMember, rosterAssignments]);
+
+  const upcomingRosterDuties = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    return memberRosterAssignments.filter((r) => r.date >= today);
+  }, [memberRosterAssignments]);
+
+  const pastRosterDuties = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    return memberRosterAssignments.filter((r) => r.date < today);
+  }, [memberRosterAssignments]);
+
+  const nextUpcomingDuty = useMemo(() => {
+    return upcomingRosterDuties[0] || null;
+  }, [upcomingRosterDuties]);
+
+  // Discipleship & Roster Modals & States
+  const [isCertificateModalOpen, setIsCertificateModalOpen] = useState(false);
+  const [selectedSubstituteAssignment, setSelectedSubstituteAssignment] = useState<RosterAssignment | null>(null);
+  const [rosterViewFilter, setRosterViewFilter] = useState<'upcoming' | 'all' | 'past'>('upcoming');
+
+  const handleConfirmRosterAttendance = (assignmentId: string) => {
+    updateRosterAssignment(assignmentId, { status: 'confirmed' });
+    toastSuccess('Attendance Confirmed', 'You have confirmed your attendance for this service duty assignment!');
+  };
+
+  const handleConfirmSubstitute = (assignmentId: string, reason: string, note: string) => {
+    updateRosterAssignment(assignmentId, { status: 'substituted', notes: note });
+    toastSuccess('Substitute Requested', 'Your substitute request has been logged. The department coordinator has been notified.');
+  };
+
+  const handleSelfEnrollFoundation = () => {
+    if (!activeMember) return;
+    const activeCohort = foundationCohorts.find((c) => c.status === 'active') || foundationCohorts[0];
+    if (activeCohort) {
+      enrollMemberInFoundationSchool(activeCohort.id, activeMember.id);
+      toastSuccess('Enrolled in Foundation School', `You have been enrolled into ${activeCohort.name}!`);
+    } else {
+      toastInfo('Enrollment Notice', 'Foundation School enrollment request submitted to the secretariat.');
+    }
+  };
 
   // Modal / Action States
   const [giveModalOpen, setGiveModalOpen] = useState(false);
@@ -765,6 +955,20 @@ export const MemberPortalPage: React.FC = () => {
             <nav className="flex space-x-1 overflow-x-auto py-2 scrollbar-none text-xs font-semibold">
               {[
                 { id: 'overview', label: 'My Dashboard', icon: Church },
+                {
+                  id: 'discipleship',
+                  label: 'Foundation School',
+                  icon: GraduationCap,
+                  badge: memberFoundationStudent?.status === 'graduated' ? 'Certified 🎓' : `${memberFoundationStudent?.completed_modules?.length || 0}/5`,
+                  badgeColor: memberFoundationStudent?.status === 'graduated' ? 'bg-amber-400 text-slate-950 font-bold' : 'bg-emerald-700 text-emerald-100',
+                },
+                {
+                  id: 'roster',
+                  label: 'My Duty Roster',
+                  icon: UserCheck,
+                  badge: upcomingRosterDuties.length > 0 ? `${upcomingRosterDuties.length}` : undefined,
+                  badgeColor: 'bg-emerald-400 text-slate-950 font-bold',
+                },
                 { id: 'giving', label: 'Tithes & Giving', icon: Wallet },
                 { id: 'welfare', label: 'Welfare & Relief', icon: HeartHandshake },
                 { id: 'pledges', label: 'My Pledges', icon: Coins },
@@ -780,7 +984,7 @@ export const MemberPortalPage: React.FC = () => {
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id as PortalTab)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg whitespace-nowrap transition ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg whitespace-nowrap transition cursor-pointer ${
                       isActive
                         ? 'bg-white text-emerald-950 font-bold shadow-xs'
                         : 'text-emerald-100 hover:bg-emerald-800/60 hover:text-white'
@@ -788,6 +992,11 @@ export const MemberPortalPage: React.FC = () => {
                   >
                     <Icon className="w-3.5 h-3.5 shrink-0" />
                     <span>{tab.label}</span>
+                    {tab.badge && (
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${tab.badgeColor}`}>
+                        {tab.badge}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -887,6 +1096,191 @@ export const MemberPortalPage: React.FC = () => {
                 <p className="text-[11px] text-amber-700 font-semibold">
                   Building & Mission Campaigns
                 </p>
+              </div>
+            </div>
+
+            {/* SPOTLIGHT SECTION: DISCIPLESHIP & UPCOMING DUTY ROSTER */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Foundation School Spotlight */}
+              <div className="p-6 rounded-3xl bg-linear-to-br from-emerald-900 via-teal-900 to-slate-900 text-white shadow-md relative overflow-hidden border border-emerald-700/50 flex flex-col justify-between space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-wider uppercase bg-emerald-400/20 text-emerald-300 border border-emerald-400/30 flex items-center gap-1">
+                      <GraduationCap className="w-3.5 h-3.5 text-emerald-300" />
+                      Discipleship Progress
+                    </span>
+                    {memberFoundationStudent?.status === 'graduated' ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-400 text-slate-950 uppercase shadow-2xs">
+                        Certified Graduate 🎓
+                      </span>
+                    ) : (
+                      <span className="text-xs font-mono font-bold text-emerald-300">
+                        {memberFoundationStudent?.completed_modules?.length || 0}/5 Modules
+                      </span>
+                    )}
+                  </div>
+
+                  <h3 className="text-lg font-black text-white tracking-tight">
+                    Believers Foundation School
+                  </h3>
+                  <p className="text-xs text-emerald-100/90 leading-relaxed">
+                    {memberFoundationStudent?.cohort_name || 'Class of Dominion & Grace (Cohort 2026)'}
+                  </p>
+
+                  {/* Real-time 5-Module Progress Bar */}
+                  <div className="pt-2 space-y-1.5">
+                    <div className="w-full bg-black/40 rounded-full h-2.5 overflow-hidden p-0.5 border border-white/10">
+                      <div
+                        className="bg-linear-to-r from-emerald-400 via-teal-300 to-amber-300 h-full rounded-full transition-all duration-500 shadow-sm"
+                        style={{
+                          width: `${Math.min(
+                            100,
+                            ((memberFoundationStudent?.completed_modules?.length || 0) / 5) * 100
+                          )}%`,
+                        }}
+                      ></div>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-emerald-200">
+                      <span>
+                        {memberFoundationStudent?.status === 'graduated'
+                          ? '100% Curriculum Completed'
+                          : `${((memberFoundationStudent?.completed_modules?.length || 0) / 5) * 100}% Completed`}
+                      </span>
+                      <span>
+                        {memberFoundationStudent?.water_baptism_status
+                          ? '💧 Water Baptism Confirmed'
+                          : '💧 Water Baptism Pending'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-emerald-700/50 flex flex-wrap items-center justify-between gap-2">
+                  {memberFoundationStudent?.status === 'graduated' ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsCertificateModalOpen(true)}
+                      className="px-3.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition shadow-xs cursor-pointer"
+                    >
+                      <Award className="w-3.5 h-3.5" />
+                      <span>View Official Certificate</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('discipleship')}
+                      className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition shadow-xs cursor-pointer"
+                    >
+                      <span>Track 5 Modules</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('discipleship')}
+                    className="text-xs text-emerald-200 hover:text-white font-semibold underline underline-offset-2 transition"
+                  >
+                    Curriculum Details
+                  </button>
+                </div>
+              </div>
+
+              {/* Service Duty Roster Spotlight */}
+              <div className="p-6 rounded-3xl bg-white border border-slate-200 shadow-md flex flex-col justify-between space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-wider uppercase bg-teal-50 text-teal-800 border border-teal-200 flex items-center gap-1">
+                      <UserCheck className="w-3.5 h-3.5 text-teal-700" />
+                      My Service Duty Roster
+                    </span>
+                    {nextUpcomingDuty ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200 animate-pulse">
+                        Next Assignment
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-slate-400 font-semibold">
+                        No upcoming duty
+                      </span>
+                    )}
+                  </div>
+
+                  {nextUpcomingDuty ? (
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <h4 className="font-bold text-slate-900 text-sm">
+                            {nextUpcomingDuty.service_name}
+                          </h4>
+                          <p className="text-xs text-slate-500">
+                            {nextUpcomingDuty.date} • Report at <strong>{nextUpcomingDuty.report_time}</strong>
+                          </p>
+                        </div>
+                        <span className="px-2.5 py-1 rounded-xl text-xs font-bold uppercase bg-slate-100 text-slate-800 shrink-0">
+                          {nextUpcomingDuty.department.replace('_', ' ')}
+                        </span>
+                      </div>
+
+                      <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-xs flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] text-slate-400 uppercase font-bold block">Assigned Role</span>
+                          <span className="font-bold text-slate-900">{nextUpcomingDuty.role_title}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] text-slate-400 uppercase font-bold block">Status</span>
+                          <span
+                            className={`text-[11px] font-extrabold capitalize ${
+                              nextUpcomingDuty.status === 'confirmed'
+                                ? 'text-emerald-700'
+                                : nextUpcomingDuty.status === 'substituted'
+                                ? 'text-purple-700'
+                                : 'text-amber-700'
+                            }`}
+                          >
+                            {nextUpcomingDuty.status}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="py-4 text-center text-xs text-slate-500 space-y-1">
+                      <UserCheck className="w-8 h-8 text-slate-300 mx-auto" />
+                      <p className="font-semibold text-slate-700">No duty shifts scheduled this week</p>
+                      <p className="text-[11px] text-slate-400">Check your ministry schedule or view full roster history below.</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                  {nextUpcomingDuty && nextUpcomingDuty.status !== 'confirmed' ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleConfirmRosterAttendance(nextUpcomingDuty.id)}
+                        className="px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Confirm Attendance</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedSubstituteAssignment(nextUpcomingDuty)}
+                        className="px-3 py-1.5 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold transition cursor-pointer"
+                      >
+                        Request Substitute
+                      </button>
+                    </div>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('roster')}
+                    className="text-xs text-teal-700 hover:text-teal-900 font-bold inline-flex items-center gap-1 ml-auto cursor-pointer"
+                  >
+                    <span>View My Duty Schedule</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1060,7 +1454,604 @@ export const MemberPortalPage: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 2: GIVING & TITHES */}
+        {/* TAB 2: FOUNDATION SCHOOL & DISCIPLESHIP SELF-SERVICE */}
+        {activeTab === 'discipleship' && (
+          <div className="space-y-6">
+            {/* Header + Progress Overview */}
+            <div className="bg-linear-to-r from-emerald-950 via-teal-900 to-slate-900 text-white p-6 sm:p-8 rounded-3xl border border-emerald-700/50 shadow-md relative overflow-hidden space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-emerald-400/20 text-emerald-300 border border-emerald-400/30 flex items-center gap-1">
+                      <GraduationCap className="w-3.5 h-3.5" />
+                      Discipleship Academy
+                    </span>
+                    {memberFoundationStudent?.status === 'graduated' ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-400 text-slate-950 shadow-2xs">
+                        Certified Graduate 🎓
+                      </span>
+                    ) : memberFoundationStudent?.status === 'ready_for_baptism' ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-blue-400 text-slate-950 shadow-2xs">
+                        Curriculum Complete • Ready for Baptism
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-500/30 text-emerald-200">
+                        In Progress
+                      </span>
+                    )}
+                  </div>
+                  <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                    Believers Foundation School
+                  </h2>
+                  <p className="text-xs text-emerald-200/90 leading-relaxed max-w-2xl">
+                    {memberFoundationStudent?.cohort_name || 'Class of Dominion & Grace (Cohort 2026-A)'} • Dean: <strong>Pastor Emmanuel Osei</strong>
+                  </p>
+                </div>
+
+                {memberFoundationStudent?.status === 'graduated' ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsCertificateModalOpen(true)}
+                    className="px-4 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-xl text-xs flex items-center gap-2 shadow-md transition self-start sm:self-auto cursor-pointer"
+                  >
+                    <Award className="w-4 h-4" />
+                    <span>View Official Certificate</span>
+                  </button>
+                ) : !memberFoundationStudent ? (
+                  <button
+                    type="button"
+                    onClick={handleSelfEnrollFoundation}
+                    className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-2 shadow-md transition self-start sm:self-auto cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Enroll in Foundation School</span>
+                  </button>
+                ) : null}
+              </div>
+
+              {/* 5-Module Progress Bar Meter */}
+              <div className="pt-2 space-y-2 border-t border-emerald-700/50">
+                <div className="flex items-center justify-between text-xs font-semibold">
+                  <span className="text-emerald-200">Curriculum Milestone Completion:</span>
+                  <span className="text-amber-300 font-mono font-bold">
+                    {memberFoundationStudent?.completed_modules?.length || 0} of 5 Modules Completed (
+                    {Math.round(((memberFoundationStudent?.completed_modules?.length || 0) / 5) * 100)}%)
+                  </span>
+                </div>
+                <div className="w-full bg-black/40 rounded-full h-3 overflow-hidden p-0.5 border border-white/10">
+                  <div
+                    className="bg-linear-to-r from-emerald-400 via-teal-300 to-amber-300 h-full rounded-full transition-all duration-700 shadow-sm"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        ((memberFoundationStudent?.completed_modules?.length || 0) / 5) * 100
+                      )}%`,
+                    }}
+                  ></div>
+                </div>
+              </div>
+            </div>
+
+            {/* Highlights: 3 Status Pillars */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* Pillar 1: Modules Tracker */}
+              <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Classroom Curriculum</span>
+                <p className="text-xl font-black text-slate-900">
+                  {memberFoundationStudent?.completed_modules?.length || 0} / 5 Modules
+                </p>
+                <p className="text-[11px] text-emerald-700 font-semibold">
+                  {memberFoundationStudent?.completed_modules?.length === 5
+                    ? 'All Modules Completed'
+                    : `${5 - (memberFoundationStudent?.completed_modules?.length || 0)} Modules Remaining`}
+                </p>
+              </div>
+
+              {/* Pillar 2: Immersion Water Baptism */}
+              <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Water Immersion Baptism</span>
+                <p className="text-xl font-black text-slate-900">
+                  {memberFoundationStudent?.water_baptism_status ? 'Baptism Confirmed' : 'Immersion Pending'}
+                </p>
+                <p className="text-[11px] text-blue-700 font-semibold truncate">
+                  {memberFoundationStudent?.water_baptism_date
+                    ? `Immersed: ${memberFoundationStudent.water_baptism_date}`
+                    : 'Scheduled at Sanctuary Baptistery'}
+                </p>
+              </div>
+
+              {/* Pillar 3: Discipleship Certificate */}
+              <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Discipleship Certificate</span>
+                <p className="text-xl font-black text-slate-900">
+                  {memberFoundationStudent?.status === 'graduated' ? 'Official Issued' : 'Locked Until Grad'}
+                </p>
+                <p className="text-[11px] text-amber-700 font-semibold truncate">
+                  {memberFoundationStudent?.certificate_no
+                    ? `Cert No: ${memberFoundationStudent.certificate_no}`
+                    : 'Unlocks Upon 5/5 Modules'}
+                </p>
+              </div>
+            </div>
+
+            {/* Certificate of Discipleship Download Banner (When Graduated or Completed) */}
+            {memberFoundationStudent && (memberFoundationStudent.status === 'graduated' || memberFoundationStudent.completed_modules?.length === 5) && (
+              <div className="p-6 rounded-3xl bg-linear-to-r from-amber-500/15 via-emerald-500/10 to-amber-500/10 border-2 border-amber-300 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0 shadow-sm font-bold">
+                    <Award className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase tracking-widest text-amber-800">
+                      Official Ministerial Credential
+                    </span>
+                    <h3 className="text-base font-black text-slate-900">
+                      Official Certificate of Discipleship
+                    </h3>
+                    <p className="text-xs text-slate-600">
+                      Serial: <strong className="text-emerald-900 font-mono">{memberFoundationStudent.certificate_no || 'GWCC-FND-2026-001'}</strong> • Graduation: <strong>{memberFoundationStudent.graduation_date || '2026-09-20'}</strong>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsCertificateModalOpen(true)}
+                    className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition shadow-xs cursor-pointer"
+                  >
+                    <Award className="w-4 h-4 text-amber-400" />
+                    <span>View Certificate</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsCertificateModalOpen(true)}
+                    className="px-4 py-2 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs rounded-xl border border-slate-300 flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
+                  >
+                    <Printer className="w-4 h-4 text-slate-600" />
+                    <span>Download / Print</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* THE 5 CURRICULUM MODULES MATRIX */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+                    <BookOpen className="w-5 h-5 text-emerald-800" />
+                    <span>Foundation School 5-Module Curriculum</span>
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Comprehensive systematic discipleship doctrine designed for every believer at Greater Works City Church
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {FOUNDATION_CURRICULUM.map((mod) => {
+                  const isCompleted = memberFoundationStudent?.completed_modules?.includes(mod.moduleNumber);
+                  const isCurrent =
+                    !isCompleted &&
+                    (mod.moduleNumber === 1 ||
+                      memberFoundationStudent?.completed_modules?.includes(mod.moduleNumber - 1));
+
+                  return (
+                    <div
+                      key={mod.moduleNumber}
+                      className={`p-5 rounded-3xl border transition shadow-2xs flex flex-col justify-between space-y-3 ${
+                        isCompleted
+                          ? 'bg-white border-emerald-300 ring-1 ring-emerald-500/10'
+                          : isCurrent
+                          ? 'bg-amber-50/30 border-amber-300'
+                          : 'bg-slate-50/70 border-slate-200 opacity-80'
+                      }`}
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`w-7 h-7 rounded-xl flex items-center justify-center font-bold text-xs ${
+                                isCompleted
+                                  ? 'bg-emerald-700 text-white'
+                                  : isCurrent
+                                  ? 'bg-amber-500 text-slate-950 font-black'
+                                  : 'bg-slate-200 text-slate-600'
+                              }`}
+                            >
+                              {mod.moduleNumber}
+                            </span>
+                            <div>
+                              <h4 className="font-bold text-slate-900 text-sm tracking-tight leading-snug">
+                                {mod.title}
+                              </h4>
+                              <p className="text-[11px] font-semibold text-emerald-800">
+                                {mod.subtitle}
+                              </p>
+                            </div>
+                          </div>
+
+                          {isCompleted ? (
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1 shrink-0">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              Passed
+                            </span>
+                          ) : isCurrent ? (
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-100 text-amber-900 border border-amber-200 shrink-0">
+                              Current Module
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium uppercase bg-slate-200 text-slate-600 shrink-0">
+                              Upcoming
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Scripture Reference */}
+                        <div className="p-2 bg-slate-50 rounded-xl border border-slate-100 text-[11px] text-slate-600 font-medium italic">
+                          📖 {mod.scriptures}
+                        </div>
+
+                        <p className="text-xs text-slate-700 leading-relaxed">
+                          {mod.description}
+                        </p>
+
+                        {/* Core Topic Chips */}
+                        <div className="pt-1">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                            Learning Objectives:
+                          </span>
+                          <div className="flex flex-wrap gap-1">
+                            {mod.coreTopics.map((topic, i) => (
+                              <span
+                                key={i}
+                                className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-[10px] font-medium"
+                              >
+                                {topic}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-500 flex items-center justify-between">
+                        <span>Curriculum Level {mod.moduleNumber} of 5</span>
+                        {isCompleted && (
+                          <span className="font-semibold text-emerald-700 flex items-center gap-1">
+                            <Check className="w-3.5 h-3.5" /> Requirement Satisfied
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* IMMERSION WATER BAPTISM SELF-SERVICE VERIFICATION CARD */}
+            <div className="p-6 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold">
+                    💧
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-slate-900">
+                      Believer&apos;s Immersion Water Baptism
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Biblical ordinance of identification with Jesus Christ in death, burial, and resurrection
+                    </p>
+                  </div>
+                </div>
+
+                <span
+                  className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${
+                    memberFoundationStudent?.water_baptism_status
+                      ? 'bg-blue-100 text-blue-900 border border-blue-200'
+                      : 'bg-amber-100 text-amber-900 border border-amber-200'
+                  }`}
+                >
+                  {memberFoundationStudent?.water_baptism_status ? 'Immersion Verified' : 'Awaiting Immersion Service'}
+                </span>
+              </div>
+
+              <blockquote className="text-xs italic text-slate-600 bg-slate-50 p-3 rounded-2xl border border-slate-200 leading-relaxed">
+                &ldquo;Therefore we are buried with Him by baptism into death: that like as Christ was raised up from the dead by the glory of the Father, even so we also should walk in newness of life.&rdquo;
+                <footer className="text-slate-900 font-bold not-italic mt-1">— Romans 6:4</footer>
+              </blockquote>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Baptism Records</span>
+                  <p className="font-bold text-slate-900">
+                    {memberFoundationStudent?.water_baptism_status
+                      ? `Conducted on ${memberFoundationStudent.water_baptism_date || activeMember.baptism_date || 'August 2026'}`
+                      : 'Scheduled for Next Baptism Service'}
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Officiating Minister: <strong>{settings.senior_pastor || 'Prophet Elisha K. Richard'}</strong>
+                  </p>
+                </div>
+
+                <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Immersion Venue</span>
+                  <p className="font-bold text-slate-900">
+                    GWCC Sanctuary Baptistery & Riverfront
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Dress Code: White Baptismal Robe provided by church protocol
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: MY SERVICE DUTY ROSTER & VOLUNTEER HUB */}
+        {activeTab === 'roster' && (
+          <div className="space-y-6">
+            {/* Header + Overview Banner */}
+            <div className="bg-linear-to-r from-teal-950 via-slate-900 to-emerald-950 text-white p-6 sm:p-8 rounded-3xl border border-teal-700/50 shadow-md relative overflow-hidden space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-teal-400/20 text-teal-300 border border-teal-400/30 flex items-center gap-1">
+                      <UserCheck className="w-3.5 h-3.5" />
+                      Volunteer & Duty Roster Hub
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-white/10 text-emerald-200">
+                      {activeMember.ministry_name || 'Department Volunteer'}
+                    </span>
+                  </div>
+                  <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                    My Service Duty Roster
+                  </h2>
+                  <p className="text-xs text-teal-200/90 leading-relaxed max-w-2xl">
+                    &ldquo;Serve the Lord with gladness: come before His presence with singing.&rdquo; (Psalm 100:2) • Track report times, confirm duty, and manage service substitutions.
+                  </p>
+                </div>
+
+                <div className="text-right sm:self-auto self-start">
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-teal-300 block">
+                    Upcoming Assignments
+                  </span>
+                  <span className="text-3xl font-black text-white">
+                    {upcomingRosterDuties.length}
+                  </span>
+                  <span className="text-[10px] text-slate-300 block">Scheduled shifts</span>
+                </div>
+              </div>
+
+              {/* Next Upcoming Service Spotlight Countdown */}
+              {nextUpcomingDuty && (
+                <div className="pt-3 border-t border-teal-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs bg-black/25 p-4 rounded-2xl border border-white/10">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase bg-amber-400 text-slate-950">
+                        {getReportTimeCountdown(nextUpcomingDuty.date, nextUpcomingDuty.report_time).text}
+                      </span>
+                      <strong className="text-white text-sm">{nextUpcomingDuty.service_name}</strong>
+                    </div>
+                    <p className="text-teal-200 text-xs">
+                      Date: <strong>{nextUpcomingDuty.date}</strong> • Report Time: <strong className="text-amber-300">{nextUpcomingDuty.report_time}</strong> • Role: <strong>{nextUpcomingDuty.role_title}</strong>
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {nextUpcomingDuty.status !== 'confirmed' && (
+                      <button
+                        type="button"
+                        onClick={() => handleConfirmRosterAttendance(nextUpcomingDuty.id)}
+                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition shadow-xs cursor-pointer"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Confirm Attendance</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSubstituteAssignment(nextUpcomingDuty)}
+                      className="px-3.5 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-semibold border border-white/20 transition cursor-pointer"
+                    >
+                      Request Substitute
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Filter Navigation Pills */}
+            <div className="flex items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-1.5 bg-slate-200/80 p-1 rounded-2xl border border-slate-300">
+                <button
+                  type="button"
+                  onClick={() => setRosterViewFilter('upcoming')}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer ${
+                    rosterViewFilter === 'upcoming'
+                      ? 'bg-white text-emerald-950 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Upcoming Shifts ({upcomingRosterDuties.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRosterViewFilter('all')}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer ${
+                    rosterViewFilter === 'all'
+                      ? 'bg-white text-emerald-950 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  All Duties ({memberRosterAssignments.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRosterViewFilter('past')}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer ${
+                    rosterViewFilter === 'past'
+                      ? 'bg-white text-emerald-950 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Past History ({pastRosterDuties.length})
+                </button>
+              </div>
+
+              <p className="text-[11px] text-slate-500 hidden sm:block">
+                Greater Works City Church Roster Protocol
+              </p>
+            </div>
+
+            {/* Duty Assignments Cards Grid */}
+            <div className="space-y-3">
+              {(rosterViewFilter === 'upcoming'
+                ? upcomingRosterDuties
+                : rosterViewFilter === 'past'
+                ? pastRosterDuties
+                : memberRosterAssignments
+              ).map((assignment) => {
+                const deptBadge = getRosterDeptBadge(assignment.department);
+                const countdown = getReportTimeCountdown(assignment.date, assignment.report_time);
+
+                return (
+                  <div
+                    key={assignment.id}
+                    className="p-5 rounded-3xl bg-white border border-slate-200 shadow-2xs hover:shadow-md transition space-y-3.5"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-extrabold text-slate-900 text-sm">
+                            {assignment.service_name}
+                          </h4>
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 ${deptBadge.bg}`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${deptBadge.dot}`}></span>
+                            {deptBadge.label}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 flex items-center gap-2">
+                          <span className="font-semibold text-slate-700 flex items-center gap-1">
+                            <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                            {assignment.date}
+                          </span>
+                          <span>•</span>
+                          <span className="flex items-center gap-1 font-bold text-emerald-900">
+                            <Clock className="w-3.5 h-3.5 text-emerald-700" />
+                            Report at: {assignment.report_time}
+                          </span>
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`px-2.5 py-1 rounded-xl text-xs font-bold capitalize ${
+                            assignment.status === 'confirmed'
+                              ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                              : assignment.status === 'substituted'
+                              ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                              : assignment.status === 'declined'
+                              ? 'bg-rose-100 text-rose-900 border border-rose-300'
+                              : 'bg-amber-100 text-amber-900 border border-amber-300'
+                          }`}
+                        >
+                          {assignment.status === 'confirmed' ? '✓ Confirmed' : assignment.status}
+                        </span>
+
+                        <span className="px-2.5 py-1 rounded-xl text-[11px] font-mono font-semibold bg-slate-100 text-slate-700">
+                          {countdown.text}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Role & Specific Notes */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-0.5">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Assigned Function / Station</span>
+                        <p className="font-bold text-slate-900 text-xs">{assignment.role_title}</p>
+                      </div>
+
+                      <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-0.5">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Shift Instructions / Attire</span>
+                        <p className="text-slate-600 text-xs">
+                          {assignment.notes || 'Arrive 20 mins prior to pre-service prayer in the sanctuary.'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Footer Actions */}
+                    <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="text-[11px] text-slate-400">
+                        Roster ID: <span className="font-mono">{assignment.id}</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {assignment.status !== 'confirmed' && (
+                          <button
+                            type="button"
+                            onClick={() => handleConfirmRosterAttendance(assignment.id)}
+                            className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl transition flex items-center gap-1 shadow-2xs cursor-pointer text-xs"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Confirm Attendance</span>
+                          </button>
+                        )}
+
+                        {assignment.status !== 'substituted' && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenSubstituteModal(assignment)}
+                            className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold rounded-xl transition cursor-pointer text-xs"
+                          >
+                            Request Substitute
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {(rosterViewFilter === 'upcoming' ? upcomingRosterDuties : memberRosterAssignments).length === 0 && (
+                <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 space-y-2">
+                  <UserCheck className="w-10 h-10 text-slate-300 mx-auto" />
+                  <p className="font-bold text-slate-700 text-sm">No Duty Assignments Found</p>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    You have no service duties scheduled for this filter. Please check back next week or connect with your department coordinator.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Department Protocol & Coordinator Card */}
+            <div className="p-6 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-3">
+              <h4 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                <Users className="w-4 h-4 text-emerald-800" />
+                Department Service Guidelines & Meeting Schedule
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-slate-600">
+                <div className="space-y-1">
+                  <strong className="text-slate-800 block">General Sanctuary Protocol:</strong>
+                  <p className="text-[11px] leading-relaxed">
+                    Volunteers on duty are expected to report at least 30 minutes before service start time to join the pre-service intercession altar in the inner vestry.
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <strong className="text-slate-800 block">Emergency Absences:</strong>
+                  <p className="text-[11px] leading-relaxed">
+                    If an unforeseen emergency arises within 12 hours of service, please click &ldquo;Request Substitute&rdquo; and immediately alert your department head via WhatsApp.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: GIVING & TITHES */}
         {activeTab === 'giving' && (
           <div className="space-y-6">
             {/* Header + Actions */}

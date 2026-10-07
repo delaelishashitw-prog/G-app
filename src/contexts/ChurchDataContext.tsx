@@ -28,6 +28,9 @@ import {
   RosterConflict,
   FoundationCohort,
   FoundationStudent,
+  PastoralVisitationRecord,
+  PastoralCounselingSession,
+  IntercessoryWatchSlot,
 } from '../types/database.types';
 import {
   initialSettings,
@@ -54,6 +57,9 @@ import {
   sampleRosterAssignments,
   sampleFoundationCohorts,
   sampleFoundationStudents,
+  samplePastoralVisitations,
+  samplePastoralCounselingSessions,
+  sampleIntercessoryWatchSlots,
 } from '../lib/initialData';
 import { useAuth } from './AuthContext';
 import {
@@ -174,9 +180,24 @@ interface ChurchDataContextType {
   pastoralCare: PastoralCareRecord[];
   addPastoralCare: (record: Omit<PastoralCareRecord, 'id' | 'created_at'>) => PastoralCareRecord;
   addPastoralCareLog: (record: Omit<PastoralCareRecord, 'id' | 'created_at'>) => PastoralCareRecord;
+  updatePastoralCareLog: (id: string, updates: Partial<PastoralCareRecord>) => void;
+  deletePastoralCareLog: (id: string) => void;
   prayerRequests: PrayerRequest[];
   addPrayerRequest: (record: Omit<PrayerRequest, 'id' | 'created_at'>) => PrayerRequest;
   updatePrayerStatus: (id: string, status: PrayerRequest['status'], testimony?: string) => void;
+  deletePrayerRequest: (id: string) => void;
+  pastoralVisitations: PastoralVisitationRecord[];
+  addPastoralVisitation: (record: Omit<PastoralVisitationRecord, 'id' | 'created_at'>) => PastoralVisitationRecord;
+  updatePastoralVisitation: (id: string, updates: Partial<PastoralVisitationRecord>) => void;
+  deletePastoralVisitation: (id: string) => void;
+  counselingSessions: PastoralCounselingSession[];
+  addCounselingSession: (session: Omit<PastoralCounselingSession, 'id' | 'created_at'>) => PastoralCounselingSession;
+  updateCounselingSession: (id: string, updates: Partial<PastoralCounselingSession>) => void;
+  deleteCounselingSession: (id: string) => void;
+  intercessorySlots: IntercessoryWatchSlot[];
+  addIntercessorySlot: (slot: Omit<IntercessoryWatchSlot, 'id' | 'created_at'>) => IntercessoryWatchSlot;
+  updateIntercessorySlot: (id: string, updates: Partial<IntercessoryWatchSlot>) => void;
+  deleteIntercessorySlot: (id: string) => void;
 
   // Communication
   communications: CommunicationRecord[];
@@ -418,6 +439,21 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return loaded && loaded.length > 0 ? loaded : sampleFoundationStudents;
   });
 
+  const [pastoralVisitations, setPastoralVisitations] = useState<PastoralVisitationRecord[]>(() => {
+    const loaded = loadFromStorage<PastoralVisitationRecord[]>('pastoralVisitations', []);
+    return loaded && loaded.length > 0 ? loaded : samplePastoralVisitations;
+  });
+
+  const [counselingSessions, setCounselingSessions] = useState<PastoralCounselingSession[]>(() => {
+    const loaded = loadFromStorage<PastoralCounselingSession[]>('counselingSessions', []);
+    return loaded && loaded.length > 0 ? loaded : samplePastoralCounselingSessions;
+  });
+
+  const [intercessorySlots, setIntercessorySlots] = useState<IntercessoryWatchSlot[]>(() => {
+    const loaded = loadFromStorage<IntercessoryWatchSlot[]>('intercessorySlots', []);
+    return loaded && loaded.length > 0 ? loaded : sampleIntercessoryWatchSlots;
+  });
+
   // Supabase states
   const [supabaseConfig, setSupabaseConfig] = useState(getStoredSupabaseConfig());
   const [supabaseStatus, setSupabaseStatus] = useState<SupabaseStatus>(() =>
@@ -555,6 +591,21 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (isInitialMount.current) return;
     saveToStorage('foundationStudents', foundationStudents);
   }, [foundationStudents]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('pastoralVisitations', pastoralVisitations);
+  }, [pastoralVisitations]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('counselingSessions', counselingSessions);
+  }, [counselingSessions]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('intercessorySlots', intercessorySlots);
+  }, [intercessorySlots]);
 
   // Initial Supabase check and hydration
   useEffect(() => {
@@ -1877,6 +1928,181 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     );
   };
 
+  const updatePastoralCareLog = (id: string, updates: Partial<PastoralCareRecord>) => {
+    setPastoralCare((prev) =>
+      prev.map((c) => {
+        if (c.id === id) {
+          const updated = { ...c, ...updates };
+          logAction(
+            'UPDATE_PASTORAL_CARE',
+            'Pastoral Care',
+            `Updated pastoral care record for ${c.member_name}`,
+            id
+          );
+          dbSyncUpsert('pastoral_care', updated);
+          return updated;
+        }
+        return c;
+      })
+    );
+  };
+
+  const deletePastoralCareLog = (id: string) => {
+    setPastoralCare((prev) => prev.filter((c) => c.id !== id));
+    logAction('DELETE_PASTORAL_CARE', 'Pastoral Care', `Deleted pastoral record`, id);
+    dbSyncDelete('pastoral_care', id);
+  };
+
+  const deletePrayerRequest = (id: string) => {
+    setPrayerRequests((prev) => prev.filter((p) => p.id !== id));
+    logAction('DELETE_PRAYER_REQUEST', 'Prayer Requests', `Deleted prayer request`, id);
+    dbSyncDelete('prayer_requests', id);
+  };
+
+  // HOME & HOSPITAL VISITATIONS
+  const addPastoralVisitation = (
+    data: Omit<PastoralVisitationRecord, 'id' | 'created_at'>
+  ): PastoralVisitationRecord => {
+    const newRecord: PastoralVisitationRecord = {
+      ...data,
+      id: `vis-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      created_at: new Date().toISOString(),
+    };
+    setPastoralVisitations((prev) => [newRecord, ...prev]);
+    logAction(
+      'RECORD_VISITATION',
+      'Pastoral Care',
+      `Logged ${data.visitation_type.replace('_', ' ')} to ${data.member_name} at ${data.location}`,
+      newRecord.id
+    );
+    dbSyncUpsert('pastoral_visitations', newRecord);
+    return newRecord;
+  };
+
+  const updatePastoralVisitation = (
+    id: string,
+    updates: Partial<PastoralVisitationRecord>
+  ) => {
+    setPastoralVisitations((prev) =>
+      prev.map((v) => {
+        if (v.id === id) {
+          const updated = { ...v, ...updates };
+          logAction(
+            'UPDATE_VISITATION',
+            'Pastoral Care',
+            `Updated visitation for ${v.member_name} (${updated.status})`,
+            id
+          );
+          dbSyncUpsert('pastoral_visitations', updated);
+          return updated;
+        }
+        return v;
+      })
+    );
+  };
+
+  const deletePastoralVisitation = (id: string) => {
+    setPastoralVisitations((prev) => prev.filter((v) => v.id !== id));
+    logAction('DELETE_VISITATION', 'Pastoral Care', `Deleted visitation record`, id);
+    dbSyncDelete('pastoral_visitations', id);
+  };
+
+  // COUNSELING SESSIONS
+  const addCounselingSession = (
+    session: Omit<PastoralCounselingSession, 'id' | 'created_at'>
+  ): PastoralCounselingSession => {
+    const newSession: PastoralCounselingSession = {
+      ...session,
+      id: `coun-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      created_at: new Date().toISOString(),
+    };
+    setCounselingSessions((prev) => [newSession, ...prev]);
+    logAction(
+      'SCHEDULE_COUNSELING',
+      'Pastoral Care',
+      `Logged counseling session #${session.session_number} with ${session.member_name}`,
+      newSession.id
+    );
+    dbSyncUpsert('pastoral_counseling', newSession);
+    return newSession;
+  };
+
+  const updateCounselingSession = (
+    id: string,
+    updates: Partial<PastoralCounselingSession>
+  ) => {
+    setCounselingSessions((prev) =>
+      prev.map((s) => {
+        if (s.id === id) {
+          const updated = { ...s, ...updates };
+          logAction(
+            'UPDATE_COUNSELING',
+            'Pastoral Care',
+            `Updated counseling session for ${s.member_name}`,
+            id
+          );
+          dbSyncUpsert('pastoral_counseling', updated);
+          return updated;
+        }
+        return s;
+      })
+    );
+  };
+
+  const deleteCounselingSession = (id: string) => {
+    setCounselingSessions((prev) => prev.filter((s) => s.id !== id));
+    logAction('DELETE_COUNSELING', 'Pastoral Care', `Deleted counseling session`, id);
+    dbSyncDelete('pastoral_counseling', id);
+  };
+
+  // INTERCESSORY PRAYER WATCH SLOTS
+  const addIntercessorySlot = (
+    slot: Omit<IntercessoryWatchSlot, 'id' | 'created_at'>
+  ): IntercessoryWatchSlot => {
+    const newSlot: IntercessoryWatchSlot = {
+      ...slot,
+      id: `watch-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      created_at: new Date().toISOString(),
+    };
+    setIntercessorySlots((prev) => [newSlot, ...prev]);
+    logAction(
+      'ADD_INTERCESSORY_SLOT',
+      'Pastoral Care',
+      `Assigned ${slot.intercessor_name} to ${slot.watch_name} on ${slot.day_of_week}`,
+      newSlot.id
+    );
+    dbSyncUpsert('intercessory_slots', newSlot);
+    return newSlot;
+  };
+
+  const updateIntercessorySlot = (
+    id: string,
+    updates: Partial<IntercessoryWatchSlot>
+  ) => {
+    setIntercessorySlots((prev) =>
+      prev.map((s) => {
+        if (s.id === id) {
+          const updated = { ...s, ...updates };
+          logAction(
+            'UPDATE_INTERCESSORY_SLOT',
+            'Pastoral Care',
+            `Updated watch slot for ${s.intercessor_name}`,
+            id
+          );
+          dbSyncUpsert('intercessory_slots', updated);
+          return updated;
+        }
+        return s;
+      })
+    );
+  };
+
+  const deleteIntercessorySlot = (id: string) => {
+    setIntercessorySlots((prev) => prev.filter((s) => s.id !== id));
+    logAction('DELETE_INTERCESSORY_SLOT', 'Pastoral Care', `Removed intercessory watch assignment`, id);
+    dbSyncDelete('intercessory_slots', id);
+  };
+
   // COMMUNICATION
   const sendSMSMessage = (
     data: Omit<CommunicationRecord, 'id' | 'sent_at'>
@@ -2443,6 +2669,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setRosterAssignments(sampleRosterAssignments);
     setFoundationCohorts(sampleFoundationCohorts);
     setFoundationStudents(sampleFoundationStudents);
+    setPastoralVisitations(samplePastoralVisitations);
+    setCounselingSessions(samplePastoralCounselingSessions);
+    setIntercessorySlots(sampleIntercessoryWatchSlots);
 
     saveToStorage('settings', initialSettings);
     saveToStorage('members', sampleMembers);
@@ -2468,6 +2697,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     saveToStorage('rosterAssignments', sampleRosterAssignments);
     saveToStorage('foundationCohorts', sampleFoundationCohorts);
     saveToStorage('foundationStudents', sampleFoundationStudents);
+    saveToStorage('pastoralVisitations', samplePastoralVisitations);
+    saveToStorage('counselingSessions', samplePastoralCounselingSessions);
+    saveToStorage('intercessorySlots', sampleIntercessoryWatchSlots);
 
     logAction('RESET_SAMPLE_DATA', 'System', 'Populated Greater Works City Church sample data');
   };
@@ -2538,9 +2770,24 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       pastoralCare,
       addPastoralCare,
       addPastoralCareLog: addPastoralCare,
+      updatePastoralCareLog,
+      deletePastoralCareLog,
       prayerRequests,
       addPrayerRequest,
       updatePrayerStatus,
+      deletePrayerRequest,
+      pastoralVisitations,
+      addPastoralVisitation,
+      updatePastoralVisitation,
+      deletePastoralVisitation,
+      counselingSessions,
+      addCounselingSession,
+      updateCounselingSession,
+      deleteCounselingSession,
+      intercessorySlots,
+      addIntercessorySlot,
+      updateIntercessorySlot,
+      deleteIntercessorySlot,
       communications,
       sendSMSMessage,
       auditLogs,
@@ -2616,6 +2863,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       rosterConflicts,
       foundationCohorts,
       foundationStudents,
+      pastoralVisitations,
+      counselingSessions,
+      intercessorySlots,
       supabaseStatus,
       supabaseError,
       lastSyncTime,
