@@ -40,6 +40,9 @@ import {
   BarChart2,
   PieChart as PieChartIcon,
   RefreshCw,
+  GraduationCap,
+  Printer,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useChurchData } from '../contexts/ChurchDataContext';
@@ -53,6 +56,9 @@ import { MemberIdCardModal } from '../components/members/MemberIdCardModal';
 import { AddEditMemberModal } from '../components/members/AddEditMemberModal';
 import { ArchiveMemberModal } from '../components/members/ArchiveMemberModal';
 import { MemberDemographicsSection } from '../components/members/MemberDemographicsSection';
+import { FoundationSchoolModal } from '../components/discipleship/FoundationSchoolModal';
+import { BulkMemberOperationsModal } from '../components/members/BulkMemberOperationsModal';
+import { PrintDirectoryModal } from '../components/members/PrintDirectoryModal';
 import {
   clusterHouseholds,
   buildFamilyBlessingWhatsAppUrl,
@@ -67,6 +73,7 @@ export const MembersPage: React.FC = () => {
     smallGroups,
     addMember,
     updateMember,
+    bulkUpdateMembers,
     archiveMember,
     unarchiveMember,
     giving,
@@ -76,6 +83,14 @@ export const MembersPage: React.FC = () => {
     isRefreshing,
     lastRefreshedAt,
     refreshData,
+    foundationCohorts,
+    createFoundationCohort,
+    updateFoundationCohort,
+    foundationStudents,
+    enrollMemberInFoundationSchool,
+    updateFoundationStudent,
+    toggleFoundationModule,
+    graduateFoundationStudent,
   } = useChurchData();
   const { canAccess, currentRole } = useAuth();
   const { success, error, warning, info } = useToast();
@@ -128,6 +143,9 @@ export const MembersPage: React.FC = () => {
   const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [memberToArchive, setMemberToArchive] = useState<Member | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);
+  const [isFoundationSchoolOpen, setIsFoundationSchoolOpen] = useState(false);
+  const [isBulkOperationsOpen, setIsBulkOperationsOpen] = useState(false);
+  const [isPrintDirectoryOpen, setIsPrintDirectoryOpen] = useState(false);
 
   // Demographics Visual Dashboard collapsible state
   const [isDemographicsOpen, setIsDemographicsOpen] = useState<boolean>(() => {
@@ -211,6 +229,10 @@ export const MembersPage: React.FC = () => {
     } else {
       setSelectedMember(null);
     }
+
+    if (params.get('tab') === 'discipleship' || params.get('tab') === 'foundation' || params.get('view') === 'foundation') {
+      setIsFoundationSchoolOpen(true);
+    }
   }, [memberId, location.search, members]);
 
   const handleSelectMember = (member: Member) => {
@@ -251,6 +273,44 @@ export const MembersPage: React.FC = () => {
     });
     success(`Archived ${count} selected members.`);
     setBatchSelectedIds(new Set());
+  };
+
+  const handleBulkUpdate = (memberIds: string[], updates: Partial<Member>) => {
+    bulkUpdateMembers(memberIds, updates);
+    success(`Updated ${memberIds.length} members successfully.`);
+  };
+
+  const handleBulkEnrollInCohort = (
+    cohortId: string,
+    cohortName: string,
+    selectedMemberList: Member[]
+  ) => {
+    let enrolledCount = 0;
+    selectedMemberList.forEach((m) => {
+      const alreadyEnrolled = foundationStudents.some(
+        (s) => s.member_id === m.id && s.cohort_id === cohortId
+      );
+      if (!alreadyEnrolled) {
+        enrollMemberInFoundationSchool({
+          cohort_id: cohortId,
+          cohort_name: cohortName,
+          member_id: m.id,
+          member_name: `${m.first_name} ${m.last_name}`,
+          member_phone: m.phone,
+          enrollment_date: new Date().toISOString().split('T')[0],
+          completed_modules: [],
+          water_baptism_status: Boolean(m.baptism_status),
+          water_baptism_date: m.baptism_date,
+          status: 'in_progress',
+        });
+        enrolledCount++;
+      }
+    });
+    if (enrolledCount > 0) {
+      success(`Enrolled ${enrolledCount} member${enrolledCount > 1 ? 's' : ''} into "${cohortName}".`);
+    } else {
+      info('Selected members are already enrolled in this cohort.');
+    }
   };
 
   // Filtered and Sorted members
@@ -452,18 +512,30 @@ export const MembersPage: React.FC = () => {
     ]);
 
     const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map((e) => e.map((val) => `"${val}"`).join(','))].join('\n');
+      '\uFEFF' +
+      [
+        headers.map((h) => `"${h.replace(/"/g, '""')}"`).join(','),
+        ...rows.map((row) =>
+          row
+            .map((val) => {
+              const str = String(val ?? '');
+              return `"${str.replace(/"/g, '""')}"`;
+            })
+            .join(',')
+        ),
+      ].join('\r\n');
 
-    const encodedUri = encodeURI(csvContent);
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `GWCC_Members_${new Date().toISOString().split('T')[0]}.csv`);
+    link.href = url;
+    link.download = `GWCC_Members_Registry_${new Date().toISOString().split('T')[0]}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 
-    success(`Exported ${listToExport.length} member records.`);
+    success(`Exported ${listToExport.length} member records to Excel.`);
   };
 
   const openCreateModal = () => {
@@ -729,6 +801,33 @@ export const MembersPage: React.FC = () => {
                 <span>Demographics</span>
               </button>
 
+              {/* Discipleship & Foundation School Button */}
+              <button
+                type="button"
+                onClick={() => setIsFoundationSchoolOpen(true)}
+                className="px-3.5 py-2 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100/80 text-emerald-950 text-xs font-bold flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
+                title="Foundation School & Believers Discipleship Academy"
+              >
+                <GraduationCap className="w-4 h-4 text-emerald-700" />
+                <span>Foundation School</span>
+                {foundationStudents.filter((s) => s.status === 'in_progress' || s.status === 'ready_for_baptism').length > 0 && (
+                  <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-emerald-700 text-white">
+                    {foundationStudents.filter((s) => s.status === 'in_progress' || s.status === 'ready_for_baptism').length}
+                  </span>
+                )}
+              </button>
+
+              {/* Print Directory Button */}
+              <button
+                type="button"
+                onClick={() => setIsPrintDirectoryOpen(true)}
+                className="px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
+                title="Print Official Congregational Membership Directory"
+              >
+                <Printer className="w-3.5 h-3.5 text-slate-600" />
+                <span className="hidden sm:inline">Print Directory</span>
+              </button>
+
               <button
                 type="button"
                 onClick={handleRefresh}
@@ -743,10 +842,10 @@ export const MembersPage: React.FC = () => {
               <button
                 onClick={() => handleExportCSV(false)}
                 className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-2xs"
-                title="Download CSV for Excel"
+                title="Download CSV formatted for Microsoft Excel"
               >
-                <Download className="w-4 h-4 text-slate-500" />
-                <span className="hidden sm:inline">Export CSV</span>
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <span className="hidden sm:inline">Export Excel</span>
               </button>
 
               <button
@@ -1080,6 +1179,24 @@ export const MembersPage: React.FC = () => {
 
               <div className="flex items-center gap-2">
                 <button
+                  onClick={() => setIsBulkOperationsOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+                  title="Batch assign ministry, cell group, status, or Foundation School"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-200" />
+                  <span>Bulk Operations ({batchSelectedIds.size})</span>
+                </button>
+
+                <button
+                  onClick={() => setIsPrintDirectoryOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold transition border border-slate-700"
+                  title="Print directory of selected members"
+                >
+                  <Printer className="w-3.5 h-3.5 text-slate-300" />
+                  <span>Print Selected</span>
+                </button>
+
+                <button
                   onClick={handleBatchArchive}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
                   title="Archive selected members"
@@ -1092,8 +1209,8 @@ export const MembersPage: React.FC = () => {
                   onClick={() => handleExportCSV(true)}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold transition border border-slate-700"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Export Selected CSV</span>
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Export Selected Excel</span>
                 </button>
 
                 <button
@@ -1719,6 +1836,54 @@ export const MembersPage: React.FC = () => {
           isProcessing={isArchiving}
         />
       )}
+
+      {/* MODAL 5: FOUNDATION SCHOOL & DISCIPLESHIP */}
+      <FoundationSchoolModal
+        isOpen={isFoundationSchoolOpen}
+        onClose={() => setIsFoundationSchoolOpen(false)}
+        cohorts={foundationCohorts}
+        students={foundationStudents}
+        members={members}
+        settings={settings}
+        onCreateCohort={createFoundationCohort}
+        onEnrollStudent={enrollMemberInFoundationSchool}
+        onToggleModule={toggleFoundationModule}
+        onGraduateStudent={graduateFoundationStudent}
+      />
+
+      {/* MODAL 6: BULK MEMBER OPERATIONS */}
+      <BulkMemberOperationsModal
+        isOpen={isBulkOperationsOpen}
+        onClose={() => setIsBulkOperationsOpen(false)}
+        selectedMembers={filteredMembers.filter((m) => batchSelectedIds.has(m.id))}
+        ministries={ministries}
+        smallGroups={smallGroups}
+        foundationCohorts={foundationCohorts}
+        onBulkUpdate={handleBulkUpdate}
+        onEnrollInCohort={handleBulkEnrollInCohort}
+        onClearSelection={() => setBatchSelectedIds(new Set())}
+      />
+
+      {/* MODAL 7: PRINT MEMBERSHIP DIRECTORY */}
+      <PrintDirectoryModal
+        isOpen={isPrintDirectoryOpen}
+        onClose={() => setIsPrintDirectoryOpen(false)}
+        members={
+          batchSelectedIds.size > 0
+            ? filteredMembers.filter((m) => batchSelectedIds.has(m.id))
+            : filteredMembers
+        }
+        settings={settings}
+        filterLabel={
+          batchSelectedIds.size > 0
+            ? `${batchSelectedIds.size} Selected Members`
+            : statusFilter !== 'all'
+            ? `Status: ${statusFilter}`
+            : ministryFilter !== 'all'
+            ? `Ministry: ${ministryFilter}`
+            : 'All Active Congregation'
+        }
+      />
     </div>
   );
 };

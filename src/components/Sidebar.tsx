@@ -24,6 +24,7 @@ import {
   LogOut,
   Sparkles,
   Package,
+  GraduationCap,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
@@ -102,6 +103,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       items: [
         { name: 'Ministries', path: '/ministries', icon: Church, module: 'ministries' },
         { name: 'Small Groups', path: '/small-groups', icon: Network, module: 'small_groups' },
+        {
+          name: 'Foundation School',
+          path: '/members?tab=foundation',
+          icon: GraduationCap,
+          module: 'members',
+          badge: 'Classes',
+          badgeColor: 'bg-emerald-700 text-white font-medium text-[10px]',
+        },
         { name: 'Events & Calendar', path: '/events', icon: CalendarCheck, module: 'events' },
         {
           name: 'Member Portal',

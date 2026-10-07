@@ -408,6 +408,16 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return loaded && loaded.length > 0 ? loaded : sampleRosterAssignments;
   });
 
+  const [foundationCohorts, setFoundationCohorts] = useState<FoundationCohort[]>(() => {
+    const loaded = loadFromStorage<FoundationCohort[]>('foundationCohorts', []);
+    return loaded && loaded.length > 0 ? loaded : sampleFoundationCohorts;
+  });
+
+  const [foundationStudents, setFoundationStudents] = useState<FoundationStudent[]>(() => {
+    const loaded = loadFromStorage<FoundationStudent[]>('foundationStudents', []);
+    return loaded && loaded.length > 0 ? loaded : sampleFoundationStudents;
+  });
+
   // Supabase states
   const [supabaseConfig, setSupabaseConfig] = useState(getStoredSupabaseConfig());
   const [supabaseStatus, setSupabaseStatus] = useState<SupabaseStatus>(() =>
@@ -535,6 +545,16 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (isInitialMount.current) return;
     saveToStorage('rosterAssignments', rosterAssignments);
   }, [rosterAssignments]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('foundationCohorts', foundationCohorts);
+  }, [foundationCohorts]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('foundationStudents', foundationStudents);
+  }, [foundationStudents]);
 
   // Initial Supabase check and hydration
   useEffect(() => {
@@ -950,6 +970,26 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
         return m;
       })
+    );
+  };
+
+  const bulkUpdateMembers = (memberIds: string[], updates: Partial<Member>) => {
+    const idSet = new Set(memberIds);
+    const now = new Date().toISOString();
+    setMembers((prev) =>
+      prev.map((m) => {
+        if (idSet.has(m.id)) {
+          const updated = { ...m, ...updates, updated_at: now };
+          dbSyncUpsert('members', updated);
+          return updated;
+        }
+        return m;
+      })
+    );
+    logAction(
+      'BULK_UPDATE_MEMBERS',
+      'Members',
+      `Applied bulk update across ${memberIds.length} members`
     );
   };
 
@@ -2240,6 +2280,143 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return conflicts;
   }, [rosterAssignments]);
 
+  // FOUNDATION SCHOOL & DISCIPLESHIP
+  const createFoundationCohort = (
+    data: Omit<FoundationCohort, 'id' | 'created_at'>
+  ): FoundationCohort => {
+    const newCohort: FoundationCohort = {
+      ...data,
+      id: `fnd-cohort-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      created_at: new Date().toISOString(),
+    };
+    setFoundationCohorts((prev) => [newCohort, ...prev]);
+    logAction(
+      'CREATE_FOUNDATION_COHORT',
+      'Discipleship',
+      `Created Foundation School cohort: ${data.name}`,
+      newCohort.id
+    );
+    return newCohort;
+  };
+
+  const updateFoundationCohort = (id: string, updates: Partial<FoundationCohort>) => {
+    setFoundationCohorts((prev) =>
+      prev.map((c) => {
+        if (c.id === id) {
+          const updated = { ...c, ...updates };
+          logAction(
+            'UPDATE_FOUNDATION_COHORT',
+            'Discipleship',
+            `Updated cohort ${c.name} (Status: ${updates.status || c.status})`,
+            id
+          );
+          return updated;
+        }
+        return c;
+      })
+    );
+  };
+
+  const enrollMemberInFoundationSchool = (
+    data: Omit<FoundationStudent, 'id' | 'created_at'>
+  ): FoundationStudent => {
+    const newStudent: FoundationStudent = {
+      ...data,
+      id: `fnd-std-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      created_at: new Date().toISOString(),
+    };
+    setFoundationStudents((prev) => [newStudent, ...prev]);
+    logAction(
+      'ENROLL_FOUNDATION_STUDENT',
+      'Discipleship',
+      `Enrolled ${data.member_name} into ${data.cohort_name}`,
+      newStudent.id
+    );
+    return newStudent;
+  };
+
+  const updateFoundationStudent = (id: string, updates: Partial<FoundationStudent>) => {
+    setFoundationStudents((prev) =>
+      prev.map((s) => {
+        if (s.id === id) {
+          const updated = { ...s, ...updates };
+          logAction(
+            'UPDATE_FOUNDATION_STUDENT',
+            'Discipleship',
+            `Updated student ${s.member_name} progress (Status: ${updates.status || s.status})`,
+            id
+          );
+          return updated;
+        }
+        return s;
+      })
+    );
+  };
+
+  const toggleFoundationModule = (studentId: string, moduleNumber: number) => {
+    setFoundationStudents((prev) =>
+      prev.map((s) => {
+        if (s.id === studentId) {
+          const current = new Set(s.completed_modules);
+          if (current.has(moduleNumber)) {
+            current.delete(moduleNumber);
+          } else {
+            current.add(moduleNumber);
+          }
+          const completed_modules = Array.from(current).sort();
+          const allCompleted = [1, 2, 3, 4, 5].every((m) => completed_modules.includes(m));
+          const newStatus = allCompleted ? 'ready_for_baptism' : 'in_progress';
+
+          const updated: FoundationStudent = {
+            ...s,
+            completed_modules,
+            status: s.status === 'graduated' ? 'graduated' : newStatus,
+          };
+          logAction(
+            'TOGGLE_FOUNDATION_MODULE',
+            'Discipleship',
+            `Updated ${s.member_name} module ${moduleNumber} completion state (${completed_modules.length}/5)`,
+            studentId
+          );
+          return updated;
+        }
+        return s;
+      })
+    );
+  };
+
+  const graduateFoundationStudent = (studentId: string, certificateNo?: string) => {
+    const today = new Date().toISOString().split('T')[0];
+    const certNumber =
+      certificateNo || `GWCC-FS-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
+    setFoundationStudents((prev) =>
+      prev.map((s) => {
+        if (s.id === studentId) {
+          const updated: FoundationStudent = {
+            ...s,
+            status: 'graduated',
+            graduation_date: today,
+            certificate_no: certNumber,
+            completed_modules: [1, 2, 3, 4, 5],
+          };
+          setMembers((mList) =>
+            mList.map((m) =>
+              m.id === s.member_id ? { ...m, membership_class_completed: true } : m
+            )
+          );
+          logAction(
+            'GRADUATE_FOUNDATION_STUDENT',
+            'Discipleship',
+            `Graduated ${s.member_name} from Foundation School with Certificate ${certNumber}`,
+            studentId
+          );
+          return updated;
+        }
+        return s;
+      })
+    );
+  };
+
   // RESET
   const resetToSampleData = () => {
     setSettings(initialSettings);
@@ -2264,6 +2441,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setChildCheckIns(sampleChildCheckIns);
     setAssets(sampleAssets);
     setRosterAssignments(sampleRosterAssignments);
+    setFoundationCohorts(sampleFoundationCohorts);
+    setFoundationStudents(sampleFoundationStudents);
 
     saveToStorage('settings', initialSettings);
     saveToStorage('members', sampleMembers);
@@ -2287,6 +2466,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     saveToStorage('childCheckIns', sampleChildCheckIns);
     saveToStorage('assets', sampleAssets);
     saveToStorage('rosterAssignments', sampleRosterAssignments);
+    saveToStorage('foundationCohorts', sampleFoundationCohorts);
+    saveToStorage('foundationStudents', sampleFoundationStudents);
 
     logAction('RESET_SAMPLE_DATA', 'System', 'Populated Greater Works City Church sample data');
   };
@@ -2298,6 +2479,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       members,
       addMember,
       updateMember,
+      bulkUpdateMembers,
       archiveMember,
       unarchiveMember,
       getMember,
@@ -2386,6 +2568,14 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       updateRosterAssignment,
       deleteRosterAssignment,
       rosterConflicts,
+      foundationCohorts,
+      createFoundationCohort,
+      updateFoundationCohort,
+      foundationStudents,
+      enrollMemberInFoundationSchool,
+      updateFoundationStudent,
+      toggleFoundationModule,
+      graduateFoundationStudent,
       isSupabaseConfigured: isSupabaseConfigured(),
       supabaseStatus,
       supabaseError,
@@ -2424,6 +2614,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       assets,
       rosterAssignments,
       rosterConflicts,
+      foundationCohorts,
+      foundationStudents,
       supabaseStatus,
       supabaseError,
       lastSyncTime,
