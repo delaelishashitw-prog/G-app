@@ -471,6 +471,7 @@ export interface ChurchSettings {
   gps_address: string;
   phone: string;
   email: string;
+  website?: string;
   currency: string;
   currency_symbol: string;
   timezone: string;

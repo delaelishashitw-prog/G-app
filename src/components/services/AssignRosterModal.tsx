@@ -131,6 +131,20 @@ export const AssignRosterModal: React.FC<AssignRosterModalProps> = ({
   const [status, setStatus] = useState<RosterAssignmentStatus>('confirmed');
   const [notes, setNotes] = useState('');
 
+  React.useEffect(() => {
+    if (initialServiceId) {
+      setServiceId(initialServiceId);
+    } else if (services.length > 0 && !serviceId) {
+      setServiceId(services[0].id);
+    }
+  }, [initialServiceId, services, serviceId]);
+
+  React.useEffect(() => {
+    if (initialDate) {
+      setDate(initialDate);
+    }
+  }, [initialDate]);
+
   if (!isOpen) return null;
 
   const currentService = services.find((s) => s.id === serviceId) || services[0];
@@ -177,6 +191,12 @@ export const AssignRosterModal: React.FC<AssignRosterModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
+    const targetService = services.find((s) => s.id === serviceId) || currentService;
+    if (!targetService) {
+      toastError('Validation Error', 'Please select a valid church service.');
+      return;
+    }
+
     if (!selectedMember) {
       toastError('Validation Error', 'Please select a volunteer or church member.');
       return;
@@ -191,8 +211,8 @@ export const AssignRosterModal: React.FC<AssignRosterModalProps> = ({
     }
 
     onSave({
-      service_id: currentService.id,
-      service_name: currentService.name,
+      service_id: targetService.id,
+      service_name: targetService.name,
       date,
       member_id: selectedMember.id,
       member_name: `${selectedMember.first_name} ${selectedMember.last_name}`,

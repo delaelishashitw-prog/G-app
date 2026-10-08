@@ -94,22 +94,34 @@ export const ServicesPage: React.FC = () => {
     >();
 
     services.forEach((s) => {
+      const sName = (s.name || '').trim().toLowerCase();
+      const sPrefix = sName.length >= 3 ? sName.slice(0, 15) : '';
+
       // Find matching attendance
-      const matchingAtt = attendance.filter(
-        (a) => a.service_id === s.id || (a.service_name && a.service_name.toLowerCase().includes((s.name || '').toLowerCase().slice(0, 15)))
-      );
+      const matchingAtt = attendance.filter((a) => {
+        if (a.service_id && a.service_id === s.id) return true;
+        if (sPrefix && a.service_name && a.service_name.toLowerCase().includes(sPrefix)) return true;
+        return false;
+      });
 
       // Find matching giving
-      const matchingGiving = giving.filter(
-        (g) => g.service_id === s.id || (g.service_name && g.service_name.toLowerCase().includes((s.name || '').toLowerCase().slice(0, 15)))
-      );
+      const matchingGiving = giving.filter((g) => {
+        if (g.service_id && g.service_id === s.id) return true;
+        if (sPrefix && g.service_name && g.service_name.toLowerCase().includes(sPrefix)) return true;
+        return false;
+      });
 
       const givingTotal = matchingGiving.reduce((sum, g) => sum + g.amount, 0);
+
+      const sortedDates = matchingAtt
+        .map((a) => a.date)
+        .filter(Boolean)
+        .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
 
       map.set(s.id, {
         checkinCount: matchingAtt.length,
         givingTotal,
-        lastDate: matchingAtt[0]?.date || 'Recent',
+        lastDate: sortedDates[0] || 'Recent',
       });
     });
 
@@ -122,10 +134,10 @@ export const ServicesPage: React.FC = () => {
     () => activeServices.reduce((sum, s) => sum + (s.expected_attendance || 150), 0),
     [activeServices]
   );
-  const totalWeeklyOfferings = useMemo(
-    () => giving.reduce((sum, g) => sum + g.amount, 0),
-    [giving]
-  );
+  const totalConnectedServiceInflow = useMemo(() => {
+    const connected = Array.from(serviceStatsMap.values()).reduce((sum, s) => sum + s.givingTotal, 0);
+    return connected > 0 ? connected : giving.reduce((sum, g) => sum + g.amount, 0);
+  }, [serviceStatsMap, giving]);
 
   // Filtered services
   const filteredServices = useMemo(() => {
@@ -159,10 +171,14 @@ export const ServicesPage: React.FC = () => {
     });
 
     filteredServices.forEach((s) => {
-      if (!grouped[s.day_of_week]) {
-        grouped[s.day_of_week] = [];
-      }
-      grouped[s.day_of_week].push(s);
+      const rawDay = (s.day_of_week || '').trim();
+      const matchedDay = DAYS_ORDER.find((d) => d.toLowerCase() === rawDay.toLowerCase()) || 'Sunday';
+      grouped[matchedDay].push(s);
+    });
+
+    // Chronologically sort each day's services by start_time
+    DAYS_ORDER.forEach((day) => {
+      grouped[day].sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
     });
 
     return grouped;
@@ -292,7 +308,7 @@ export const ServicesPage: React.FC = () => {
               Treasury Inflow Connected
             </span>
             <span className="text-xl font-extrabold text-slate-900 font-mono mt-0.5 block">
-              {formatGHS(totalWeeklyOfferings)}
+              {formatGHS(totalConnectedServiceInflow)}
             </span>
           </div>
           <span className="p-2.5 bg-purple-50 text-purple-700 rounded-xl">
@@ -1053,6 +1069,8 @@ export const ServicesPage: React.FC = () => {
           members={members}
           existingAssignments={rosterAssignments}
           onSave={addRosterAssignment}
+          initialServiceId={rosterServiceFilter !== 'ALL' ? rosterServiceFilter : undefined}
+          initialDate={rosterDateFilter !== 'ALL' ? rosterDateFilter : undefined}
         />
       )}
 
@@ -1063,7 +1081,7 @@ export const ServicesPage: React.FC = () => {
           onClose={() => setIsPrintMasterRosterOpen(false)}
           assignments={rosterAssignments}
           settings={settings}
-          selectedDate={rosterDateFilter !== 'ALL' ? rosterDateFilter : new Date().toISOString().split('T')[0]}
+          selectedDate={rosterDateFilter}
           selectedServiceName={rosterServiceFilter !== 'ALL' ? services.find((s) => s.id === rosterServiceFilter)?.name : undefined}
         />
       )}

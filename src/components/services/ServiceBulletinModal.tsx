@@ -101,7 +101,7 @@ ${programItems.map((p, idx) => `${idx + 1}. [${p.time || p.duration || ''}] ${p.
                   {settings.branch_name || 'Joma Assembly'} • Accra, Ghana
                 </p>
                 <p className="text-[10px] text-slate-500">
-                  Main Sanctuary • GPS: GA-183-4921 • www.greaterworkscitychurch.org
+                  Main Sanctuary • GPS: {settings.gps_address || 'GA-183-4921'} • {settings.website || 'www.greaterworkscitychurch.org'}
                 </p>
               </div>
             </div>

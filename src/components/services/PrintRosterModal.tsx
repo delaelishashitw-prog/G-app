@@ -35,13 +35,28 @@ export const PrintRosterModal: React.FC<PrintRosterModalProps> = ({
     window.print();
   };
 
-  // Group assignments by department
-  const groupedByDept = assignments.reduce((acc, curr) => {
-    const list = acc[curr.department] || [];
-    list.push(curr);
-    acc[curr.department] = list;
-    return acc;
-  }, {} as Record<string, RosterAssignment[]>);
+  // Filter assignments by selected date and service
+  const filteredAssignments = React.useMemo(() => {
+    return assignments.filter((a) => {
+      const matchDate =
+        !selectedDate || selectedDate === 'ALL' || a.date === selectedDate;
+      const matchService =
+        !selectedServiceName ||
+        selectedServiceName === 'ALL' ||
+        (a.service_name && a.service_name.toLowerCase() === selectedServiceName.toLowerCase());
+      return matchDate && matchService;
+    });
+  }, [assignments, selectedDate, selectedServiceName]);
+
+  // Group filtered assignments by department
+  const groupedByDept = React.useMemo(() => {
+    return filteredAssignments.reduce((acc, curr) => {
+      const list = acc[curr.department] || [];
+      list.push(curr);
+      acc[curr.department] = list;
+      return acc;
+    }, {} as Record<string, RosterAssignment[]>);
+  }, [filteredAssignments]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
@@ -106,13 +121,22 @@ export const PrintRosterModal: React.FC<PrintRosterModalProps> = ({
             </div>
             <div>
               <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Stewards On Duty</span>
-              <span className="font-black text-emerald-900">{assignments.length} Ministers / Volunteers</span>
+              <span className="font-black text-emerald-900">{filteredAssignments.length} Ministers / Volunteers</span>
             </div>
           </div>
 
           {/* Duty Assignments Grouped by Department */}
           <div className="space-y-6">
-            {Object.entries(groupedByDept).map(([deptKey, deptAssignments]) => (
+            {filteredAssignments.length === 0 ? (
+              <div className="p-8 text-center text-slate-500 bg-slate-50 border border-dashed border-slate-300 rounded-xl text-xs">
+                <Users className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p className="font-bold text-slate-700">No duty assignments scheduled</p>
+                <p className="text-slate-500 mt-0.5">
+                  No ministers or stewards are assigned for {selectedServiceName || 'all services'} on {selectedDate}.
+                </p>
+              </div>
+            ) : (
+              Object.entries(groupedByDept).map(([deptKey, deptAssignments]) => (
               <div key={deptKey} className="border border-slate-200 rounded-xl overflow-hidden">
                 <div className="bg-emerald-950 text-white px-4 py-2 flex items-center justify-between text-xs font-bold">
                   <span className="uppercase tracking-wider">
@@ -146,7 +170,8 @@ export const PrintRosterModal: React.FC<PrintRosterModalProps> = ({
                   </tbody>
                 </table>
               </div>
-            ))}
+            ))
+          )}
           </div>
 
           {/* Ministerial Instructions */}

@@ -175,7 +175,7 @@ function mapSupabaseUserToProfile(
   const meta = user.user_metadata || {};
   const firstName = meta.first_name || (cleanEmail ? cleanEmail.split('@')[0].replace('.', ' ') : 'Staff');
   const lastName = meta.last_name || 'Member';
-  const role: UserRole = (meta.role as UserRole) || 'super_admin';
+  const role: UserRole = (meta.role as UserRole) || 'member';
   const phone = meta.phone || user.phone || undefined;
   const department = meta.department || undefined;
 
@@ -388,6 +388,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const target = usersList.find((u) => u.id === userId);
     if (!target) return false;
 
+    // SECURITY GUARD: Never allow simulating or escalating into a super_admin account!
+    if (target.role === 'super_admin') {
+      console.warn('Unauthorized simulation blocked: cannot simulate or escalate to super_admin.');
+      return false;
+    }
+
     // Preserve original super admin session before switching
     if (!impersonatingAdmin) {
       setImpersonatingAdmin(currentUser);
@@ -412,6 +418,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const effectiveAdmin = impersonatingAdmin || currentUser;
     if (effectiveAdmin.role !== 'super_admin') {
       console.warn('Unauthorized role change blocked: user lacks super_admin privileges.');
+      return;
+    }
+    // SECURITY GUARD: Cannot simulate into super_admin role (use exitSimulation instead)
+    if (role === 'super_admin') {
+      console.warn('Unauthorized simulation blocked: cannot simulate into super_admin. Use exitSimulation() instead.');
       return;
     }
     if (!impersonatingAdmin) {
@@ -580,12 +591,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             errMsg.includes('apikey') ||
             errMsg.includes('jwt');
 
-          if (errMsg.includes('already registered')) {
+          if (errMsg.includes('already registered') || errMsg.includes('user already registered')) {
             return { success: false, message: 'An account with this email address already exists. Please sign in.' };
           }
 
-          if (!isApiKeyError && (error as any).status !== 422) {
-            return { success: false, message: error.message };
+          if (!isApiKeyError) {
+            return {
+              success: false,
+              message: error.message || 'Unable to register this account. Please verify details or try signing in.',
+            };
           }
           console.warn('Supabase sign-up notice, falling back to local registration:', error.message);
           // Fall through to local registration

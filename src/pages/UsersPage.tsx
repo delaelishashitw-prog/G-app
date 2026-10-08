@@ -37,6 +37,7 @@ export const UsersPage: React.FC = () => {
     availableUsers,
     currentRole,
     currentUser,
+    impersonatingAdmin,
     startSimulation,
     createUser,
     updateUser,
@@ -46,6 +47,8 @@ export const UsersPage: React.FC = () => {
   } = useAuth();
 
   const { logAction } = useChurchData();
+
+  const isSuperAdmin = currentUser.role === 'super_admin' || impersonatingAdmin?.role === 'super_admin';
 
   // Navigation tab state
   const [activeTab, setActiveTab] = useState<'directory' | 'matrix' | 'roles_guide'>('directory');
@@ -436,6 +439,11 @@ export const UsersPage: React.FC = () => {
 
   // Handle Authorized Super Admin View Simulation
   const handleConfirmSwitch = (target: UserProfile) => {
+    if (target.role === 'super_admin') {
+      showToast('Security Alert: Super Administrator accounts are protected and cannot be simulated.', 'error');
+      setSwitchTargetUser(null);
+      return;
+    }
     const ok = startSimulation(target.id);
     if (ok) {
       logAction(
@@ -706,8 +714,10 @@ export const UsersPage: React.FC = () => {
             <span>
               Showing {filteredUsers.length} of {availableUsers.length} staff accounts
             </span>
-            <span className="text-[11px] text-slate-400 italic">
-              Tip: Click "Test Access" on any user to simulate system view under their ministerial role.
+            <span className="text-[11px] text-slate-500 italic">
+              {isSuperAdmin
+                ? 'Tip: Super Admins can click "Test Access" to simulate staff role boundaries. Super Admin accounts are root-protected.'
+                : 'Role access boundaries are strictly enforced. Contact Super Admin for privilege modifications.'}
             </span>
           </div>
 
@@ -849,18 +859,26 @@ export const UsersPage: React.FC = () => {
                         )}
                       </div>
 
-                      <button
-                        onClick={() => setSwitchTargetUser(u)}
-                        disabled={isCurrent}
-                        className={`text-[11px] font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 ${
-                          isCurrent
-                            ? 'bg-slate-100 text-slate-400 cursor-default'
-                            : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 cursor-pointer'
-                        }`}
-                      >
-                        <Eye className="w-3 h-3" />
-                        {isCurrent ? 'Current' : 'Test Access'}
-                      </button>
+                      {/* Access Simulation: restricted to Super Admin; Super Admin accounts cannot be simulated */}
+                      {isSuperAdmin && u.role !== 'super_admin' && (
+                        <button
+                          onClick={() => setSwitchTargetUser(u)}
+                          disabled={isCurrent}
+                          className={`text-[11px] font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 ${
+                            isCurrent
+                              ? 'bg-slate-100 text-slate-400 cursor-default'
+                              : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 cursor-pointer'
+                          }`}
+                        >
+                          <Eye className="w-3 h-3" />
+                          {isCurrent ? 'Current' : 'Test Access'}
+                        </button>
+                      )}
+                      {u.role === 'super_admin' && (
+                        <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-lg" title="Root administrator accounts cannot be simulated">
+                          Protected Root
+                        </span>
+                      )}
                     </div>
                   </div>
                 );
@@ -943,17 +961,24 @@ export const UsersPage: React.FC = () => {
                               >
                                 <Key className="w-3.5 h-3.5" />
                               </button>
-                              <button
-                                onClick={() => setSwitchTargetUser(u)}
-                                disabled={isCurrent}
-                                className={`text-[11px] font-bold px-2 py-1 rounded-lg transition ${
-                                  isCurrent
-                                    ? 'bg-slate-100 text-slate-400 cursor-default'
-                                    : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 cursor-pointer'
-                                }`}
-                              >
-                                {isCurrent ? 'Current' : 'Simulate'}
-                              </button>
+                              {isSuperAdmin && u.role !== 'super_admin' && (
+                                <button
+                                  onClick={() => setSwitchTargetUser(u)}
+                                  disabled={isCurrent}
+                                  className={`text-[11px] font-bold px-2 py-1 rounded-lg transition ${
+                                    isCurrent
+                                      ? 'bg-slate-100 text-slate-400 cursor-default'
+                                      : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 cursor-pointer'
+                                  }`}
+                                >
+                                  {isCurrent ? 'Current' : 'Simulate'}
+                                </button>
+                              )}
+                              {u.role === 'super_admin' && (
+                                <span className="text-[10px] font-semibold text-slate-400 px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200">
+                                  Root
+                                </span>
+                              )}
                             </div>
                           </td>
                         </tr>

@@ -122,6 +122,11 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
+    if ((regRole as string) === 'super_admin') {
+      setErrorMessage('Super Administrator accounts cannot be created via self-registration.');
+      return;
+    }
+
     setIsLoading(true);
     try {
       const res = await register({
@@ -700,8 +705,6 @@ export const LoginPage: React.FC = () => {
                     <option value="ministry_leader">Ministry Leader</option>
                     <option value="attendance_officer">Attendance Officer</option>
                     <option value="data_entry">Data Entry Clerk</option>
-                    <option value="senior_pastor">Senior Pastor</option>
-                    <option value="super_admin">Super Administrator</option>
                   </select>
                 </div>
               </div>
