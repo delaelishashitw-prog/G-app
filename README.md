@@ -31,6 +31,9 @@ The application is pre-configured and 100% ready for Vercel deployment with clie
    - `GEMINI_API_KEY`: *(Optional but recommended)* Your Google AI Studio API key for real-time generative ministerial AI.
    - `VITE_SUPABASE_URL`: *(Optional)* If syncing data with Supabase Cloud.
    - `VITE_SUPABASE_ANON_KEY`: *(Optional)* Supabase anonymous API key.
+   - `VITE_ENABLE_DEMO_AUTH`: *(Recommended: `false` in production)* Disables local/offline demo sign-ins when a secure auth provider is configured.
+   - `API_GATEWAY_KEY`: *(Optional)* Protects the backend AI API with a shared secret in production.
+   - `ALLOWED_ORIGINS`: *(Optional)* Comma-separated list of trusted frontend origins for API access.
 
 5. **Click "Deploy"**:
    - Vercel will build the frontend into `dist` and automatically deploy the serverless functions in `/api`.

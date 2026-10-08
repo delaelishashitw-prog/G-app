@@ -239,8 +239,9 @@ export async function testSupabaseConnection(
   customKey?: string
 ): Promise<{ success: boolean; latencyMs: number; message: string; tablesStatus?: 'ready' | 'tables_missing' }> {
   const startTime = Date.now();
-  const url = (customUrl || getStoredSupabaseConfig().url).trim().replace(/\/+$/, '');
-  const key = (customKey || getStoredSupabaseConfig().anonKey).trim();
+  const storedConfig = getStoredSupabaseConfig();
+  const url = (customUrl || storedConfig.url).trim().replace(/\/+$/, '');
+  const key = (customKey || storedConfig.anonKey).trim();
 
   if (!url || !key) {
     return {
@@ -251,13 +252,25 @@ export async function testSupabaseConnection(
   }
 
   try {
-    const testClient = createClient(url, key, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    });
+    const testClient =
+      !customUrl && !customKey
+        ? getSupabaseClient()
+        : createClient(url, key, {
+            auth: {
+              storageKey: `gwcc-supabase-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              persistSession: false,
+              autoRefreshToken: false,
+              detectSessionInUrl: false,
+            },
+          });
+
+    if (!testClient) {
+      return {
+        success: false,
+        latencyMs: Date.now() - startTime,
+        message: 'Could not initialize the Supabase client for this configuration.',
+      };
+    }
 
     // Test query against settings or members
     const { error: settingsError } = await testClient

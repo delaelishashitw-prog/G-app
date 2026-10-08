@@ -10,6 +10,84 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const isProductionMode = () => process.env.NODE_ENV === 'production' || process.argv.includes('--production');
+const isLocalDevelopment = !isProductionMode();
+const apiRequestCounts = new Map<string, { count: number; resetAt: number }>();
+
+function getAllowedOrigins(): string[] {
+  const configured = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set([
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:5173',
+    ...configured,
+  ]));
+}
+
+function isOriginAllowed(origin: string | undefined): boolean {
+  if (!origin) return true;
+
+  const allowedOrigins = getAllowedOrigins();
+
+  if (isLocalDevelopment) {
+    return true;
+  }
+
+  return allowedOrigins.some((allowed) => {
+    if (allowed.includes('*')) {
+      const pattern = new RegExp(`^${allowed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\*/g, '.*')}$`);
+      return pattern.test(origin);
+    }
+    return origin === allowed;
+  });
+}
+
+function enforceApiGuard(req: Request, res: Response, next: () => void): void {
+  if (!req.path.startsWith('/api')) {
+    next();
+    return;
+  }
+
+  const origin = req.get('origin');
+  if (origin && !isOriginAllowed(origin)) {
+    res.status(403).json({ error: 'Origin not allowed for this API.' });
+    return;
+  }
+
+  const gatewayKey = process.env.API_GATEWAY_KEY;
+  if (gatewayKey) {
+    const incomingKey = req.header('x-api-key');
+    if (!incomingKey || incomingKey !== gatewayKey) {
+      res.status(401).json({ error: 'Valid API key required.' });
+      return;
+    }
+  }
+
+  const clientIp = req.ip || req.headers['x-forwarded-for'] || 'unknown-client';
+  const now = Date.now();
+  const record = apiRequestCounts.get(String(clientIp)) || { count: 0, resetAt: now + 60000 };
+
+  if (now > record.resetAt) {
+    record.count = 0;
+    record.resetAt = now + 60000;
+  }
+
+  if (record.count >= 60) {
+    res.status(429).json({ error: 'Too many requests. Please try again shortly.' });
+    return;
+  }
+
+  record.count += 1;
+  apiRequestCounts.set(String(clientIp), record);
+  next();
+}
+
+app.disable('x-powered-by');
+app.use(enforceApiGuard);
 
 function startListening(targetPort: number, retries = 5): Promise<number> {
   return new Promise((resolve, reject) => {

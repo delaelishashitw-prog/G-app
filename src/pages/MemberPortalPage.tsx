@@ -21,6 +21,7 @@ import {
   Mail,
   MapPin,
   Calendar,
+  CalendarDays,
   AlertCircle,
   ChevronRight,
   ExternalLink,
@@ -662,6 +663,11 @@ export const MemberPortalPage: React.FC = () => {
     return upcomingRosterDuties[0] || memberRosterAssignments[0] || null;
   }, [upcomingRosterDuties, memberRosterAssignments]);
 
+  // Discipleship & Roster Modals & States
+  const [isCertificateModalOpen, setIsCertificateModalOpen] = useState(false);
+  const [selectedSubstituteAssignment, setSelectedSubstituteAssignment] = useState<RosterAssignment | null>(null);
+  const [rosterViewFilter, setRosterViewFilter] = useState<'upcoming' | 'all' | 'past'>('upcoming');
+
   // Displayed Duties based on selected filter (ensures duties are immediately visible)
   const displayedDuties = useMemo(() => {
     if (rosterViewFilter === 'upcoming') {
@@ -672,11 +678,6 @@ export const MemberPortalPage: React.FC = () => {
     }
     return memberRosterAssignments;
   }, [rosterViewFilter, upcomingRosterDuties, pastRosterDuties, memberRosterAssignments]);
-
-  // Discipleship & Roster Modals & States
-  const [isCertificateModalOpen, setIsCertificateModalOpen] = useState(false);
-  const [selectedSubstituteAssignment, setSelectedSubstituteAssignment] = useState<RosterAssignment | null>(null);
-  const [rosterViewFilter, setRosterViewFilter] = useState<'upcoming' | 'all' | 'past'>('upcoming');
 
   // If member has past duties but none upcoming, default filter to all so duty is immediately visible
   React.useEffect(() => {
@@ -3445,14 +3446,14 @@ export const MemberPortalPage: React.FC = () => {
                 <label className="block font-bold text-slate-700 mb-1">Giving Category</label>
                 <select
                   value={giveCategory}
-                  onChange={(e) => setGiveCategory(e.target.value as any)}
+                  onChange={(e) => setGiveCategory(e.target.value as typeof giveCategory)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
                 >
-                  <option value="tithe">Tithe (Malachi 3:10)</option>
-                  <option value="offering">Sunday Worship Offering</option>
-                  <option value="pledge">Cathedral Building Fund Pledge</option>
-                  <option value="special_seed">Sacrificial Revival Seed</option>
-                  <option value="thanksgiving">Thanksgiving / Birthday Seed</option>
+                  <option value="Tithe">Tithe (Malachi 3:10)</option>
+                  <option value="Offering">Sunday Worship Offering</option>
+                  <option value="Building Fund">Cathedral Building Fund Pledge</option>
+                  <option value="Seed">Sacrificial Revival Seed</option>
+                  <option value="Thanksgiving">Thanksgiving / Birthday Seed</option>
                 </select>
               </div>
 

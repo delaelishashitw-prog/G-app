@@ -53,6 +53,15 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const isDemoAuthEnabled = (): boolean => {
+  const configured = (import.meta.env.VITE_ENABLE_DEMO_AUTH ?? '').toString().trim().toLowerCase();
+  if (configured === 'true' || configured === '1' || configured === 'yes') {
+    return true;
+  }
+
+  return import.meta.env.DEV && configured !== 'false' && configured !== '0';
+};
+
 export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   super_admin: [
     'dashboard',
@@ -464,6 +473,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const client = getSupabaseClient();
+    if (!client && !isDemoAuthEnabled()) {
+      return {
+        success: false,
+        message: 'Production auth is disabled. Configure a secure auth backend before enabling staff sign-in.'
+      };
+    }
 
     // 1. Attempt Supabase Auth if client is configured
     if (client && password) {
@@ -536,6 +551,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // 2. Check local church staff accounts (offline / local directory)
+    if (!isDemoAuthEnabled()) {
+      return {
+        success: false,
+        message: 'Offline/local staff sign-in is disabled in production. Configure a secure auth provider.'
+      };
+    }
+
     const staff = usersList.find((u) => Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail);
     if (staff) {
       if (!password || password.trim().length < 4) {
@@ -561,6 +583,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     department?: string;
   }): Promise<{ success: boolean; message: string }> => {
     const cleanEmail = (userData.email || '').trim().toLowerCase();
+
+    if (!isDemoAuthEnabled() && !getSupabaseClient()) {
+      return {
+        success: false,
+        message: 'Self-registration is disabled in production. Contact an administrator to create the staff account.'
+      };
+    }
 
     // Check if email already exists locally
     const exists = usersList.some((u) => Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail);
@@ -677,6 +706,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     department?: string;
   }): Promise<{ success: boolean; message: string; user?: UserProfile }> => {
     const cleanEmail = (userData.email || '').trim().toLowerCase();
+
+    if (!isDemoAuthEnabled() && !getSupabaseClient()) {
+      return {
+        success: false,
+        message: 'Staff account creation is disabled in production until a secure backend is configured.'
+      };
+    }
 
     // Check if email already exists locally
     const exists = usersList.some((u) => Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail);
