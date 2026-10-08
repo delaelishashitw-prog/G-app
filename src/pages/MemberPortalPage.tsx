@@ -59,6 +59,7 @@ import {
   FoundationStudent,
   FoundationCohort,
 } from '../types/database.types';
+import { cleanGhanaPhone } from '../lib/currencyUtils';
 import { ApplyWelfareClaimModal } from '../components/welfare/ApplyWelfareClaimModal';
 import { MemberCertificateModal } from '../components/portal/MemberCertificateModal';
 import { RequestSubstituteModal } from '../components/portal/RequestSubstituteModal';
@@ -119,12 +120,52 @@ const FOUNDATION_CURRICULUM = [
   },
 ];
 
+function normalizeToISODate(dateStr: string): string {
+  if (!dateStr) return '';
+  const trimmed = dateStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  if (trimmed.includes('T')) return trimmed.split('T')[0];
+
+  const dmyMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmyMatch) {
+    const day = dmyMatch[1].padStart(2, '0');
+    const month = dmyMatch[2].padStart(2, '0');
+    const year = dmyMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  try {
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+  } catch {}
+  return trimmed;
+}
+
+function parseReportTime(timeStr: string): { hours: number; minutes: number } {
+  if (!timeStr) return { hours: 8, minutes: 0 };
+  const match = timeStr.match(/(\d{1,2}):(\d{2})(?:\s*([AP]M))?/i);
+  if (match) {
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    const ampm = match[3] ? match[3].toUpperCase() : null;
+
+    if (ampm === 'PM' && hours < 12) hours += 12;
+    if (ampm === 'AM' && hours === 12) hours = 0;
+    return { hours, minutes };
+  }
+  return { hours: 8, minutes: 0 };
+}
+
 function getReportTimeCountdown(dateStr: string, timeStr: string) {
   try {
-    const parts = (timeStr || '08:00').split(':');
-    const hours = parseInt(parts[0], 10) || 8;
-    const minutes = parseInt(parts[1], 10) || 0;
-    const targetDate = new Date(`${dateStr}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`);
+    const isoDate = normalizeToISODate(dateStr);
+    const { hours, minutes } = parseReportTime(timeStr);
+    const targetDate = new Date(`${isoDate}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`);
     const diffMs = targetDate.getTime() - Date.now();
     if (diffMs < 0) {
       return { isPast: true, text: 'Service Concluded' };
@@ -228,20 +269,48 @@ export const MemberPortalPage: React.FC = () => {
 
   // Selected Member Resolution
   const activeMember: Member | null = useMemo(() => {
-    // 1. If explicitly authenticated as a church member
-    if (currentMember && currentRole === 'member') {
+    // 1. Explicitly selected via Staff Preview Dropdown
+    if (previewMemberId) {
+      const found = members.find((m) => m.id === previewMemberId || m.member_id === previewMemberId);
+      if (found) return found;
+    }
+
+    // 2. Explicitly authenticated as a church member
+    if (currentMember) {
       return currentMember;
     }
-    // 2. If staff is authenticated AND explicitly activated preview mode
-    if (isAuthenticated && currentRole !== 'member' && isStaffPreviewing) {
-      if (previewMemberId) {
-        return members.find((m) => m.id === previewMemberId || m.member_id === previewMemberId) || members[0] || null;
+
+    // 3. If staff is authenticated, automatically link to their personal member record if present
+    if (isAuthenticated && currentUser) {
+      if (currentUser.member_id) {
+        const byMemId = members.find((m) => m.id === currentUser.member_id || m.member_id === currentUser.member_id);
+        if (byMemId) return byMemId;
       }
-      return members.find((m) => m.member_id === 'GWCC-000002') || members[0] || null;
+
+      if (currentUser.email) {
+        const byEmail = members.find((m) => m.email && m.email.toLowerCase() === currentUser.email.toLowerCase());
+        if (byEmail) return byEmail;
+      }
+
+      if (currentUser.phone) {
+        const byPhone = members.find((m) => m.phone && cleanGhanaPhone(m.phone) === cleanGhanaPhone(currentUser.phone));
+        if (byPhone) return byPhone;
+      }
+
+      const byName = members.find(
+        (m) =>
+          m.first_name.toLowerCase() === (currentUser.first_name || '').toLowerCase() &&
+          m.last_name.toLowerCase() === (currentUser.last_name || '').toLowerCase()
+      );
+      if (byName) return byName;
+
+      // When staff is logged in and browses to Member Portal, default to first member so they can audit and use Member Switcher
+      return members.find((m) => m.member_id === 'GWCC-0001' || m.member_id === 'GWCC-0002') || members[0] || null;
     }
+
     // Default: Must sign in with Member ID and PIN
     return null;
-  }, [currentMember, currentRole, isAuthenticated, isStaffPreviewing, previewMemberId, members]);
+  }, [currentMember, isAuthenticated, currentUser, previewMemberId, members]);
 
   // Member's Giving Data
   const memberGiving = useMemo(() => {
@@ -365,38 +434,256 @@ export const MemberPortalPage: React.FC = () => {
   // Member's Service Duty Roster Assignments
   const memberRosterAssignments: RosterAssignment[] = useMemo(() => {
     if (!activeMember) return [];
-    return rosterAssignments
-      .filter(
-        (r) =>
-          r.member_id === activeMember.id ||
-          r.member_id === activeMember.member_id ||
-          (r.member_name &&
-            activeMember.last_name &&
-            activeMember.first_name &&
-            r.member_name.toLowerCase().includes(activeMember.last_name.toLowerCase()) &&
-            r.member_name.toLowerCase().includes(activeMember.first_name.toLowerCase()))
-      )
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [activeMember, rosterAssignments]);
+
+    // Helper to match activeMember with an assigned duty entry
+    const isMemberAssigned = (assignedId?: string, assignedName?: string, assignedPhone?: string): boolean => {
+      if (!activeMember) return false;
+
+      // 1. Exact ID / member_id match
+      if (assignedId && assignedId.trim()) {
+        const aId = assignedId.trim();
+        if (aId === activeMember.id || aId === activeMember.member_id) return true;
+
+        // Check if assignedId matches any member record in system that matches activeMember
+        const matchedMem = members.find((m) => m.id === aId || m.member_id.toLowerCase() === aId.toLowerCase());
+        if (matchedMem && (matchedMem.id === activeMember.id || matchedMem.member_id === activeMember.member_id)) {
+          return true;
+        }
+
+        const normAssigned = aId.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const normMemberId = (activeMember.member_id || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const normId = (activeMember.id || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (normAssigned && (normAssigned === normMemberId || normAssigned === normId)) {
+          return true;
+        }
+
+        // Only compare numeric digit suffix if the ID is a known member identifier format
+        if (normAssigned.startsWith('gwcc') || normAssigned.startsWith('mem')) {
+          const numAssigned = aId.replace(/[^0-9]/g, '');
+          const numMember = (activeMember.member_id || '').replace(/[^0-9]/g, '');
+          if (numAssigned && numMember && parseInt(numAssigned, 10) === parseInt(numMember, 10)) {
+            return true;
+          }
+        }
+      }
+
+      // 2. Phone match
+      if (assignedPhone && activeMember.phone) {
+        const p1 = cleanGhanaPhone(assignedPhone);
+        const p2 = cleanGhanaPhone(activeMember.phone);
+        if (p1 && p2 && p1 === p2) return true;
+        const d1 = assignedPhone.replace(/[^0-9]/g, '').slice(-9);
+        const d2 = activeMember.phone.replace(/[^0-9]/g, '').slice(-9);
+        if (d1.length >= 8 && d2.length >= 8 && d1 === d2) return true;
+      }
+
+      // 3. Name match with titles, initials, and parentheticals stripped
+      if (assignedName && assignedName.trim()) {
+        const cleanAssigned = assignedName
+          .toLowerCase()
+          .replace(/\b(prophet|pastor|elder|deacon|deaconess|brother|sister|bro|sis|minister|rev|reverend|dr|mrs|mr|ms|evangelist)\b/gi, '')
+          .replace(/\([^)]*\)/g, '')
+          .replace(/[^a-z0-9\s]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        const f = (activeMember.first_name || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+        const l = (activeMember.last_name || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+        const full = `${f} ${l}`.trim();
+        const reverseFull = `${l} ${f}`.trim();
+
+        if (f && l && cleanAssigned.includes(f) && cleanAssigned.includes(l)) return true;
+        if (full && (cleanAssigned === full || cleanAssigned.includes(full) || full.includes(cleanAssigned))) return true;
+        if (reverseFull && (cleanAssigned === reverseFull || cleanAssigned.includes(reverseFull))) return true;
+      }
+
+      return false;
+    };
+
+    // 1. Direct explicit assignments in rosterAssignments
+    const directAssignments = rosterAssignments.filter((r) =>
+      isMemberAssigned(r.member_id, r.member_name, r.member_phone)
+    );
+
+    // 2. Derive recurring service duties for active services over the upcoming 4 weeks
+    const getUpcomingDayDate = (dayOfWeek: string, offsetWeeks = 0): string => {
+      const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const targetDay = days.indexOf((dayOfWeek || 'Sunday').toLowerCase().trim());
+      const now = new Date();
+      const currentDay = now.getDay();
+      let diff = (targetDay === -1 ? 0 : targetDay) - currentDay;
+      if (diff < 0) diff += 7;
+      diff += offsetWeeks * 7;
+      const target = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
+      const year = target.getFullYear();
+      const month = String(target.getMonth() + 1).padStart(2, '0');
+      const day = String(target.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    const serviceDerivedAssignments: RosterAssignment[] = [];
+    const activeServicesList = services.filter((s) => s.is_active !== false);
+
+    activeServicesList.forEach((s) => {
+      [0, 1, 2, 3].forEach((weekOffset) => {
+        const sDate = getUpcomingDayDate(s.day_of_week, weekOffset);
+
+        const checkAndAdd = (
+          fieldVal: string | undefined,
+          role_title: string,
+          department: RosterAssignment['department'],
+          report_time: string,
+          notes: string
+        ) => {
+          if (!fieldVal || !fieldVal.trim()) return;
+          if (isMemberAssigned(undefined, fieldVal)) {
+            const alreadyExists = directAssignments.some(
+              (a) => a.service_id === s.id && a.date === sDate
+            );
+            if (!alreadyExists) {
+              serviceDerivedAssignments.push({
+                id: `srv-duty-${s.id}-${sDate}-${role_title.slice(0, 4)}`,
+                service_id: s.id,
+                service_name: s.name,
+                date: sDate,
+                member_id: activeMember.id,
+                member_name: `${activeMember.first_name} ${activeMember.last_name}`,
+                member_phone: activeMember.phone,
+                department,
+                role_title,
+                report_time,
+                status: 'confirmed',
+                notes,
+                created_at: new Date().toISOString(),
+              });
+            }
+          }
+        };
+
+        checkAndAdd(
+          s.preacher,
+          'Preacher / Exhorter of the Word',
+          'intercessors',
+          s.start_time ? `30 mins prior (${s.start_time})` : '08:00 AM',
+          'Preaching and ministration of the Word. Pre-service prayer 30 mins prior.'
+        );
+        checkAndAdd(
+          s.service_leader,
+          'Service Moderator / Leader (MC)',
+          'ushers_protocol',
+          s.start_time ? `30 mins prior (${s.start_time})` : '08:00 AM',
+          'Coordinate order of service liturgy and church announcements.'
+        );
+        checkAndAdd(
+          s.worship_leader,
+          'Worship Team / Music Director',
+          'praise_team',
+          s.start_time ? `45 mins prior (${s.start_time})` : '07:45 AM',
+          'Band sound check and congregational worship ministration.'
+        );
+        checkAndAdd(
+          s.head_usher,
+          'Head Usher & Protocol Captain',
+          'ushers_protocol',
+          s.start_time ? `45 mins prior (${s.start_time})` : '07:45 AM',
+          'Sanctuary seating, tithes collection, and dignitary reception.'
+        );
+        checkAndAdd(
+          s.sound_media,
+          'Sound Engineer & Livestream Lead',
+          'sound_media',
+          s.start_time ? `45 mins prior (${s.start_time})` : '07:45 AM',
+          'Sound console mixing, microphone checks, and social livestream.'
+        );
+
+        if (s.order_of_service && Array.isArray(s.order_of_service)) {
+          s.order_of_service.forEach((item) => {
+            if (item.minister && isMemberAssigned(undefined, item.minister)) {
+              const alreadyExists = directAssignments.some(
+                (a) => a.service_id === s.id && a.date === sDate
+              );
+              if (!alreadyExists) {
+                serviceDerivedAssignments.push({
+                  id: `srv-liturgy-${s.id}-${sDate}-${item.id || item.order}`,
+                  service_id: s.id,
+                  service_name: s.name,
+                  date: sDate,
+                  member_id: activeMember.id,
+                  member_name: `${activeMember.first_name} ${activeMember.last_name}`,
+                  member_phone: activeMember.phone,
+                  department: 'ushers_protocol',
+                  role_title: item.title,
+                  report_time: item.time || s.start_time || '08:30 AM',
+                  status: 'confirmed',
+                  notes: item.notes || `Order of Service segment: ${item.title}`,
+                  created_at: new Date().toISOString(),
+                });
+              }
+            }
+          });
+        }
+      });
+    });
+
+    const combined = [...directAssignments, ...serviceDerivedAssignments];
+
+    // Deduplicate by service_id + date + role_title
+    const seen = new Set<string>();
+    const uniqueList: RosterAssignment[] = [];
+    combined.forEach((a) => {
+      const key = `${a.service_id}_${a.date}_${a.role_title}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueList.push(a);
+      }
+    });
+
+    return uniqueList.sort((a, b) => {
+      const dateA = normalizeToISODate(a.date);
+      const dateB = normalizeToISODate(b.date);
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      return (a.report_time || '').localeCompare(b.report_time || '');
+    });
+  }, [activeMember, rosterAssignments, services]);
 
   const upcomingRosterDuties = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
-    return memberRosterAssignments.filter((r) => r.date >= today);
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    return memberRosterAssignments.filter((r) => normalizeToISODate(r.date) >= todayStr);
   }, [memberRosterAssignments]);
 
   const pastRosterDuties = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
-    return memberRosterAssignments.filter((r) => r.date < today);
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    return memberRosterAssignments.filter((r) => normalizeToISODate(r.date) < todayStr);
   }, [memberRosterAssignments]);
 
   const nextUpcomingDuty = useMemo(() => {
-    return upcomingRosterDuties[0] || null;
-  }, [upcomingRosterDuties]);
+    return upcomingRosterDuties[0] || memberRosterAssignments[0] || null;
+  }, [upcomingRosterDuties, memberRosterAssignments]);
+
+  // Displayed Duties based on selected filter (ensures duties are immediately visible)
+  const displayedDuties = useMemo(() => {
+    if (rosterViewFilter === 'upcoming') {
+      return upcomingRosterDuties.length > 0 ? upcomingRosterDuties : memberRosterAssignments;
+    }
+    if (rosterViewFilter === 'past') {
+      return pastRosterDuties;
+    }
+    return memberRosterAssignments;
+  }, [rosterViewFilter, upcomingRosterDuties, pastRosterDuties, memberRosterAssignments]);
 
   // Discipleship & Roster Modals & States
   const [isCertificateModalOpen, setIsCertificateModalOpen] = useState(false);
   const [selectedSubstituteAssignment, setSelectedSubstituteAssignment] = useState<RosterAssignment | null>(null);
   const [rosterViewFilter, setRosterViewFilter] = useState<'upcoming' | 'all' | 'past'>('upcoming');
+
+  // If member has past duties but none upcoming, default filter to all so duty is immediately visible
+  React.useEffect(() => {
+    if (upcomingRosterDuties.length === 0 && memberRosterAssignments.length > 0 && rosterViewFilter === 'upcoming') {
+      setRosterViewFilter('all');
+    }
+  }, [upcomingRosterDuties.length, memberRosterAssignments.length]);
 
   const handleConfirmRosterAttendance = (assignmentId: string) => {
     updateRosterAssignment(assignmentId, { status: 'confirmed' });
@@ -799,8 +1086,8 @@ export const MemberPortalPage: React.FC = () => {
               </p>
               <span className="text-[10px] text-slate-500">Includes default PIN</span>
             </div>
-            <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-              {members.slice(0, 4).map((m) => {
+            <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+              {members.slice(0, 6).map((m) => {
                 const phoneDigits = (m.phone || '').replace(/[^0-9]/g, '');
                 const defaultPin = phoneDigits.slice(-4) || '1234';
                 return (
@@ -851,18 +1138,22 @@ export const MemberPortalPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 antialiased">
       {/* Top Banner: Staff Preview Mode (If logged in as administrator/pastor) */}
-      {currentRole !== 'member' && isStaffPreviewing && (
-        <div className="bg-amber-600 text-white px-4 py-2 text-xs flex flex-col sm:flex-row items-center justify-between gap-2 shadow-xs">
+      {currentRole !== 'member' && (
+        <div className="bg-gradient-to-r from-amber-700 via-amber-800 to-amber-900 text-white px-4 py-2.5 text-xs flex flex-col sm:flex-row items-center justify-between gap-2 shadow-sm border-b border-amber-600/50">
           <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4 shrink-0" />
+            <Shield className="w-4 h-4 shrink-0 text-amber-200" />
             <span>
-              <strong>Staff Administration Preview:</strong> Auditing Member Portal as{' '}
-              <strong>{activeMember.first_name} {activeMember.last_name} ({activeMember.member_id})</strong>.
+              <strong>Staff Pastoral Inspection:</strong> Auditing Member Portal as{' '}
+              <strong className="underline decoration-amber-300 font-bold">{activeMember.first_name} {activeMember.last_name} ({activeMember.member_id})</strong>
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <label htmlFor="staff-preview-select" className="text-[11px] text-amber-200 font-semibold hidden md:inline">
+              Switch Member:
+            </label>
             <select
+              id="staff-preview-select"
               value={activeMember.id}
               onChange={(e) => {
                 const target = members.find((m) => m.id === e.target.value);
@@ -871,29 +1162,28 @@ export const MemberPortalPage: React.FC = () => {
                   setPortalMember(target);
                 }
               }}
-              className="bg-amber-700 text-white text-[11px] font-semibold rounded-lg px-2 py-1 border border-amber-500 focus:outline-none"
+              className="bg-amber-950 text-white text-[11px] font-semibold rounded-lg px-2.5 py-1.5 border border-amber-500 focus:outline-none focus:ring-1 focus:ring-white cursor-pointer"
             >
               {members.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.member_id} — {m.first_name} {m.last_name}
+                  {m.member_id} — {m.first_name} {m.last_name} ({m.leadership_position || m.ministry_name || 'Member'})
                 </option>
               ))}
             </select>
 
             <button
-              onClick={() => {
-                setIsStaffPreviewing(false);
-                setPreviewMemberId('');
-              }}
-              className="px-2.5 py-1 bg-amber-800 text-white border border-amber-400 rounded-lg text-[11px] font-bold hover:bg-amber-900 transition shadow-2xs"
+              onClick={() => navigate('/services')}
+              className="px-2.5 py-1.5 bg-amber-900 hover:bg-amber-950 text-white border border-amber-500 rounded-lg text-[11px] font-bold transition shadow-xs cursor-pointer flex items-center gap-1"
+              title="Go to Services Duty Roster schedule"
             >
-              Exit Preview
+              <CalendarDays className="w-3.5 h-3.5 text-amber-300" />
+              <span>Services Roster</span>
             </button>
             <button
               onClick={() => navigate('/')}
-              className="px-2.5 py-1 bg-white text-amber-900 rounded-lg text-[11px] font-bold hover:bg-amber-50 transition shadow-2xs"
+              className="px-2.5 py-1.5 bg-white text-amber-950 rounded-lg text-[11px] font-bold hover:bg-amber-50 transition shadow-xs cursor-pointer"
             >
-              Back to Admin Dashboard
+              Dashboard
             </button>
           </div>
         </div>
@@ -1925,14 +2215,26 @@ export const MemberPortalPage: React.FC = () => {
               </p>
             </div>
 
+            {/* Filter Notice Banner if upcoming is empty but member has assignments */}
+            {rosterViewFilter === 'upcoming' && upcomingRosterDuties.length === 0 && memberRosterAssignments.length > 0 && (
+              <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-amber-900 text-xs flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5">
+                  <Clock className="w-4 h-4 text-amber-700 shrink-0" />
+                  <span>Showing all your scheduled church duties ({memberRosterAssignments.length} record{memberRosterAssignments.length > 1 ? 's' : ''}).</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setRosterViewFilter('all')}
+                  className="px-2.5 py-1 bg-amber-200 hover:bg-amber-300 rounded-lg font-bold text-[11px] transition cursor-pointer text-amber-950"
+                >
+                  View All Shifts
+                </button>
+              </div>
+            )}
+
             {/* Duty Assignments Cards Grid */}
             <div className="space-y-3">
-              {(rosterViewFilter === 'upcoming'
-                ? upcomingRosterDuties
-                : rosterViewFilter === 'past'
-                ? pastRosterDuties
-                : memberRosterAssignments
-              ).map((assignment) => {
+              {displayedDuties.map((assignment) => {
                 const deptBadge = getRosterDeptBadge(assignment.department);
                 const countdown = getReportTimeCountdown(assignment.date, assignment.report_time);
 
@@ -2036,13 +2338,33 @@ export const MemberPortalPage: React.FC = () => {
                 );
               })}
 
-              {(rosterViewFilter === 'upcoming' ? upcomingRosterDuties : memberRosterAssignments).length === 0 && (
-                <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 space-y-2">
-                  <UserCheck className="w-10 h-10 text-slate-300 mx-auto" />
-                  <p className="font-bold text-slate-700 text-sm">No Duty Assignments Found</p>
-                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                    You have no service duties scheduled for this filter. Please check back next week or connect with your department coordinator.
-                  </p>
+              {displayedDuties.length === 0 && (
+                <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 space-y-3">
+                  <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-800 mx-auto flex items-center justify-center">
+                    <UserCheck className="w-6 h-6 text-emerald-700" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="font-bold text-slate-800 text-sm">
+                      {rosterViewFilter === 'past' ? 'No Past Service Duties' : 'No Duty Assignments Found'}
+                    </p>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                      {rosterViewFilter === 'past'
+                        ? 'You have no past completed duty records.'
+                        : memberRosterAssignments.length > 0
+                        ? `You have ${memberRosterAssignments.length} total scheduled duty record(s).`
+                        : `No service duties are currently scheduled for ${activeMember.first_name} ${activeMember.last_name}. Please connect with your department head or church secretariat.`}
+                    </p>
+                  </div>
+                  {memberRosterAssignments.length > 0 && rosterViewFilter !== 'all' && (
+                    <button
+                      type="button"
+                      onClick={() => setRosterViewFilter('all')}
+                      className="px-4 py-2 bg-emerald-800 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer inline-flex items-center gap-1.5"
+                    >
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span>View All Duties ({memberRosterAssignments.length})</span>
+                    </button>
+                  )}
                 </div>
               )}
             </div>

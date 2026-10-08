@@ -194,6 +194,8 @@ export interface ChurchService {
   service_leader?: string;
   preacher?: string;
   worship_leader?: string;
+  head_usher?: string;
+  sound_media?: string;
   expected_attendance?: number;
   order_of_service?: ServiceProgramItem[];
   description?: string;

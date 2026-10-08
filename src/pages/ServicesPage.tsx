@@ -56,6 +56,7 @@ export const ServicesPage: React.FC = () => {
     addRosterAssignment,
     updateRosterAssignment,
     deleteRosterAssignment,
+    batchAddOrUpdateRosterAssignments,
     rosterConflicts,
   } = useChurchData();
   const { success, info } = useToast();
@@ -217,8 +218,15 @@ export const ServicesPage: React.FC = () => {
     updateService(serviceId, { order_of_service: orderOfService });
   };
 
-  const handleSaveDutyRoster = (serviceId: string, updates: Partial<ChurchService>) => {
+  const handleSaveDutyRoster = (
+    serviceId: string,
+    updates: Partial<ChurchService>,
+    newAssignments?: Omit<RosterAssignment, 'id' | 'created_at'>[]
+  ) => {
     updateService(serviceId, updates);
+    if (newAssignments && newAssignments.length > 0) {
+      batchAddOrUpdateRosterAssignments(newAssignments);
+    }
   };
 
   return (
@@ -1121,6 +1129,7 @@ export const ServicesPage: React.FC = () => {
         <DutyRosterModal
           service={rosterService}
           members={members}
+          existingAssignments={rosterAssignments}
           onSave={handleSaveDutyRoster}
           onClose={() => setRosterService(null)}
         />

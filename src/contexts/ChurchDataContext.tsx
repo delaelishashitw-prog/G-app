@@ -250,6 +250,7 @@ interface ChurchDataContextType {
   addRosterAssignment: (record: Omit<RosterAssignment, 'id' | 'created_at'>) => RosterAssignment;
   updateRosterAssignment: (id: string, updates: Partial<RosterAssignment>) => void;
   deleteRosterAssignment: (id: string) => void;
+  batchAddOrUpdateRosterAssignments: (records: Omit<RosterAssignment, 'id' | 'created_at'>[]) => void;
   rosterConflicts: RosterConflict[];
 
   // Foundation School & Believers Academy Discipleship
@@ -341,7 +342,10 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   });
   const [members, setMembers] = useState<Member[]>(() => {
     const loaded = loadFromStorage<Member[]>('members', []);
-    return loaded && loaded.length > 0 ? loaded : sampleMembers;
+    if (!loaded || loaded.length === 0) return sampleMembers;
+    const existingIds = new Set(loaded.map((m) => m.id));
+    const missing = sampleMembers.filter((m) => !existingIds.has(m.id));
+    return missing.length > 0 ? [...loaded, ...missing] : loaded;
   });
   const [visitors, setVisitors] = useState<Visitor[]>(() => {
     const loaded = loadFromStorage<Visitor[]>('visitors', []);
@@ -426,7 +430,10 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const [rosterAssignments, setRosterAssignments] = useState<RosterAssignment[]>(() => {
     const loaded = loadFromStorage<RosterAssignment[]>('rosterAssignments', []);
-    return loaded && loaded.length > 0 ? loaded : sampleRosterAssignments;
+    if (!loaded || loaded.length === 0) return sampleRosterAssignments;
+    const existingIds = new Set(loaded.map((r) => r.id));
+    const missing = sampleRosterAssignments.filter((r) => !existingIds.has(r.id));
+    return missing.length > 0 ? [...loaded, ...missing] : loaded;
   });
 
   const [foundationCohorts, setFoundationCohorts] = useState<FoundationCohort[]>(() => {
@@ -2469,6 +2476,46 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   };
 
+  const batchAddOrUpdateRosterAssignments = (
+    records: Omit<RosterAssignment, 'id' | 'created_at'>[]
+  ) => {
+    if (!records || records.length === 0) return;
+    setRosterAssignments((prev) => {
+      const nextList = [...prev];
+      records.forEach((record, idx) => {
+        const existingIdx = nextList.findIndex(
+          (a) =>
+            a.service_id === record.service_id &&
+            a.date === record.date &&
+            (a.role_title.toLowerCase() === record.role_title.toLowerCase() ||
+              (a.department === record.department &&
+                a.role_title.toLowerCase().slice(0, 5) === record.role_title.toLowerCase().slice(0, 5)))
+        );
+        if (existingIdx >= 0) {
+          nextList[existingIdx] = {
+            ...nextList[existingIdx],
+            ...record,
+          };
+        } else {
+          const newAssignment: RosterAssignment = {
+            ...record,
+            id: `rst-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`,
+            created_at: new Date().toISOString(),
+          };
+          nextList.unshift(newAssignment);
+        }
+      });
+      return nextList;
+    });
+
+    logAction(
+      'UPDATE_ROSTER_DUTY',
+      'Services',
+      `Synchronized ${records.length} duty roster assignment(s) for service schedule.`,
+      records[0]?.service_id || 'roster'
+    );
+  };
+
   // Automated Roster Conflict Detection
   const rosterConflicts = React.useMemo<RosterConflict[]>(() => {
     const conflicts: RosterConflict[] = [];
@@ -2814,6 +2861,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       addRosterAssignment,
       updateRosterAssignment,
       deleteRosterAssignment,
+      batchAddOrUpdateRosterAssignments,
       rosterConflicts,
       foundationCohorts,
       createFoundationCohort,

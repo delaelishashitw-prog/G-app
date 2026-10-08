@@ -237,6 +237,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (found) return found;
       }
     } catch {}
+    const sampleFound = sampleMembers.find((m) => m.id === activeMemberId || m.member_id === activeMemberId);
+    if (sampleFound) return sampleFound;
     return null;
   });
 
