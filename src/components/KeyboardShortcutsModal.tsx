@@ -35,14 +35,14 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({
   };
 
   const filteredShortcuts = useMemo(() => {
-    const q = filterQuery.toLowerCase().trim();
+    const q = (filterQuery || '').toLowerCase().trim();
     if (!q) return shortcuts;
     return shortcuts.filter(
       (s) =>
-        s.label.toLowerCase().includes(q) ||
-        s.description.toLowerCase().includes(q) ||
-        s.keys.some((k) => k.toLowerCase().includes(q)) ||
-        s.category.toLowerCase().includes(q)
+        (s.label || '').toLowerCase().includes(q) ||
+        (s.description || '').toLowerCase().includes(q) ||
+        s.keys.some((k) => (k || '').toLowerCase().includes(q)) ||
+        (s.category || '').toLowerCase().includes(q)
     );
   }, [shortcuts, filterQuery]);
 

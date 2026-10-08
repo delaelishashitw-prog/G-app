@@ -96,12 +96,12 @@ export const ServicesPage: React.FC = () => {
     services.forEach((s) => {
       // Find matching attendance
       const matchingAtt = attendance.filter(
-        (a) => a.service_id === s.id || (a.service_name && a.service_name.toLowerCase().includes(s.name.toLowerCase().slice(0, 15)))
+        (a) => a.service_id === s.id || (a.service_name && a.service_name.toLowerCase().includes((s.name || '').toLowerCase().slice(0, 15)))
       );
 
       // Find matching giving
       const matchingGiving = giving.filter(
-        (g) => g.service_id === s.id || (g.service_name && g.service_name.toLowerCase().includes(s.name.toLowerCase().slice(0, 15)))
+        (g) => g.service_id === s.id || (g.service_name && g.service_name.toLowerCase().includes((s.name || '').toLowerCase().slice(0, 15)))
       );
 
       const givingTotal = matchingGiving.reduce((sum, g) => sum + g.amount, 0);
@@ -130,11 +130,11 @@ export const ServicesPage: React.FC = () => {
   // Filtered services
   const filteredServices = useMemo(() => {
     return services.filter((s) => {
-      const term = searchTerm.toLowerCase();
+      const term = (searchTerm || '').toLowerCase();
       const matchesSearch =
         !term ||
-        s.name.toLowerCase().includes(term) ||
-        s.day_of_week.toLowerCase().includes(term) ||
+        (s.name || '').toLowerCase().includes(term) ||
+        (s.day_of_week || '').toLowerCase().includes(term) ||
         (s.venue && s.venue.toLowerCase().includes(term)) ||
         (s.preacher && s.preacher.toLowerCase().includes(term)) ||
         (s.description && s.description.toLowerCase().includes(term));
@@ -868,14 +868,16 @@ export const ServicesPage: React.FC = () => {
             <div className="space-y-4">
               {/* Filter roster assignments */}
               {(() => {
+                const term = (searchTerm || '').toLowerCase();
                 const filtered = rosterAssignments.filter((a) => {
                   const matchService = rosterServiceFilter === 'ALL' || a.service_id === rosterServiceFilter;
                   const matchDept = rosterDeptFilter === 'ALL' || a.department === rosterDeptFilter;
                   const matchDate = rosterDateFilter === 'ALL' || a.date === rosterDateFilter;
                   const matchSearch =
-                    a.member_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                    a.role_title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                    (a.notes && a.notes.toLowerCase().includes(searchTerm.toLowerCase()));
+                    !term ||
+                    (a.member_name || '').toLowerCase().includes(term) ||
+                    (a.role_title || '').toLowerCase().includes(term) ||
+                    (a.notes && a.notes.toLowerCase().includes(term));
                   return matchService && matchDept && matchDate && matchSearch;
                 });
 

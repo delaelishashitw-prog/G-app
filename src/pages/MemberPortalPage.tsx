@@ -252,6 +252,8 @@ export const MemberPortalPage: React.FC = () => {
           g.member_id === activeMember.id ||
           g.member_id === activeMember.member_id ||
           (g.donor_name &&
+            activeMember.last_name &&
+            activeMember.first_name &&
             g.donor_name.toLowerCase().includes(activeMember.last_name.toLowerCase()) &&
             g.donor_name.toLowerCase().includes(activeMember.first_name.toLowerCase()))
       )
@@ -264,7 +266,7 @@ export const MemberPortalPage: React.FC = () => {
 
   const titheGiven = useMemo(() => {
     return memberGiving
-      .filter((g) => g.category.toLowerCase() === 'tithe')
+      .filter((g) => (g.category || '').toLowerCase() === 'tithe')
       .reduce((sum, g) => sum + (Number(g.amount) || 0), 0);
   }, [memberGiving]);
 
@@ -275,7 +277,7 @@ export const MemberPortalPage: React.FC = () => {
       (p) =>
         p.member_id === activeMember.id ||
         p.member_id === activeMember.member_id ||
-        (p.member_name && p.member_name.toLowerCase().includes(activeMember.last_name.toLowerCase()))
+        (p.member_name && activeMember.last_name && p.member_name.toLowerCase().includes(activeMember.last_name.toLowerCase()))
     );
   }, [activeMember, pledges]);
 
@@ -287,7 +289,7 @@ export const MemberPortalPage: React.FC = () => {
         (a) =>
           a.member_id === activeMember.id ||
           a.member_id === activeMember.member_id ||
-          (a.member_name && a.member_name.toLowerCase().includes(activeMember.last_name.toLowerCase()))
+          (a.member_name && activeMember.last_name && a.member_name.toLowerCase().includes(activeMember.last_name.toLowerCase()))
       )
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [activeMember, attendance]);
@@ -300,7 +302,7 @@ export const MemberPortalPage: React.FC = () => {
         (p) =>
           p.member_id === activeMember.id ||
           p.member_id === activeMember.member_id ||
-          (p.requester_name && p.requester_name.toLowerCase().includes(activeMember.last_name.toLowerCase()))
+          (p.requester_name && activeMember.last_name && p.requester_name.toLowerCase().includes(activeMember.last_name.toLowerCase()))
       )
       .sort((a, b) => new Date(b.created_at || b.date_submitted).getTime() - new Date(a.created_at || a.date_submitted).getTime());
   }, [activeMember, prayerRequests]);
@@ -352,6 +354,8 @@ export const MemberPortalPage: React.FC = () => {
           s.member_id === activeMember.id ||
           s.member_id === activeMember.member_id ||
           (s.member_name &&
+            activeMember.last_name &&
+            activeMember.first_name &&
             s.member_name.toLowerCase().includes(activeMember.last_name.toLowerCase()) &&
             s.member_name.toLowerCase().includes(activeMember.first_name.toLowerCase()))
       ) || null
@@ -367,6 +371,8 @@ export const MemberPortalPage: React.FC = () => {
           r.member_id === activeMember.id ||
           r.member_id === activeMember.member_id ||
           (r.member_name &&
+            activeMember.last_name &&
+            activeMember.first_name &&
             r.member_name.toLowerCase().includes(activeMember.last_name.toLowerCase()) &&
             r.member_name.toLowerCase().includes(activeMember.first_name.toLowerCase()))
       )
@@ -2865,7 +2871,7 @@ export const MemberPortalPage: React.FC = () => {
                   (a) =>
                     a.member_id === activeMember.id ||
                     a.member_id === activeMember.member_id ||
-                    a.name.toLowerCase().includes(activeMember.last_name.toLowerCase())
+                    (a.name && activeMember.last_name && a.name.toLowerCase().includes(activeMember.last_name.toLowerCase()))
                 );
 
                 return (

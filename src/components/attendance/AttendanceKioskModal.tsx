@@ -62,9 +62,9 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
       .filter((m) => !m.is_archived)
       .filter(
         (m) =>
-          m.first_name.toLowerCase().includes(term) ||
-          m.last_name.toLowerCase().includes(term) ||
-          m.member_id.toLowerCase().includes(term) ||
+          (m.first_name || '').toLowerCase().includes(term) ||
+          (m.last_name || '').toLowerCase().includes(term) ||
+          (m.member_id || '').toLowerCase().includes(term) ||
           (m.phone && m.phone.includes(term))
       )
       .slice(0, 8)

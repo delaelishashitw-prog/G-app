@@ -180,7 +180,7 @@ export const MinistriesPage: React.FC = () => {
       (m) =>
         !m.is_archived &&
         (m.ministry_id === selectedMinistry.id ||
-          m.ministry_name?.toLowerCase() === selectedMinistry.name.toLowerCase())
+          (m.ministry_name && selectedMinistry.name && m.ministry_name.toLowerCase() === selectedMinistry.name.toLowerCase()))
     );
   }, [members, selectedMinistry]);
 
@@ -190,10 +190,10 @@ export const MinistriesPage: React.FC = () => {
     const q = rosterSearch.toLowerCase();
     return currentMinistryMembers.filter(
       (m) =>
-        m.first_name.toLowerCase().includes(q) ||
-        m.last_name.toLowerCase().includes(q) ||
-        m.member_id.toLowerCase().includes(q) ||
-        m.phone.includes(q) ||
+        (m.first_name || '').toLowerCase().includes(q) ||
+        (m.last_name || '').toLowerCase().includes(q) ||
+        (m.member_id || '').toLowerCase().includes(q) ||
+        (m.phone && m.phone.includes(q)) ||
         (m.leadership_position && m.leadership_position.toLowerCase().includes(q))
     );
   }, [currentMinistryMembers, rosterSearch]);
@@ -204,7 +204,7 @@ export const MinistriesPage: React.FC = () => {
       // Search text match
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
-        const nameMatch = min.name.toLowerCase().includes(q);
+        const nameMatch = (min.name || '').toLowerCase().includes(q);
         const descMatch = min.description?.toLowerCase().includes(q);
         const leaderMatch = min.leader_name?.toLowerCase().includes(q);
         if (!nameMatch && !descMatch && !leaderMatch) return false;
@@ -655,7 +655,7 @@ export const MinistriesPage: React.FC = () => {
             const assignedMembers = members.filter(
               (m) =>
                 !m.is_archived &&
-                (m.ministry_id === min.id || m.ministry_name?.toLowerCase() === min.name.toLowerCase())
+                (m.ministry_id === min.id || (m.ministry_name && min.name && m.ministry_name.toLowerCase() === min.name.toLowerCase()))
             );
             const volunteerCount = Math.max(assignedMembers.length, min.member_count || 0);
             const isSelected = selectedMinistry?.id === min.id;
@@ -771,7 +771,7 @@ export const MinistriesPage: React.FC = () => {
                   const assignedCount = members.filter(
                     (m) =>
                       !m.is_archived &&
-                      (m.ministry_id === min.id || m.ministry_name?.toLowerCase() === min.name.toLowerCase())
+                      (m.ministry_id === min.id || (m.ministry_name && min.name && m.ministry_name.toLowerCase() === min.name.toLowerCase()))
                   ).length;
                   const count = Math.max(assignedCount, min.member_count || 0);
                   const isSelected = selectedMinistry?.id === min.id;

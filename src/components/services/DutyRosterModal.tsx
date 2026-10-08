@@ -37,9 +37,11 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
 
   const createWhatsAppLink = (ministerName: string, role: string) => {
     // Find member phone if matches
+    const minLower = (ministerName || '').toLowerCase();
     const matched = members.find(
-      (m) => `${m.first_name} ${m.last_name}`.toLowerCase() === ministerName.toLowerCase() ||
-             ministerName.toLowerCase().includes(m.first_name.toLowerCase())
+      (m) =>
+        `${m.first_name || ''} ${m.last_name || ''}`.toLowerCase() === minLower ||
+        (m.first_name && minLower.includes(m.first_name.toLowerCase()))
     );
     const phone = matched?.phone ? cleanGhanaPhone(matched.phone) : '233240000000';
     const message = `Calvary greetings from Greater Works City Church! This is a reminder that you are scheduled on duty as [${role}] for ${service.name} this ${service.day_of_week} (${service.start_time} - ${service.end_time} GMT) at the Main Sanctuary. Please arrive 30 minutes prior for pre-service prayer. God bless you!`;

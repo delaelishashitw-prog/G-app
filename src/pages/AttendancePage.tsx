@@ -239,9 +239,9 @@ export const AttendancePage: React.FC = () => {
       .filter((m) => !m.is_archived)
       .filter(
         (m) =>
-          m.first_name.toLowerCase().includes(term) ||
-          m.last_name.toLowerCase().includes(term) ||
-          m.member_id.toLowerCase().includes(term) ||
+          (m.first_name || '').toLowerCase().includes(term) ||
+          (m.last_name || '').toLowerCase().includes(term) ||
+          (m.member_id || '').toLowerCase().includes(term) ||
           (m.phone && m.phone.includes(term))
       )
       .slice(0, 10);
@@ -321,16 +321,16 @@ export const AttendancePage: React.FC = () => {
       list = list.filter(
         (m) =>
           m.ministry_id === selectedMinistryId ||
-          (selectedMin && m.ministry_name?.toLowerCase() === selectedMin.name.toLowerCase())
+          (selectedMin && m.ministry_name?.toLowerCase() === (selectedMin.name || '').toLowerCase())
       );
     }
     if (batchSearchTerm.trim()) {
       const term = batchSearchTerm.toLowerCase();
       list = list.filter(
         (m) =>
-          m.first_name.toLowerCase().includes(term) ||
-          m.last_name.toLowerCase().includes(term) ||
-          m.member_id.toLowerCase().includes(term) ||
+          (m.first_name || '').toLowerCase().includes(term) ||
+          (m.last_name || '').toLowerCase().includes(term) ||
+          (m.member_id || '').toLowerCase().includes(term) ||
           (m.phone && m.phone.includes(term))
       );
     }
@@ -935,10 +935,10 @@ export const AttendancePage: React.FC = () => {
                       if (!childSearchTerm.trim()) return true;
                       const term = childSearchTerm.toLowerCase();
                       return (
-                        c.child_name.toLowerCase().includes(term) ||
-                        c.security_code.toLowerCase().includes(term) ||
-                        c.parent_name.toLowerCase().includes(term) ||
-                        c.parent_phone.includes(term)
+                        (c.child_name || '').toLowerCase().includes(term) ||
+                        (c.security_code || '').toLowerCase().includes(term) ||
+                        (c.parent_name || '').toLowerCase().includes(term) ||
+                        (c.parent_phone || '').includes(term)
                       );
                     })
                     .map((rec) => (

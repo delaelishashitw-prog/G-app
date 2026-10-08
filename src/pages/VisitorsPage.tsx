@@ -122,8 +122,8 @@ export const VisitorsPage: React.FC = () => {
         const term = searchTerm.toLowerCase().trim();
         const matchesSearch =
           !term ||
-          v.full_name.toLowerCase().includes(term) ||
-          v.phone.includes(term) ||
+          (v.full_name || '').toLowerCase().includes(term) ||
+          (v.phone && v.phone.includes(term)) ||
           (v.address && v.address.toLowerCase().includes(term)) ||
           (v.email && v.email.toLowerCase().includes(term)) ||
           (v.invited_by && v.invited_by.toLowerCase().includes(term)) ||

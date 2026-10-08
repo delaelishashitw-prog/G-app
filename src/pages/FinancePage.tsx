@@ -432,7 +432,7 @@ export const FinancePage: React.FC = () => {
   // Dynamic budget spent mapper: recalculates spend from matching recorded expenses!
   const computedBudgets = useMemo(() => {
     return departmentBudgets.map((dept) => {
-      const dName = dept.name.toLowerCase();
+      const dName = (dept.name || '').toLowerCase();
       // Match with actual expenses recorded
       const matchingExpenses = expenses.filter((e) => {
         const cat = (e.category || '').toLowerCase();

@@ -118,12 +118,14 @@ export const PastoralCarePage: React.FC = () => {
 
   // Filtered Visitations
   const filteredVisitations = useMemo(() => {
+    const q = (visitationSearch || '').toLowerCase();
     return pastoralVisitations.filter((v) => {
       const matchSearch =
-        v.member_name.toLowerCase().includes(visitationSearch.toLowerCase()) ||
-        v.location.toLowerCase().includes(visitationSearch.toLowerCase()) ||
-        v.pastor_in_charge.toLowerCase().includes(visitationSearch.toLowerCase()) ||
-        (v.notes && v.notes.toLowerCase().includes(visitationSearch.toLowerCase()));
+        !q ||
+        (v.member_name || '').toLowerCase().includes(q) ||
+        (v.location || '').toLowerCase().includes(q) ||
+        (v.pastor_in_charge || '').toLowerCase().includes(q) ||
+        (v.notes && v.notes.toLowerCase().includes(q));
       const matchType = visitationTypeFilter === 'ALL' || v.visitation_type === visitationTypeFilter;
       const matchStatus = visitationStatusFilter === 'ALL' || v.status === visitationStatusFilter;
       return matchSearch && matchType && matchStatus;
@@ -132,11 +134,13 @@ export const PastoralCarePage: React.FC = () => {
 
   // Filtered Counseling Sessions
   const filteredCounseling = useMemo(() => {
+    const q = (counselingSearch || '').toLowerCase();
     return counselingSessions.filter((c) => {
       const matchSearch =
-        c.member_name.toLowerCase().includes(counselingSearch.toLowerCase()) ||
-        c.counselor_name.toLowerCase().includes(counselingSearch.toLowerCase()) ||
-        c.key_discussion.toLowerCase().includes(counselingSearch.toLowerCase());
+        !q ||
+        (c.member_name || '').toLowerCase().includes(q) ||
+        (c.counselor_name || '').toLowerCase().includes(q) ||
+        (c.key_discussion || '').toLowerCase().includes(q);
       const matchType = counselingTypeFilter === 'ALL' || c.session_type === counselingTypeFilter;
       return matchSearch && matchType;
     });
@@ -144,11 +148,13 @@ export const PastoralCarePage: React.FC = () => {
 
   // Filtered Prayer Petitions
   const filteredPrayers = useMemo(() => {
+    const q = (prayerSearch || '').toLowerCase();
     return prayerRequests.filter((p) => {
       const matchSearch =
-        p.requester_name.toLowerCase().includes(prayerSearch.toLowerCase()) ||
-        p.request.toLowerCase().includes(prayerSearch.toLowerCase()) ||
-        (p.testimony && p.testimony.toLowerCase().includes(prayerSearch.toLowerCase()));
+        !q ||
+        (p.requester_name || '').toLowerCase().includes(q) ||
+        (p.request || '').toLowerCase().includes(q) ||
+        (p.testimony && p.testimony.toLowerCase().includes(q));
       const matchCategory = prayerCategoryFilter === 'ALL' || p.category === prayerCategoryFilter;
       const matchStatus = prayerStatusFilter === 'ALL' || p.status === prayerStatusFilter;
       return matchSearch && matchCategory && matchStatus;

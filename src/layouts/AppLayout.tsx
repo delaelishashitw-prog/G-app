@@ -15,7 +15,14 @@ import { useToast } from '../contexts/ToastContext';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 
 export const AppLayout: React.FC = () => {
-  const { currentRole, isAuthenticated } = useAuth();
+  const {
+    currentRole,
+    currentUser,
+    isAuthenticated,
+    isSimulating,
+    impersonatingAdmin,
+    exitSimulation,
+  } = useAuth();
   const { refreshData } = useChurchData();
   const { success, warning } = useToast();
   const location = useLocation();
@@ -102,15 +109,22 @@ export const AppLayout: React.FC = () => {
           onOpenShortcutsHelp={() => setShortcutsHelpOpen(true)}
         />
 
-        {/* Optional Role testing banner if not super admin */}
-        {currentRole !== 'super_admin' && (
-          <div className="bg-amber-500/10 dark:bg-amber-950/30 border-b border-amber-300 dark:border-amber-800/60 px-4 py-1.5 flex items-center justify-between text-xs text-amber-900 dark:text-amber-200">
+        {/* Authorized RBAC Simulation Banner (Active only when Super Admin is testing a user or role) */}
+        {isSimulating && impersonatingAdmin && (
+          <div className="bg-amber-500 text-slate-950 border-b border-amber-600 px-4 py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs font-semibold shadow-xs z-30">
             <div className="flex items-center gap-2">
-              <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
+              <ShieldAlert className="w-4 h-4 text-slate-950 shrink-0" />
               <span>
-                <strong>Role Preview Active:</strong> You are browsing with <em>{currentRole.replace('_', ' ').toUpperCase()}</em> permissions. Use the profile dropdown in the top-right to switch roles.
+                <strong>RBAC Simulation Active:</strong> Currently previewing system as{' '}
+                <span className="underline font-bold">{currentUser.first_name} {currentUser.last_name}</span> ({currentRole.replace('_', ' ').toUpperCase()}). Actions are simulated under this role's security boundary.
               </span>
             </div>
+            <button
+              onClick={exitSimulation}
+              className="self-start sm:self-auto px-3 py-1 bg-slate-950 hover:bg-slate-900 text-amber-300 hover:text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0"
+            >
+              Exit Simulation & Return to Super Admin ({impersonatingAdmin.first_name})
+            </button>
           </div>
         )}
 

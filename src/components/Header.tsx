@@ -21,6 +21,7 @@ import {
   WifiOff,
   Keyboard,
   RefreshCw,
+  ShieldAlert,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
@@ -58,7 +59,15 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAssistant,
   onOpenShortcutsHelp,
 }) => {
-  const { currentUser, currentRole, setCurrentRole, availableUsers, switchUser, logout } = useAuth();
+  const {
+    currentUser,
+    currentRole,
+    logout,
+    isSimulating,
+    impersonatingAdmin,
+    exitSimulation,
+    canAccess,
+  } = useAuth();
   const {
     settings,
     visitors,
@@ -396,90 +405,83 @@ export const Header: React.FC<HeaderProps> = ({
             <>
               <div className="fixed inset-0 z-40" onClick={() => setProfileOpen(false)} />
               <div className="absolute right-0 mt-2 w-72 bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
-                <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800">
+                <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800">
                   <p className="text-sm font-bold text-slate-900 dark:text-white">
                     {currentUser.first_name} {currentUser.last_name}
                   </p>
                   <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{currentUser.email}</p>
-                  <div className="mt-1.5 flex items-center gap-2">
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded border ${ROLE_LABELS[currentRole].color}`}>
-                      Active Role: {ROLE_LABELS[currentRole].title}
+                  <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded border inline-flex items-center gap-1 ${ROLE_LABELS[currentRole]?.color || 'bg-slate-100 text-slate-700 border-slate-200'}`}>
+                      <Shield className="w-3 h-3" />
+                      {ROLE_LABELS[currentRole]?.title || currentRole}
                     </span>
+                    {currentUser.department && (
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded font-medium truncate max-w-[150px]">
+                        {currentUser.department}
+                      </span>
+                    )}
                   </div>
                 </div>
 
-                {/* Quick Role Switcher for Testing/Reviewing RBAC */}
-                <div className="px-4 py-2 bg-slate-50/80 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                      <Shield className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                      Role-Based Access Tester
-                    </span>
+                {/* If an authorized Super Admin is in active simulation mode */}
+                {isSimulating && impersonatingAdmin && (
+                  <div className="px-4 py-2.5 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800/80">
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
+                      <ShieldAlert className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                      <span>RBAC Simulation Active</span>
+                    </div>
+                    <p className="text-[10px] text-amber-800 dark:text-amber-300 mb-2 leading-relaxed">
+                      Testing views as <strong>{currentUser.first_name}</strong>. Primary account: <strong>{impersonatingAdmin.first_name}</strong> (Super Admin).
+                    </p>
+                    <button
+                      onClick={() => {
+                        exitSimulation();
+                        setProfileOpen(false);
+                      }}
+                      className="w-full py-1.5 px-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                    >
+                      Exit Simulation & Restore Admin
+                    </button>
                   </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-2">
-                    Switch role to test live system permissions & views:
-                  </p>
-                  <select
-                    value={currentRole}
-                    onChange={(e) => {
-                      setCurrentRole(e.target.value as UserRole);
-                    }}
-                    className="w-full text-xs font-medium bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:outline-emerald-600 focus:ring-1 focus:ring-emerald-600"
-                  >
-                    <option value="super_admin">Super Admin (Full Access)</option>
-                    <option value="senior_pastor">Senior Pastor</option>
-                    <option value="administrator">Administrator</option>
-                    <option value="finance_officer">Finance Officer</option>
-                    <option value="pastor">Pastor</option>
-                    <option value="ministry_leader">Ministry Leader</option>
-                    <option value="attendance_officer">Attendance Officer</option>
-                    <option value="data_entry">Data Entry</option>
-                  </select>
+                )}
+
+                {/* Secure Account Navigation */}
+                <div className="p-2 border-b border-slate-100 dark:border-slate-800 space-y-0.5">
+                  {canAccess('users') && (
+                    <Link
+                      to="/users"
+                      onClick={() => setProfileOpen(false)}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                    >
+                      <Shield className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Staff Directory & Access Control</span>
+                    </Link>
+                  )}
+                  {canAccess('settings') && (
+                    <Link
+                      to="/settings"
+                      onClick={() => setProfileOpen(false)}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                    >
+                      <User className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Church & Account Settings</span>
+                    </Link>
+                  )}
                 </div>
 
-                {/* Switch User Profile */}
-                <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 block mb-1">
-                    Switch Active Staff Member
-                  </span>
-                  <div className="space-y-1 max-h-36 overflow-y-auto">
-                    {availableUsers.map((u) => (
-                      <button
-                        key={u.id}
-                        onClick={() => {
-                          switchUser(u.id);
-                          setProfileOpen(false);
-                        }}
-                        className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition ${
-                          u.id === currentUser.id
-                            ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-900 dark:text-emerald-300 font-bold'
-                            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-                        }`}
-                      >
-                        <span className="truncate">
-                          {u.first_name} {u.last_name}
-                        </span>
-                        <span className="text-[10px] text-slate-400 capitalize">
-                          {u.role.replace('_', ' ')}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="p-2 border-t border-slate-100 dark:border-slate-800 space-y-1">
+                <div className="p-2 space-y-1">
                   <button
                     onClick={async () => {
                       setProfileOpen(false);
                       await logout();
                     }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition"
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg transition cursor-pointer"
                   >
-                    <LogOut className="w-3.5 h-3.5 text-red-600 dark:text-red-400" />
+                    <LogOut className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
                     <span>Sign Out of Staff Portal</span>
                   </button>
                   <div className="px-2 py-0.5 text-[10px] text-slate-400 dark:text-slate-500">
-                    Church Management System • City, Country
+                    Greater Works City Church • Staff Back-Office
                   </div>
                 </div>
               </div>

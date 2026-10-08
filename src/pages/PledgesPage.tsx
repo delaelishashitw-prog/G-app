@@ -74,8 +74,8 @@ export const PledgesPage: React.FC = () => {
         // Search Term Filter
         if (searchTerm) {
           const term = searchTerm.toLowerCase();
-          const matchName = p.member_name.toLowerCase().includes(term);
-          const matchCampaign = p.campaign_name.toLowerCase().includes(term);
+          const matchName = (p.member_name || '').toLowerCase().includes(term);
+          const matchCampaign = (p.campaign_name || '').toLowerCase().includes(term);
           const matchPhone = (p.member_phone || '').includes(term);
           const matchNotes = (p.notes || '').toLowerCase().includes(term);
           if (!matchName && !matchCampaign && !matchPhone && !matchNotes) {

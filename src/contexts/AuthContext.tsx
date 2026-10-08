@@ -10,6 +10,10 @@ interface AuthContextType {
   setCurrentRole: (role: UserRole) => void;
   availableUsers: UserProfile[];
   switchUser: (userId: string) => void;
+  isSimulating: boolean;
+  impersonatingAdmin: UserProfile | null;
+  startSimulation: (userId: string) => boolean;
+  exitSimulation: () => void;
   canAccess: (module: string) => boolean;
   hasRole: (roles: UserRole[]) => boolean;
   isAuthenticated: boolean;
@@ -29,10 +33,22 @@ interface AuthContextType {
     phone?: string;
     department?: string;
   }) => Promise<{ success: boolean; message: string }>;
+  createUser: (userData: {
+    email: string;
+    password?: string;
+    first_name: string;
+    last_name: string;
+    role: UserRole;
+    phone?: string;
+    department?: string;
+  }) => Promise<{ success: boolean; message: string; user?: UserProfile }>;
   resetPassword: (email: string) => Promise<{ success: boolean; message: string }>;
   quickLoginAs: (user: UserProfile) => void;
   logout: () => Promise<void>;
   refreshSession: () => Promise<void>;
+  updateUser: (userId: string, updates: Partial<UserProfile>) => void;
+  deleteUser: (userId: string) => boolean;
+  toggleUserStatus: (userId: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -145,7 +161,7 @@ function mapSupabaseUserToProfile(
 
   // Check existing profiles first
   const existing = existingProfiles.find(
-    (u) => u.id === user.id || u.email.toLowerCase() === cleanEmail
+    (u) => u.id === user.id || (Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail)
   );
   if (existing) {
     return {
@@ -234,6 +250,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
 
+  // Tracks active simulation session started by an authenticated super_admin
+  const [impersonatingAdmin, setImpersonatingAdmin] = useState<UserProfile | null>(() => {
+    try {
+      const stored = sessionStorage.getItem('gwcc_impersonating_admin');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+
   // Sync users list to localStorage
   useEffect(() => {
     localStorage.setItem('gwcc_registered_users', JSON.stringify(usersList));
@@ -274,7 +300,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setCurrentUser(profile);
         setUsersList((prev) => {
           const index = prev.findIndex(
-            (u) => u.id === profile.id || u.email.toLowerCase() === profile.email.toLowerCase()
+            (u) =>
+              u.id === profile.id ||
+              (Boolean(u.email && profile.email) && u.email.toLowerCase() === profile.email.toLowerCase())
           );
           if (index >= 0) {
             const next = [...prev];
@@ -316,7 +344,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setCurrentUser(profile);
           setUsersList((prev) => {
             const index = prev.findIndex(
-              (u) => u.id === profile.id || u.email.toLowerCase() === profile.email.toLowerCase()
+              (u) =>
+                u.id === profile.id ||
+                (Boolean(u.email && profile.email) && u.email.toLowerCase() === profile.email.toLowerCase())
             );
             if (index >= 0) {
               const next = [...prev];
@@ -345,7 +375,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
+  const isSimulating = impersonatingAdmin !== null;
+
+  const startSimulation = (userId: string): boolean => {
+    // SECURITY GUARD: Only super_admin (or active super_admin simulation) can simulate
+    const effectiveAdmin = impersonatingAdmin || currentUser;
+    if (effectiveAdmin.role !== 'super_admin') {
+      console.warn('Unauthorized simulation blocked: only super_admin can simulate staff views.');
+      return false;
+    }
+
+    const target = usersList.find((u) => u.id === userId);
+    if (!target) return false;
+
+    // Preserve original super admin session before switching
+    if (!impersonatingAdmin) {
+      setImpersonatingAdmin(currentUser);
+      sessionStorage.setItem('gwcc_impersonating_admin', JSON.stringify(currentUser));
+    }
+
+    setCurrentUser(target);
+    localStorage.setItem('gwcc_active_user', JSON.stringify(target));
+    return true;
+  };
+
+  const exitSimulation = () => {
+    if (!impersonatingAdmin) return;
+    setCurrentUser(impersonatingAdmin);
+    localStorage.setItem('gwcc_active_user', JSON.stringify(impersonatingAdmin));
+    setImpersonatingAdmin(null);
+    sessionStorage.removeItem('gwcc_impersonating_admin');
+  };
+
   const setCurrentRole = (role: UserRole) => {
+    // SECURITY GUARD: Disallow arbitrary role switching by non-super-admins
+    const effectiveAdmin = impersonatingAdmin || currentUser;
+    if (effectiveAdmin.role !== 'super_admin') {
+      console.warn('Unauthorized role change blocked: user lacks super_admin privileges.');
+      return;
+    }
+    if (!impersonatingAdmin) {
+      setImpersonatingAdmin(currentUser);
+      sessionStorage.setItem('gwcc_impersonating_admin', JSON.stringify(currentUser));
+    }
     setCurrentUser((prev) => ({
       ...prev,
       role,
@@ -353,11 +425,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const switchUser = (userId: string) => {
-    const target = usersList.find((u) => u.id === userId);
-    if (target) {
-      setCurrentUser(target);
-      localStorage.setItem('gwcc_active_user', JSON.stringify(target));
-    }
+    // SECURITY GUARD: Only super_admin can switch/simulate user sessions
+    startSimulation(userId);
   };
 
   const refreshSession = useCallback(async () => {
@@ -397,7 +466,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setCurrentUser(profile);
           setUsersList((prev) => {
             const index = prev.findIndex(
-              (u) => u.id === profile.id || u.email.toLowerCase() === cleanEmail
+              (u) =>
+                u.id === profile.id ||
+                (Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail)
             );
             if (index >= 0) {
               const next = [...prev];
@@ -413,16 +484,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (error) {
+          const errMsg = String(error.message || '').toLowerCase();
           const isApiKeyError =
-            error.message.toLowerCase().includes('api key') ||
-            error.message.toLowerCase().includes('apikey') ||
-            error.message.toLowerCase().includes('jwt') ||
-            error.message.toLowerCase().includes('unauthorized') ||
+            errMsg.includes('api key') ||
+            errMsg.includes('apikey') ||
+            errMsg.includes('jwt') ||
+            errMsg.includes('unauthorized') ||
             (error as any).status === 401 ||
             (error as any).status === 403;
 
           // If the cloud database key is rejected or offline, check if user exists in local staff directory
-          const staff = usersList.find((u) => u.email.toLowerCase() === cleanEmail);
+          const staff = usersList.find((u) => Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail);
           if (staff) {
             setCurrentUser(staff);
             setIsAuthenticated(true);
@@ -451,7 +523,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // 2. Check local church staff accounts (offline / local directory)
-    const staff = usersList.find((u) => u.email.toLowerCase() === cleanEmail);
+    const staff = usersList.find((u) => Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail);
     if (staff) {
       if (!password || password.trim().length < 4) {
         return { success: false, message: 'Please provide a valid password.' };
@@ -475,10 +547,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     phone?: string;
     department?: string;
   }): Promise<{ success: boolean; message: string }> => {
-    const cleanEmail = userData.email.trim().toLowerCase();
+    const cleanEmail = (userData.email || '').trim().toLowerCase();
 
     // Check if email already exists locally
-    const exists = usersList.some((u) => u.email.toLowerCase() === cleanEmail);
+    const exists = usersList.some((u) => Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail);
     if (exists) {
       return { success: false, message: 'An account with this email address already exists.' };
     }
@@ -502,15 +574,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         if (error) {
+          const errMsg = (error.message || '').toLowerCase();
           const isApiKeyError =
-            error.message.toLowerCase().includes('api key') ||
-            error.message.toLowerCase().includes('apikey') ||
-            error.message.toLowerCase().includes('jwt');
+            errMsg.includes('api key') ||
+            errMsg.includes('apikey') ||
+            errMsg.includes('jwt');
 
-          if (!isApiKeyError) {
+          if (errMsg.includes('already registered')) {
+            return { success: false, message: 'An account with this email address already exists. Please sign in.' };
+          }
+
+          if (!isApiKeyError && (error as any).status !== 422) {
             return { success: false, message: error.message };
           }
-          console.warn('Supabase sign-up rejected API key, falling back to local registration:', error.message);
+          console.warn('Supabase sign-up notice, falling back to local registration:', error.message);
           // Fall through to local registration
         } else if (data.user) {
           const profile = mapSupabaseUserToProfile(data.user, usersList);
@@ -571,6 +648,100 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return {
       success: true,
       message: `Account created for ${newUser.first_name} ${newUser.last_name} (${newUser.role.replace('_', ' ')})!`,
+    };
+  };
+
+  const createUser = async (userData: {
+    email: string;
+    password?: string;
+    first_name: string;
+    last_name: string;
+    role: UserRole;
+    phone?: string;
+    department?: string;
+  }): Promise<{ success: boolean; message: string; user?: UserProfile }> => {
+    const cleanEmail = (userData.email || '').trim().toLowerCase();
+
+    // Check if email already exists locally
+    const exists = usersList.some((u) => Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail);
+    if (exists) {
+      return { success: false, message: 'A staff account with this email address already exists.' };
+    }
+
+    const newUserId = `usr-${Date.now()}`;
+    const newUser: UserProfile = {
+      id: newUserId,
+      first_name: userData.first_name.trim(),
+      last_name: userData.last_name.trim(),
+      email: cleanEmail,
+      phone: userData.phone?.trim() || undefined,
+      department: userData.department || 'Church Administration',
+      role: userData.role,
+      is_active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    // Add to staff users directory without overriding active admin session
+    setUsersList((prev) => [newUser, ...prev]);
+
+    // Store local staff password for offline login capability
+    if (userData.password) {
+      try {
+        const storedPass = localStorage.getItem('gwcc_staff_passwords');
+        const passMap = storedPass ? JSON.parse(storedPass) : {};
+        passMap[cleanEmail] = userData.password;
+        localStorage.setItem('gwcc_staff_passwords', JSON.stringify(passMap));
+      } catch {}
+    }
+
+    // Cloud sync to Supabase (profiles table and auth if available)
+    const client = getSupabaseClient();
+    if (client) {
+      (async () => {
+        try {
+          await client.from('profiles').insert({
+            id: newUser.id,
+            first_name: newUser.first_name,
+            last_name: newUser.last_name,
+            email: newUser.email,
+            phone: newUser.phone,
+            department: newUser.department,
+            role: newUser.role,
+            is_active: true,
+            created_at: newUser.created_at,
+            updated_at: newUser.updated_at,
+          });
+        } catch (err) {
+          console.warn('Supabase profiles insert notice:', err);
+        }
+
+        if (userData.password) {
+          try {
+            await client.auth.signUp({
+              email: cleanEmail,
+              password: userData.password,
+              options: {
+                data: {
+                  first_name: newUser.first_name,
+                  last_name: newUser.last_name,
+                  role: newUser.role,
+                  phone: newUser.phone,
+                  department: newUser.department,
+                },
+              },
+            });
+          } catch (err) {
+            console.warn('Supabase auth sign up notice:', err);
+          }
+        }
+      })();
+    }
+
+    return {
+      success: true,
+      message: `Staff account created for ${newUser.first_name} ${newUser.last_name}!`,
+      user: newUser,
     };
   };
 
@@ -645,22 +816,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanPhoneCore = normalizeGhanaPhone(clean);
 
     let member = allMembers.find((m) => {
-      const idMatch = m.id.toLowerCase() === clean;
-      const memIdClean = m.member_id.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const idMatch = (m.id || '').toLowerCase() === clean;
+      const memIdClean = (m.member_id || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       const memberIdMatch =
-        m.member_id.toLowerCase() === clean ||
+        (m.member_id || '').toLowerCase() === clean ||
         (cleanAlphaNum.length >= 4 && memIdClean.includes(cleanAlphaNum));
       const titheMatch = m.tithe_number ? m.tithe_number.toLowerCase() === clean : false;
       const emailMatch = m.email ? m.email.toLowerCase() === clean : false;
-      const phoneDigits = m.phone.replace(/[^0-9]/g, '');
-      const memberPhoneCore = normalizeGhanaPhone(m.phone);
+      const phoneDigits = (m.phone || '').replace(/[^0-9]/g, '');
+      const memberPhoneCore = normalizeGhanaPhone(m.phone || '');
 
       const phoneMatch =
         (cleanPhoneCore.length >= 4 && memberPhoneCore.includes(cleanPhoneCore)) ||
         (cleanDigits.length >= 4 && phoneDigits.endsWith(cleanDigits)) ||
-        m.phone.toLowerCase() === clean;
+        (m.phone ? m.phone.toLowerCase() === clean : false);
 
-      const fullName = `${m.first_name} ${m.last_name}`.toLowerCase();
+      const fullName = `${m.first_name || ''} ${m.last_name || ''}`.toLowerCase();
       const nameMatch = fullName === clean;
       return idMatch || memberIdMatch || titheMatch || emailMatch || phoneMatch || nameMatch;
     });
@@ -744,7 +915,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       id: `usr-mem-${member.id}`,
       first_name: member.first_name,
       last_name: member.last_name,
-      email: member.email || `${member.member_id.toLowerCase()}@member.gwcc.org`,
+      email: member.email || `${(member.member_id || 'member').toLowerCase()}@member.gwcc.org`,
       phone: member.phone,
       role: 'member',
       member_id: member.id,
@@ -810,6 +981,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setSession(null);
     setIsAuthenticated(false);
     setCurrentMember(null);
+    setImpersonatingAdmin(null);
+    sessionStorage.removeItem('gwcc_impersonating_admin');
     localStorage.setItem('gwcc_auth_authenticated', 'false');
     localStorage.removeItem('gwcc_active_user');
     localStorage.removeItem('gwcc_active_member_id');
@@ -827,6 +1000,87 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const isMemberPortalUser = currentUser.role === 'member' || currentMember !== null;
 
+  const updateUser = (userId: string, updates: Partial<UserProfile>) => {
+    setUsersList((prev) => {
+      const index = prev.findIndex((u) => u.id === userId);
+      if (index === -1) return prev;
+      const updatedUser: UserProfile = {
+        ...prev[index],
+        ...updates,
+        updated_at: new Date().toISOString(),
+      };
+      const next = [...prev];
+      next[index] = updatedUser;
+      if (currentUser.id === userId) {
+        setCurrentUser(updatedUser);
+        localStorage.setItem('gwcc_active_user', JSON.stringify(updatedUser));
+      }
+      return next;
+    });
+
+    // Sync to Supabase profiles table if available
+    const client = getSupabaseClient();
+    if (client) {
+      (async () => {
+        try {
+          const { error } = await client
+            .from('profiles')
+            .update({
+              ...updates,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', userId);
+          if (error) console.warn('Supabase profile update note:', error.message);
+        } catch {
+          // Ignore offline/network exceptions
+        }
+      })();
+    }
+  };
+
+  const deleteUser = (userId: string): boolean => {
+    if (currentUser.id === userId) {
+      return false; // Prevent deleting active logged-in user
+    }
+    setUsersList((prev) => prev.filter((u) => u.id !== userId));
+
+    const client = getSupabaseClient();
+    if (client) {
+      (async () => {
+        try {
+          const { error } = await client
+            .from('profiles')
+            .delete()
+            .eq('id', userId);
+          if (error) console.warn('Supabase profile delete note:', error.message);
+        } catch {
+          // Ignore offline/network exceptions
+        }
+      })();
+    }
+    return true;
+  };
+
+  const toggleUserStatus = (userId: string) => {
+    setUsersList((prev) => {
+      const index = prev.findIndex((u) => u.id === userId);
+      if (index === -1) return prev;
+      const newActive = !prev[index].is_active;
+      const updatedUser: UserProfile = {
+        ...prev[index],
+        is_active: newActive,
+        updated_at: new Date().toISOString(),
+      };
+      const next = [...prev];
+      next[index] = updatedUser;
+      if (currentUser.id === userId) {
+        setCurrentUser(updatedUser);
+        localStorage.setItem('gwcc_active_user', JSON.stringify(updatedUser));
+      }
+      return next;
+    });
+  };
+
   const contextValue = React.useMemo<AuthContextType>(
     () => ({
       currentUser,
@@ -834,6 +1088,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCurrentRole,
       availableUsers: usersList,
       switchUser,
+      isSimulating,
+      impersonatingAdmin,
+      startSimulation,
+      exitSimulation,
       canAccess,
       hasRole,
       isAuthenticated,
@@ -845,10 +1103,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       loginAsMember,
       setPortalMember,
       register,
+      createUser,
       resetPassword,
       quickLoginAs,
       logout,
       refreshSession,
+      updateUser,
+      deleteUser,
+      toggleUserStatus,
     }),
     [currentUser, usersList, isAuthenticated, session, isAuthLoading, currentMember, isMemberPortalUser, refreshSession]
   );

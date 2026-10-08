@@ -142,9 +142,9 @@ export const AssignRosterModal: React.FC<AssignRosterModalProps> = ({
 
   // Filtered member options for search
   const filteredMembers = members.filter((m) => {
-    const fullName = `${m.first_name} ${m.last_name}`.toLowerCase();
-    const phone = m.phone.toLowerCase();
-    const search = memberSearch.toLowerCase();
+    const fullName = `${m.first_name || ''} ${m.last_name || ''}`.toLowerCase();
+    const phone = (m.phone || '').toLowerCase();
+    const search = (memberSearch || '').toLowerCase();
     return fullName.includes(search) || phone.includes(search);
   });
 

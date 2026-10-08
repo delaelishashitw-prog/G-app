@@ -27,7 +27,7 @@ export interface UseKeyboardShortcutsOptions {
  */
 export function isEditableElement(el: EventTarget | null): boolean {
   if (!el || !(el instanceof HTMLElement)) return false;
-  const tag = el.tagName.toLowerCase();
+  const tag = (el.tagName || '').toLowerCase();
   return (
     tag === 'input' ||
     tag === 'textarea' ||
@@ -237,7 +237,7 @@ export function useKeyboardShortcuts({
       const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent);
       const modifier = isMac ? e.metaKey : e.ctrlKey;
       const isAlt = e.altKey;
-      const key = e.key.toLowerCase();
+      const key = (e.key || '').toLowerCase();
       const inInput = isEditableElement(e.target);
 
       // 1. Escape: Close open modals

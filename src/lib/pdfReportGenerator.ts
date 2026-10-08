@@ -133,13 +133,13 @@ export function generateChurchReportPdf(
 
   // Tithes & Offerings Breakdown
   const tithesTotal = filteredGiving
-    .filter((g) => g.category.toLowerCase().includes('tithe'))
+    .filter((g) => (g.category || '').toLowerCase().includes('tithe'))
     .reduce((s, g) => s + g.amount, 0);
   const offeringsTotal = filteredGiving
-    .filter((g) => g.category.toLowerCase().includes('offering'))
+    .filter((g) => (g.category || '').toLowerCase().includes('offering'))
     .reduce((s, g) => s + g.amount, 0);
   const buildingFundTotal = filteredGiving
-    .filter((g) => g.category.toLowerCase().includes('building'))
+    .filter((g) => (g.category || '').toLowerCase().includes('building'))
     .reduce((s, g) => s + g.amount, 0);
   const otherGivingTotal = totalIncome - (tithesTotal + offeringsTotal + buildingFundTotal);
 

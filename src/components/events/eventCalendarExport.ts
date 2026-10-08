@@ -54,7 +54,7 @@ export function downloadEventIcs(event: ChurchEvent, churchName: string = 'Great
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  const fileName = `${event.title.toLowerCase().replace(/[^a-z0-9]/g, '_')}.ics`;
+  const fileName = `${(event.title || 'church_event').toLowerCase().replace(/[^a-z0-9]/g, '_')}.ics`;
   link.setAttribute('download', fileName);
   document.body.appendChild(link);
   link.click();

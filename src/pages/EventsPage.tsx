@@ -93,13 +93,13 @@ export const EventsPage: React.FC = () => {
   const filteredEvents = useMemo(() => {
     return events.filter((evt) => {
       // Search query
-      const q = searchQuery.toLowerCase();
+      const q = (searchQuery || '').toLowerCase();
       const matchesSearch =
         !q ||
-        evt.title.toLowerCase().includes(q) ||
+        (evt.title || '').toLowerCase().includes(q) ||
         (evt.theme && evt.theme.toLowerCase().includes(q)) ||
         (evt.speaker && evt.speaker.toLowerCase().includes(q)) ||
-        evt.venue.toLowerCase().includes(q) ||
+        (evt.venue && evt.venue.toLowerCase().includes(q)) ||
         (evt.description && evt.description.toLowerCase().includes(q));
 
       // Category

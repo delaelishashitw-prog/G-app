@@ -86,15 +86,17 @@ export const InventoryPage: React.FC = () => {
 
   // Filtered Assets
   const filteredAssets = useMemo(() => {
+    const q = (searchTerm || '').toLowerCase();
     return assets.filter((a) => {
       const matchSearch =
-        a.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        a.asset_tag.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (a.brand && a.brand.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (a.model && a.model.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (a.serial_number && a.serial_number.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        a.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        a.custodian_name.toLowerCase().includes(searchTerm.toLowerCase());
+        !q ||
+        (a.name || '').toLowerCase().includes(q) ||
+        (a.asset_tag || '').toLowerCase().includes(q) ||
+        (a.brand && a.brand.toLowerCase().includes(q)) ||
+        (a.model && a.model.toLowerCase().includes(q)) ||
+        (a.serial_number && a.serial_number.toLowerCase().includes(q)) ||
+        (a.location || '').toLowerCase().includes(q) ||
+        (a.custodian_name || '').toLowerCase().includes(q);
 
       const matchCategory = categoryFilter === 'ALL' || a.category === categoryFilter;
       const matchCondition = conditionFilter === 'ALL' || a.current_condition === conditionFilter;

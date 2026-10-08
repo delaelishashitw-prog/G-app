@@ -140,7 +140,7 @@ export const ReportsPage: React.FC = () => {
         const q = tableSearch.toLowerCase();
         const memberName = (g.member_name || g.donor_name || '').toLowerCase();
         const ref = (g.reference_number || '').toLowerCase();
-        const cat = g.category.toLowerCase();
+        const cat = (g.category || '').toLowerCase();
         return memberName.includes(q) || ref.includes(q) || cat.includes(q);
       }
       return true;
@@ -154,7 +154,7 @@ export const ReportsPage: React.FC = () => {
       if (tableSearch.trim()) {
         const q = tableSearch.toLowerCase();
         return (
-          e.category.toLowerCase().includes(q) ||
+          (e.category || '').toLowerCase().includes(q) ||
           (e.title && e.title.toLowerCase().includes(q)) ||
           (e.description && e.description.toLowerCase().includes(q))
         );
@@ -184,7 +184,7 @@ export const ReportsPage: React.FC = () => {
       if (tableSearch.trim()) {
         const q = tableSearch.toLowerCase();
         return (
-          v.full_name.toLowerCase().includes(q) ||
+          (v.full_name || '').toLowerCase().includes(q) ||
           (v.phone && v.phone.includes(q)) ||
           (v.prayer_request && v.prayer_request.toLowerCase().includes(q))
         );
@@ -222,7 +222,7 @@ export const ReportsPage: React.FC = () => {
   const tithesTotal = useMemo(
     () =>
       filteredGivingByDate
-        .filter((g) => g.category.toLowerCase().includes('tithe'))
+        .filter((g) => (g.category || '').toLowerCase().includes('tithe'))
         .reduce((s, g) => s + g.amount, 0),
     [filteredGivingByDate]
   );
@@ -230,7 +230,7 @@ export const ReportsPage: React.FC = () => {
   const offeringsTotal = useMemo(
     () =>
       filteredGivingByDate
-        .filter((g) => g.category.toLowerCase().includes('offering'))
+        .filter((g) => (g.category || '').toLowerCase().includes('offering'))
         .reduce((s, g) => s + g.amount, 0),
     [filteredGivingByDate]
   );
@@ -238,7 +238,7 @@ export const ReportsPage: React.FC = () => {
   const buildingFundTotal = useMemo(
     () =>
       filteredGivingByDate
-        .filter((g) => g.category.toLowerCase().includes('building'))
+        .filter((g) => (g.category || '').toLowerCase().includes('building'))
         .reduce((s, g) => s + g.amount, 0),
     [filteredGivingByDate]
   );

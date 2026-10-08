@@ -84,7 +84,7 @@ export const PledgeDossierModal: React.FC<PledgeDossierModalProps> = ({
   // Generate Pastoral WhatsApp Reminders
   const churchName = settings.church_name || 'Greater Works City Church';
   const getWhatsAppMessage = () => {
-    const name = pledge.member_name.split(' ')[0] || 'Beloved';
+    const name = (pledge.member_name || 'Beloved').split(' ')[0] || 'Beloved';
     const campaign = pledge.campaign_name;
     const pledged = formatGHS(pledge.amount_pledged);
     const paid = formatGHS(pledge.amount_paid);

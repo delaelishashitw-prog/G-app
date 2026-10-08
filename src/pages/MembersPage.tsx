@@ -333,11 +333,11 @@ export const MembersPage: React.FC = () => {
       const term = searchTerm.toLowerCase().trim();
       const matchesSearch =
         !term ||
-        m.first_name.toLowerCase().includes(term) ||
-        m.last_name.toLowerCase().includes(term) ||
-        m.member_id.toLowerCase().includes(term) ||
+        (m.first_name || '').toLowerCase().includes(term) ||
+        (m.last_name || '').toLowerCase().includes(term) ||
+        (m.member_id || '').toLowerCase().includes(term) ||
         (m.tithe_number && m.tithe_number.toLowerCase().includes(term)) ||
-        m.phone.includes(term) ||
+        (m.phone && m.phone.includes(term)) ||
         (m.email && m.email.toLowerCase().includes(term)) ||
         (m.gps_address && m.gps_address.toLowerCase().includes(term)) ||
         (m.leadership_position && m.leadership_position.toLowerCase().includes(term));

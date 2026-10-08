@@ -51,11 +51,11 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
   const matchingMembers = cleanQuery
     ? members.filter(
         (m) =>
-          m.first_name.toLowerCase().includes(cleanQuery) ||
-          m.last_name.toLowerCase().includes(cleanQuery) ||
-          m.member_id.toLowerCase().includes(cleanQuery) ||
+          (m.first_name || '').toLowerCase().includes(cleanQuery) ||
+          (m.last_name || '').toLowerCase().includes(cleanQuery) ||
+          (m.member_id || '').toLowerCase().includes(cleanQuery) ||
           (m.tithe_number && m.tithe_number.toLowerCase().includes(cleanQuery)) ||
-          m.phone.includes(cleanQuery) ||
+          (m.phone && m.phone.includes(cleanQuery)) ||
           (m.gps_address && m.gps_address.toLowerCase().includes(cleanQuery))
       )
     : [];
@@ -63,8 +63,8 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
   const matchingVisitors = cleanQuery
     ? visitors.filter(
         (v) =>
-          v.full_name.toLowerCase().includes(cleanQuery) ||
-          v.phone.includes(cleanQuery) ||
+          (v.full_name || '').toLowerCase().includes(cleanQuery) ||
+          (v.phone && v.phone.includes(cleanQuery)) ||
           (v.address && v.address.toLowerCase().includes(cleanQuery))
       )
     : [];
@@ -72,9 +72,9 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
   const matchingEvents = cleanQuery
     ? events.filter(
         (e) =>
-          e.title.toLowerCase().includes(cleanQuery) ||
+          (e.title || '').toLowerCase().includes(cleanQuery) ||
           (e.speaker && e.speaker.toLowerCase().includes(cleanQuery)) ||
-          e.venue.toLowerCase().includes(cleanQuery)
+          (e.venue && e.venue.toLowerCase().includes(cleanQuery))
       )
     : [];
 

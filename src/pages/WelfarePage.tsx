@@ -81,11 +81,13 @@ export const WelfarePage: React.FC = () => {
 
   // Filtered Claims
   const filteredClaims = useMemo(() => {
+    const q = (claimSearch || '').toLowerCase();
     return welfareClaims.filter((c) => {
       const matchSearch =
-        c.claim_number.toLowerCase().includes(claimSearch.toLowerCase()) ||
-        c.member_name.toLowerCase().includes(claimSearch.toLowerCase()) ||
-        c.title.toLowerCase().includes(claimSearch.toLowerCase());
+        !q ||
+        (c.claim_number || '').toLowerCase().includes(q) ||
+        (c.member_name || '').toLowerCase().includes(q) ||
+        (c.title || '').toLowerCase().includes(q);
       const matchCategory = claimCategoryFilter === 'ALL' || c.category === claimCategoryFilter;
       const matchStatus = claimStatusFilter === 'ALL' || c.status === claimStatusFilter;
       return matchSearch && matchCategory && matchStatus;
@@ -100,11 +102,13 @@ export const WelfarePage: React.FC = () => {
 
   // Filtered Dues
   const filteredDues = useMemo(() => {
+    const q = (duesSearch || '').toLowerCase();
     return welfareContributions.filter((c) => {
       const matchSearch =
-        c.member_name.toLowerCase().includes(duesSearch.toLowerCase()) ||
-        (c.tithe_number && c.tithe_number.toLowerCase().includes(duesSearch.toLowerCase())) ||
-        (c.reference_no && c.reference_no.toLowerCase().includes(duesSearch.toLowerCase()));
+        !q ||
+        (c.member_name || '').toLowerCase().includes(q) ||
+        (c.tithe_number && c.tithe_number.toLowerCase().includes(q)) ||
+        (c.reference_no && c.reference_no.toLowerCase().includes(q));
       const matchMonth = duesMonthFilter === 'ALL' || c.month === duesMonthFilter;
       return matchSearch && matchMonth;
     });

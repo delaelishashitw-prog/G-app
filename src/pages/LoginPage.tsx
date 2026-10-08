@@ -596,10 +596,10 @@ export const LoginPage: React.FC = () => {
                     >
                       <div className="truncate pr-2">
                         <p className="font-bold text-slate-900 group-hover:text-emerald-950 text-xs truncate">
-                          {u.first_name} {u.last_name}
+                          {u.first_name || ''} {u.last_name || ''}
                         </p>
                         <p className="text-[10px] text-slate-600 capitalize truncate">
-                          {u.role.replace('_', ' ')} • {u.department || 'Staff'}
+                          {u.role ? String(u.role).replace('_', ' ') : 'Staff'} • {u.department || 'Staff'}
                         </p>
                       </div>
                       <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-emerald-800 shrink-0 transition" />

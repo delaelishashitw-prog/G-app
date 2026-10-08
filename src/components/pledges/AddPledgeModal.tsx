@@ -47,11 +47,11 @@ export const AddPledgeModal: React.FC<AddPledgeModalProps> = ({
 
   const filteredMembers = members.filter((m) => {
     if (!memberSearch) return true;
-    const term = memberSearch.toLowerCase();
+    const term = (memberSearch || '').toLowerCase();
     return (
-      m.first_name.toLowerCase().includes(term) ||
-      m.last_name.toLowerCase().includes(term) ||
-      m.member_id.toLowerCase().includes(term) ||
+      (m.first_name || '').toLowerCase().includes(term) ||
+      (m.last_name || '').toLowerCase().includes(term) ||
+      (m.member_id || '').toLowerCase().includes(term) ||
       (m.phone && m.phone.includes(term))
     );
   });

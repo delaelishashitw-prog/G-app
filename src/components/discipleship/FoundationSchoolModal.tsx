@@ -142,10 +142,12 @@ export const FoundationSchoolModal: React.FC<FoundationSchoolModalProps> = ({
   const filteredStudents = students.filter((s) => {
     const matchCohort = selectedCohortFilter === 'ALL' || s.cohort_id === selectedCohortFilter;
     const matchStatus = statusFilter === 'ALL' || s.status === statusFilter;
+    const q = (searchQuery || '').toLowerCase();
     const matchSearch =
-      s.member_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.cohort_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (s.member_phone && s.member_phone.includes(searchQuery));
+      !q ||
+      (s.member_name || '').toLowerCase().includes(q) ||
+      (s.cohort_name || '').toLowerCase().includes(q) ||
+      (s.member_phone && s.member_phone.includes(q));
     return matchCohort && matchStatus && matchSearch;
   });
 

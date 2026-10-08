@@ -135,13 +135,13 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
       const marginPercent = Math.round((netSurplus / (income || 1)) * 100);
 
       const tithes = monthGiving
-        .filter((g) => g.category.toLowerCase().includes('tithe'))
+        .filter((g) => (g.category || '').toLowerCase().includes('tithe'))
         .reduce((sum, g) => sum + g.amount, 0);
       const offerings = monthGiving
-        .filter((g) => g.category.toLowerCase().includes('offering'))
+        .filter((g) => (g.category || '').toLowerCase().includes('offering'))
         .reduce((sum, g) => sum + g.amount, 0);
       const buildingFund = monthGiving
-        .filter((g) => g.category.toLowerCase().includes('building'))
+        .filter((g) => (g.category || '').toLowerCase().includes('building'))
         .reduce((sum, g) => sum + g.amount, 0);
       const otherGiving = Math.max(0, income - tithes - offerings - buildingFund);
 
