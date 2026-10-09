@@ -144,6 +144,31 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
+      {/* Global Command Palette / Quick Search Bar */}
+      <div className="flex-1 max-w-md mx-3 lg:mx-6 hidden md:block">
+        <button
+          type="button"
+          onClick={onOpenSearch}
+          className="w-full flex items-center justify-between gap-3 px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 hover:bg-white dark:hover:bg-slate-800 hover:border-emerald-500/50 dark:hover:border-emerald-500/50 hover:shadow-xs text-slate-400 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 text-xs sm:text-sm transition duration-150 group cursor-pointer text-left"
+          title="Open Command Palette: Search members, pages, tasks (Ctrl+K or /)"
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Search className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 group-hover:scale-110 transition-transform" />
+            <span className="truncate text-slate-500 dark:text-slate-400 text-xs font-normal">
+              Search members, pages, tasks...
+            </span>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <kbd className="font-mono text-[10px] font-bold bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded shadow-2xs">
+              ⌘K
+            </kbd>
+            <kbd className="hidden lg:inline-block font-mono text-[10px] text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800/80 px-1 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+              /
+            </kbd>
+          </div>
+        </button>
+      </div>
+
       {/* Center/Right controls */}
       <div className="flex items-center gap-2 sm:gap-3">
         {/* Offline Connectivity Warning Badge */}
@@ -224,15 +249,14 @@ export const Header: React.FC<HeaderProps> = ({
           </span>
         </button>
 
-        {/* Global Search Button */}
+        {/* Mobile / Compact Search Trigger */}
         <button
           onClick={onOpenSearch}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 text-xs sm:text-sm transition shadow-2xs"
-          title="Global Search across Members, Visitors, ID, Tithe, Phone (Ctrl+K)"
+          className="md:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 text-xs transition shadow-2xs"
+          title="Global Search across Members, Pages, Tasks (Ctrl+K or /)"
         >
-          <Search className="w-4 h-4 text-slate-400" />
-          <span className="hidden md:inline">Search church records...</span>
-          <span className="hidden sm:inline-block font-mono text-[10px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded text-slate-400 dark:text-slate-500">
+          <Search className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+          <span className="font-mono text-[10px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1 py-0.2 rounded text-slate-400 dark:text-slate-500">
             ⌘K
           </span>
         </button>

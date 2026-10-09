@@ -178,7 +178,15 @@ export const AppLayout: React.FC = () => {
       </button>
 
       {/* Modals */}
-      <GlobalSearchModal isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
+      <GlobalSearchModal
+        isOpen={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onQuickAction={(type) => setQuickActionType(type)}
+        onOpenAssistant={() => setAiAssistantOpen(true)}
+        onOpenShortcutsHelp={() => setShortcutsHelpOpen(true)}
+        onToggleSidebar={() => setSidebarCollapsed((prev) => !prev)}
+        onRefreshData={handleGlobalRefresh}
+      />
       <NotificationModal isOpen={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
       <AiAssistantModal isOpen={aiAssistantOpen} onClose={() => setAiAssistantOpen(false)} />
       <KeyboardShortcutsModal

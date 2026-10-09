@@ -67,9 +67,9 @@ export function useKeyboardShortcuts({
     {
       id: 'nav-search',
       category: 'Search & Tools',
-      label: 'Global Search',
+      label: 'Command Palette & Quick Search',
       keys: ['Ctrl', 'K'],
-      description: 'Search members, visitors, tithes, IDs, and phone numbers',
+      description: 'Search members, jump to pages, or execute church tasks (or press /)',
       action: onOpenSearch,
     },
     {
@@ -257,14 +257,21 @@ export function useKeyboardShortcuts({
         }
       }
 
-      // 2. Global Search: Ctrl+K / Cmd+K (allowed everywhere, even from within inputs)
+      // 2. Global Search / Command Palette: Ctrl+K / Cmd+K (allowed everywhere, even from within inputs)
       if (modifier && key === 'k') {
         e.preventDefault();
         onOpenSearch();
         return;
       }
 
-      // 3. Question mark '?' or 'Ctrl+/' to open shortcuts cheatsheet
+      // 3. Forward slash '/' to open Command Palette when not in an editable element
+      if (!inInput && key === '/' && !modifier && !isAlt) {
+        e.preventDefault();
+        onOpenSearch();
+        return;
+      }
+
+      // 4. Question mark '?' or 'Ctrl+/' to open shortcuts cheatsheet
       // Only when not currently typing inside an input/textarea
       if (!inInput) {
         if (e.key === '?' || (modifier && e.key === '/')) {
