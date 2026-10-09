@@ -730,6 +730,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (data.pastoralCare && data.pastoralCare.length > 0) setPastoralCare(data.pastoralCare);
           if (data.prayerRequests && data.prayerRequests.length > 0) setPrayerRequests(data.prayerRequests);
           if (data.communications && data.communications.length > 0) setCommunications(data.communications);
+          if (data.welfareContributions && data.welfareContributions.length > 0) setWelfareContributions(data.welfareContributions);
+          if (data.welfareClaims && data.welfareClaims.length > 0) setWelfareClaims(data.welfareClaims);
           if (data.settings) setSettings(normalizeSettings(data.settings, initialSettings));
 
           const now = new Date().toISOString();
@@ -779,6 +781,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         pastoralCare,
         prayerRequests,
         communications,
+        welfareContributions,
+        welfareClaims,
         auditLogs,
       };
 
@@ -807,6 +811,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       pastoralCare,
       prayerRequests,
       communications,
+      welfareContributions,
+      welfareClaims,
       auditLogs,
     ]
   );
@@ -830,6 +836,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (data.pastoralCare) setPastoralCare(data.pastoralCare);
       if (data.prayerRequests) setPrayerRequests(data.prayerRequests);
       if (data.communications) setCommunications(data.communications);
+      if (data.welfareContributions) setWelfareContributions(data.welfareContributions);
+      if (data.welfareClaims) setWelfareClaims(data.welfareClaims);
       if (data.auditLogs) setAuditLogs(data.auditLogs);
       if (data.settings) setSettings(normalizeSettings(data.settings, initialSettings));
       return { success: true, errors: [] };
@@ -864,6 +872,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (data.pastoralCare) setPastoralCare(data.pastoralCare);
           if (data.prayerRequests) setPrayerRequests(data.prayerRequests);
           if (data.communications) setCommunications(data.communications);
+          if (data.welfareContributions) setWelfareContributions(data.welfareContributions);
+          if (data.welfareClaims) setWelfareClaims(data.welfareClaims);
           if (data.auditLogs) setAuditLogs(data.auditLogs);
           if (data.settings) setSettings(normalizeSettings(data.settings, initialSettings));
 
@@ -1386,22 +1396,22 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const recordWelfareContribution = (
     data: Omit<WelfareContribution, 'id' | 'created_at'>
   ): WelfareContribution =>
-    recordWelfareContributionRecord(data, setWelfareContributions, logAction);
+    recordWelfareContributionRecord(data, setWelfareContributions, logAction, dbSyncUpsert);
 
   const deleteWelfareContribution = (id: string) => {
-    deleteWelfareContributionRecord(id, welfareContributions, setWelfareContributions, logAction);
+    deleteWelfareContributionRecord(id, welfareContributions, setWelfareContributions, logAction, dbSyncDelete);
   };
 
   const submitWelfareClaim = (
     data: Omit<WelfareClaim, 'id' | 'claim_number' | 'created_at'>
-  ): WelfareClaim => submitWelfareClaimRecord(data, welfareClaims, setWelfareClaims, logAction);
+  ): WelfareClaim => submitWelfareClaimRecord(data, welfareClaims, setWelfareClaims, logAction, dbSyncUpsert);
 
   const updateWelfareClaim = (id: string, updates: Partial<WelfareClaim>) => {
-    updateWelfareClaimRecord(id, updates, setWelfareClaims, logAction);
+    updateWelfareClaimRecord(id, updates, setWelfareClaims, logAction, dbSyncUpsert);
   };
 
   const deleteWelfareClaim = (id: string) => {
-    deleteWelfareClaimRecord(id, welfareClaims, setWelfareClaims, logAction);
+    deleteWelfareClaimRecord(id, welfareClaims, setWelfareClaims, logAction, dbSyncDelete);
   };
 
   const disburseWelfareClaim = (
@@ -1414,7 +1424,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       pastoral_notes?: string;
     }
   ) => {
-    disburseWelfareClaimRecord(id, details, setWelfareClaims, logAction);
+    disburseWelfareClaimRecord(id, details, setWelfareClaims, logAction, dbSyncUpsert);
   };
 
   // CHILDREN'S MINISTRY SAFETY & PICKUP TAGS

@@ -17,10 +17,13 @@ import {
   AuditLog,
   ChurchSettings,
   HeadcountRecord,
+  WelfareContribution,
+  WelfareClaim,
 } from '../types/database.types';
 
 const STORAGE_KEY_URL = 'gwcc_supabase_url';
 const STORAGE_KEY_ANON = 'gwcc_supabase_anon_key';
+const VITE_ENV = typeof import.meta !== 'undefined' && import.meta && (import.meta as any).env ? (import.meta as any).env : {};
 
 export const DEFAULT_SUPABASE_URL = 'https://noskcrmvnancdyhvzfin.supabase.co';
 export const DEFAULT_SUPABASE_ANON_KEY =
@@ -54,8 +57,8 @@ export function getStoredSupabaseConfig(): { url: string; anonKey: string; sourc
     // LocalStorage unavailable
   }
 
-  const envUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
-  const envKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
+  const envUrl = (VITE_ENV.VITE_SUPABASE_URL || '').trim();
+  const envKey = (VITE_ENV.VITE_SUPABASE_ANON_KEY || '').trim();
 
   if (
     envUrl &&
@@ -352,6 +355,8 @@ export async function checkSupabaseTables(): Promise<{
     'pastoral_care',
     'prayer_requests',
     'communications',
+    'welfare_contributions',
+    'welfare_claims',
     'audit_logs',
     'settings',
   ];
@@ -607,6 +612,50 @@ export function sanitizeRecordForSupabase(table: string, record: any): any {
         member_count: Number(record.member_count) || 0,
       };
 
+    case 'welfare_contributions': {
+      const memId = record.member_id && typeof record.member_id === 'string' && record.member_id.trim() !== '' ? record.member_id.trim() : null;
+      const contributionDate = cleanDate(record.date) || new Date().toISOString().split('T')[0];
+      return {
+        ...record,
+        member_id: memId,
+        member_name: record.member_name || 'Member',
+        date: contributionDate,
+        month: record.month || contributionDate.slice(0, 7),
+        amount: Number(record.amount) || 0,
+        payment_method: record.payment_method || 'mobile_money',
+        payment_channel: record.payment_channel || null,
+        reference_no: record.reference_no || null,
+        notes: record.notes || null,
+        recorded_by: record.recorded_by || 'Church Office',
+      };
+    }
+
+    case 'welfare_claims': {
+      const memId = record.member_id && typeof record.member_id === 'string' && record.member_id.trim() !== '' ? record.member_id.trim() : null;
+      const claimDate = cleanDate(record.date_submitted) || new Date().toISOString().split('T')[0];
+      return {
+        ...record,
+        member_id: memId,
+        member_name: record.member_name || 'Member',
+        category: record.category || 'emergency_relief',
+        title: record.title || 'Welfare support',
+        description: record.description || '',
+        amount_requested: Number(record.amount_requested) || 0,
+        amount_approved: record.amount_approved == null ? null : Number(record.amount_approved) || 0,
+        status: record.status || 'pending',
+        emergency_level: record.emergency_level || 'normal',
+        date_submitted: claimDate,
+        date_reviewed: cleanDate(record.date_reviewed),
+        reviewed_by: record.reviewed_by || null,
+        pastoral_notes: record.pastoral_notes || null,
+        disbursement_date: cleanDate(record.disbursement_date),
+        disbursement_method: record.disbursement_method || null,
+        disbursement_channel: record.disbursement_channel || null,
+        disbursement_voucher_no: record.disbursement_voucher_no || null,
+        supporting_documents: record.supporting_documents || null,
+      };
+    }
+
     default:
       return record;
   }
@@ -631,6 +680,8 @@ export interface ChurchAllData {
   prayerRequests: PrayerRequest[];
   communications: CommunicationRecord[];
   auditLogs: AuditLog[];
+  welfareContributions?: WelfareContribution[];
+  welfareClaims?: WelfareClaim[];
 }
 
 export async function pushAllDataToSupabase(
@@ -1147,6 +1198,65 @@ export async function pushAllDataToSupabase(
       },
     },
     {
+      name: 'welfare_contributions',
+      label: 'Welfare Contributions',
+      run: async () => {
+        if (!data.welfareContributions || data.welfareContributions.length === 0) return;
+        const now = new Date().toISOString();
+        const sanitized = data.welfareContributions.map((record) => ({
+          ...record,
+          member_id: record.member_id && record.member_id.trim() !== '' ? record.member_id.trim() : null,
+          member_name: record.member_name || 'Member',
+          date: cleanDate(record.date) || now.split('T')[0],
+          month: record.month || now.split('T')[0].slice(0, 7),
+          amount: Number(record.amount) || 0,
+          payment_method: record.payment_method || 'mobile_money',
+          payment_channel: record.payment_channel || null,
+          reference_no: record.reference_no || null,
+          notes: record.notes || null,
+          recorded_by: record.recorded_by || 'Church Office',
+          created_at: record.created_at || now,
+        }));
+        const { error } = await client.from('welfare_contributions').upsert(sanitized);
+        if (error) throw error;
+        summary['welfare_contributions'] = sanitized.length;
+      },
+    },
+    {
+      name: 'welfare_claims',
+      label: 'Welfare Claims',
+      run: async () => {
+        if (!data.welfareClaims || data.welfareClaims.length === 0) return;
+        const now = new Date().toISOString();
+        const sanitized = data.welfareClaims.map((record) => ({
+          ...record,
+          member_id: record.member_id && record.member_id.trim() !== '' ? record.member_id.trim() : null,
+          member_name: record.member_name || 'Member',
+          category: record.category || 'emergency_relief',
+          title: record.title || 'Welfare support',
+          description: record.description || '',
+          amount_requested: Number(record.amount_requested) || 0,
+          amount_approved: record.amount_approved == null ? null : Number(record.amount_approved) || 0,
+          status: record.status || 'pending',
+          emergency_level: record.emergency_level || 'normal',
+          date_submitted: cleanDate(record.date_submitted) || now.split('T')[0],
+          date_reviewed: cleanDate(record.date_reviewed),
+          reviewed_by: record.reviewed_by || null,
+          pastoral_notes: record.pastoral_notes || null,
+          disbursement_date: cleanDate(record.disbursement_date),
+          disbursement_method: record.disbursement_method || null,
+          disbursement_channel: record.disbursement_channel || null,
+          disbursement_voucher_no: record.disbursement_voucher_no || null,
+          supporting_documents: record.supporting_documents || null,
+          created_at: record.created_at || now,
+          updated_at: record.updated_at || now,
+        }));
+        const { error } = await client.from('welfare_claims').upsert(sanitized);
+        if (error) throw error;
+        summary['welfare_claims'] = sanitized.length;
+      },
+    },
+    {
       name: 'audit_logs',
       label: 'System Audit Logs',
       run: async () => {
@@ -1214,6 +1324,8 @@ export async function pullAllDataFromSupabase(): Promise<{
     { table: 'pastoral_care', key: 'pastoralCare' },
     { table: 'prayer_requests', key: 'prayerRequests' },
     { table: 'communications', key: 'communications' },
+    { table: 'welfare_contributions', key: 'welfareContributions' },
+    { table: 'welfare_claims', key: 'welfareClaims' },
     { table: 'audit_logs', key: 'auditLogs' },
   ];
 

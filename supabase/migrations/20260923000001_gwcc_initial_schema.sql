@@ -783,7 +783,63 @@ CREATE TABLE IF NOT EXISTS public.communications (
   created_by TEXT
 );
 
--- 3.18 AUDIT TRAIL LOGS
+-- 3.18 WELFARE CONTRIBUTIONS & RELIEF FUND
+CREATE TABLE IF NOT EXISTS public.welfare_contributions (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  member_id TEXT NOT NULL,
+  member_name VARCHAR(150) NOT NULL,
+  tithe_number VARCHAR(50),
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  month VARCHAR(7) NOT NULL,
+  amount DECIMAL(14,2) NOT NULL DEFAULT 0.00 CHECK (amount >= 0),
+  payment_method VARCHAR(50) NOT NULL DEFAULT 'mobile_money',
+  payment_channel VARCHAR(100),
+  reference_no VARCHAR(100),
+  notes TEXT,
+  recorded_by VARCHAR(150) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.welfare_claims (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  claim_number VARCHAR(50) UNIQUE NOT NULL,
+  member_id TEXT NOT NULL,
+  member_name VARCHAR(150) NOT NULL,
+  member_phone VARCHAR(50),
+  category VARCHAR(50) NOT NULL CHECK (
+    category IN (
+      'bereavement',
+      'hospital_medical',
+      'childbirth_naming',
+      'wedding_marriage',
+      'education_welfare',
+      'emergency_relief'
+    )
+  ),
+  title VARCHAR(200) NOT NULL,
+  description TEXT NOT NULL,
+  amount_requested DECIMAL(14,2) NOT NULL DEFAULT 0.00 CHECK (amount_requested >= 0),
+  amount_approved DECIMAL(14,2) DEFAULT 0.00 CHECK (amount_approved IS NULL OR amount_approved >= 0),
+  status VARCHAR(30) NOT NULL DEFAULT 'pending' CHECK (
+    status IN ('pending', 'under_review', 'approved', 'disbursed', 'declined')
+  ),
+  emergency_level VARCHAR(20) NOT NULL DEFAULT 'normal' CHECK (
+    emergency_level IN ('normal', 'urgent', 'critical')
+  ),
+  date_submitted DATE NOT NULL DEFAULT CURRENT_DATE,
+  date_reviewed DATE,
+  reviewed_by VARCHAR(150),
+  pastoral_notes TEXT,
+  disbursement_date DATE,
+  disbursement_method VARCHAR(50),
+  disbursement_channel VARCHAR(100),
+  disbursement_voucher_no VARCHAR(100),
+  supporting_documents TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 3.19 AUDIT TRAIL LOGS
 CREATE TABLE IF NOT EXISTS public.audit_logs (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   user_name VARCHAR(150) NOT NULL,
@@ -964,6 +1020,42 @@ ALTER TABLE public.communications ADD COLUMN IF NOT EXISTS status VARCHAR(30) DE
 ALTER TABLE public.communications ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE public.communications ADD COLUMN IF NOT EXISTS created_by TEXT;
 
+ALTER TABLE public.welfare_contributions ADD COLUMN IF NOT EXISTS member_id TEXT;
+ALTER TABLE public.welfare_contributions ADD COLUMN IF NOT EXISTS member_name VARCHAR(150) DEFAULT '';
+ALTER TABLE public.welfare_contributions ADD COLUMN IF NOT EXISTS tithe_number VARCHAR(50);
+ALTER TABLE public.welfare_contributions ADD COLUMN IF NOT EXISTS date DATE DEFAULT CURRENT_DATE;
+ALTER TABLE public.welfare_contributions ADD COLUMN IF NOT EXISTS month VARCHAR(7) DEFAULT TO_CHAR(CURRENT_DATE, 'YYYY-MM');
+ALTER TABLE public.welfare_contributions ADD COLUMN IF NOT EXISTS amount DECIMAL(14,2) DEFAULT 0.00;
+ALTER TABLE public.welfare_contributions ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) DEFAULT 'mobile_money';
+ALTER TABLE public.welfare_contributions ADD COLUMN IF NOT EXISTS payment_channel VARCHAR(100);
+ALTER TABLE public.welfare_contributions ADD COLUMN IF NOT EXISTS reference_no VARCHAR(100);
+ALTER TABLE public.welfare_contributions ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE public.welfare_contributions ADD COLUMN IF NOT EXISTS recorded_by VARCHAR(150) DEFAULT '';
+ALTER TABLE public.welfare_contributions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS claim_number VARCHAR(50);
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS member_id TEXT;
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS member_name VARCHAR(150) DEFAULT '';
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS member_phone VARCHAR(50);
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS category VARCHAR(50) DEFAULT 'emergency_relief';
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS title VARCHAR(200) DEFAULT '';
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS amount_requested DECIMAL(14,2) DEFAULT 0.00;
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS amount_approved DECIMAL(14,2) DEFAULT 0.00;
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'pending';
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS emergency_level VARCHAR(20) DEFAULT 'normal';
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS date_submitted DATE DEFAULT CURRENT_DATE;
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS date_reviewed DATE;
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS reviewed_by VARCHAR(150);
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS pastoral_notes TEXT;
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS disbursement_date DATE;
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS disbursement_method VARCHAR(50);
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS disbursement_channel VARCHAR(100);
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS disbursement_voucher_no VARCHAR(100);
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS supporting_documents TEXT;
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
 ALTER TABLE public.audit_logs ADD COLUMN IF NOT EXISTS user_name VARCHAR(150) DEFAULT '';
 ALTER TABLE public.audit_logs ADD COLUMN IF NOT EXISTS user_role VARCHAR(100);
 ALTER TABLE public.audit_logs ADD COLUMN IF NOT EXISTS action VARCHAR(100) DEFAULT '';
@@ -1016,6 +1108,12 @@ CREATE INDEX IF NOT EXISTS idx_pastoral_date ON public.pastoral_care(date);
 
 CREATE INDEX IF NOT EXISTS idx_prayer_date ON public.prayer_requests(date_submitted);
 CREATE INDEX IF NOT EXISTS idx_prayer_status ON public.prayer_requests(status);
+
+CREATE INDEX IF NOT EXISTS idx_welfare_contributions_member_id ON public.welfare_contributions(member_id);
+CREATE INDEX IF NOT EXISTS idx_welfare_contributions_month ON public.welfare_contributions(month);
+CREATE INDEX IF NOT EXISTS idx_welfare_claims_member_id ON public.welfare_claims(member_id);
+CREATE INDEX IF NOT EXISTS idx_welfare_claims_status ON public.welfare_claims(status);
+CREATE INDEX IF NOT EXISTS idx_welfare_claims_category ON public.welfare_claims(category);
 
 CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON public.audit_logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_module ON public.audit_logs(module);
@@ -1073,15 +1171,18 @@ CREATE TRIGGER trg_settings_updated_at
 -- ==============================================================================
 -- 7. ROW LEVEL SECURITY (RLS) POLICIES & SCHEMA PERMISSIONS
 -- ==============================================================================
--- Grant API access on schema public to anon and authenticated roles
+-- Grant API access on schema public with least privilege.
+-- Allow anonymous read-only access only where explicitly needed; all writes remain authenticated.
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO authenticated, service_role;
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO anon;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO authenticated, service_role;
 
 ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -1114,11 +1215,13 @@ DECLARE
 BEGIN
   FOREACH t IN ARRAY tables LOOP
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = t) THEN
-      EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_all_%s" ON public.%I;', t, t);
+      EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_select_%s" ON public.%I;', t, t);
+      EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_write_%s" ON public.%I;', t, t);
       EXECUTE format('DROP POLICY IF EXISTS "Allow all for anon" ON public.%I;', t);
       EXECUTE format('DROP POLICY IF EXISTS "Enable read access for all users" ON public.%I;', t);
       EXECUTE format('DROP POLICY IF EXISTS "Enable insert for all users" ON public.%I;', t);
-      EXECUTE format('CREATE POLICY "gwcc_policy_all_%s" ON public.%I FOR ALL TO public USING (true) WITH CHECK (true);', t, t);
+      EXECUTE format('CREATE POLICY "gwcc_policy_select_%s" ON public.%I FOR SELECT TO anon, authenticated, service_role USING (true);', t, t);
+      EXECUTE format('CREATE POLICY "gwcc_policy_write_%s" ON public.%I FOR ALL TO authenticated, service_role USING (auth.uid() IS NOT NULL) WITH CHECK (auth.uid() IS NOT NULL);', t, t);
     END IF;
   END LOOP;
 END
@@ -1141,23 +1244,25 @@ $$;
 -- ==============================================================================
 -- 9. SUPABASE STORAGE BUCKET (Media, Avatars & Member Photos)
 -- ==============================================================================
+-- Keep storage private by default. If a public image or media asset is required,
+-- add a specific policy for that object path instead of opening the whole bucket.
 INSERT INTO storage.buckets (id, name, public)
-VALUES ('gwcc-media', 'gwcc-media', true)
+VALUES ('gwcc-media', 'gwcc-media', false)
 ON CONFLICT (id) DO NOTHING;
 
 DO $$
 BEGIN
-  DROP POLICY IF EXISTS "gwcc_storage_public_read" ON storage.objects;
-  CREATE POLICY "gwcc_storage_public_read" ON storage.objects
-    FOR SELECT TO anon, authenticated USING (bucket_id = 'gwcc-media');
+  DROP POLICY IF EXISTS "gwcc_storage_authenticated_read" ON storage.objects;
+  CREATE POLICY "gwcc_storage_authenticated_read" ON storage.objects
+    FOR SELECT TO authenticated, service_role USING (bucket_id = 'gwcc-media');
 
-  DROP POLICY IF EXISTS "gwcc_storage_public_insert" ON storage.objects;
-  CREATE POLICY "gwcc_storage_public_insert" ON storage.objects
-    FOR INSERT TO anon, authenticated WITH CHECK (bucket_id = 'gwcc-media');
+  DROP POLICY IF EXISTS "gwcc_storage_authenticated_insert" ON storage.objects;
+  CREATE POLICY "gwcc_storage_authenticated_insert" ON storage.objects
+    FOR INSERT TO authenticated, service_role WITH CHECK (bucket_id = 'gwcc-media');
 
-  DROP POLICY IF EXISTS "gwcc_storage_public_update" ON storage.objects;
-  CREATE POLICY "gwcc_storage_public_update" ON storage.objects
-    FOR UPDATE TO anon, authenticated USING (bucket_id = 'gwcc-media');
+  DROP POLICY IF EXISTS "gwcc_storage_authenticated_update" ON storage.objects;
+  CREATE POLICY "gwcc_storage_authenticated_update" ON storage.objects
+    FOR UPDATE TO authenticated, service_role USING (bucket_id = 'gwcc-media');
 EXCEPTION
   WHEN undefined_table THEN NULL;
 END

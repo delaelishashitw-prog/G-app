@@ -4,7 +4,8 @@ import type { PaymentMethod, WelfareClaim, WelfareContribution } from '../../typ
 export function recordWelfareContribution(
   data: Omit<WelfareContribution, 'id' | 'created_at'>,
   setWelfareContributions: Dispatch<SetStateAction<WelfareContribution[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void
+  logAction: (action: string, module: string, details: string, recordId?: string) => void,
+  dbSyncUpsert?: (table: string, record: any) => Promise<void> | void
 ): WelfareContribution {
   const newRecord: WelfareContribution = {
     ...data,
@@ -13,6 +14,9 @@ export function recordWelfareContribution(
   };
 
   setWelfareContributions((prev) => [newRecord, ...prev]);
+  if (dbSyncUpsert) {
+    dbSyncUpsert('welfare_contributions', newRecord);
+  }
   logAction(
     'RECORD_WELFARE_DUES',
     'Welfare',
@@ -26,10 +30,14 @@ export function deleteWelfareContribution(
   id: string,
   welfareContributions: WelfareContribution[],
   setWelfareContributions: Dispatch<SetStateAction<WelfareContribution[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void
+  logAction: (action: string, module: string, details: string, recordId?: string) => void,
+  dbSyncDelete?: (table: string, id: string) => Promise<void> | void
 ) {
   const toDelete = welfareContributions.find((welfare) => welfare.id === id);
   setWelfareContributions((prev) => prev.filter((welfare) => welfare.id !== id));
+  if (dbSyncDelete) {
+    dbSyncDelete('welfare_contributions', id);
+  }
   if (toDelete) {
     logAction(
       'DELETE_WELFARE_DUES',
@@ -44,7 +52,8 @@ export function submitWelfareClaim(
   data: Omit<WelfareClaim, 'id' | 'claim_number' | 'created_at'>,
   welfareClaims: WelfareClaim[],
   setWelfareClaims: Dispatch<SetStateAction<WelfareClaim[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void
+  logAction: (action: string, module: string, details: string, recordId?: string) => void,
+  dbSyncUpsert?: (table: string, record: any) => Promise<void> | void
 ): WelfareClaim {
   const claimSeq = String(welfareClaims.length + 1).padStart(3, '0');
   const claimNumber = `BEN-${new Date().getFullYear()}-${claimSeq}`;
@@ -57,6 +66,9 @@ export function submitWelfareClaim(
   };
 
   setWelfareClaims((prev) => [newClaim, ...prev]);
+  if (dbSyncUpsert) {
+    dbSyncUpsert('welfare_claims', newClaim);
+  }
   logAction(
     'SUBMIT_WELFARE_CLAIM',
     'Welfare',
@@ -70,7 +82,8 @@ export function updateWelfareClaim(
   id: string,
   updates: Partial<WelfareClaim>,
   setWelfareClaims: Dispatch<SetStateAction<WelfareClaim[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void
+  logAction: (action: string, module: string, details: string, recordId?: string) => void,
+  dbSyncUpsert?: (table: string, record: any) => Promise<void> | void
 ) {
   setWelfareClaims((prev) =>
     prev.map((claim) => {
@@ -87,6 +100,9 @@ export function updateWelfareClaim(
         `Updated claim ${claim.claim_number} status to ${updates.status || claim.status}`,
         id
       );
+      if (dbSyncUpsert) {
+        dbSyncUpsert('welfare_claims', updated);
+      }
       return updated;
     })
   );
@@ -96,10 +112,14 @@ export function deleteWelfareClaim(
   id: string,
   welfareClaims: WelfareClaim[],
   setWelfareClaims: Dispatch<SetStateAction<WelfareClaim[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void
+  logAction: (action: string, module: string, details: string, recordId?: string) => void,
+  dbSyncDelete?: (table: string, id: string) => Promise<void> | void
 ) {
   const toDelete = welfareClaims.find((claim) => claim.id === id);
   setWelfareClaims((prev) => prev.filter((claim) => claim.id !== id));
+  if (dbSyncDelete) {
+    dbSyncDelete('welfare_claims', id);
+  }
   if (toDelete) {
     logAction(
       'DELETE_WELFARE_CLAIM',
@@ -120,7 +140,8 @@ export function disburseWelfareClaim(
     pastoral_notes?: string;
   },
   setWelfareClaims: Dispatch<SetStateAction<WelfareClaim[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void
+  logAction: (action: string, module: string, details: string, recordId?: string) => void,
+  dbSyncUpsert?: (table: string, record: any) => Promise<void> | void
 ) {
   const now = new Date().toISOString().split('T')[0];
   setWelfareClaims((prev) =>
@@ -138,6 +159,9 @@ export function disburseWelfareClaim(
         pastoral_notes: details.pastoral_notes || claim.pastoral_notes,
         updated_at: new Date().toISOString(),
       };
+      if (dbSyncUpsert) {
+        dbSyncUpsert('welfare_claims', updated);
+      }
       logAction(
         'DISBURSE_WELFARE_CLAIM',
         'Welfare',
