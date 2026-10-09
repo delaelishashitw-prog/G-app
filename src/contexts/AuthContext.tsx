@@ -209,6 +209,7 @@ function mapSupabaseUserToProfile(
       id: existing.id || user.id,
       email: cleanEmail || existing.email,
       role,
+      member_id: existing.member_id || (isElisha ? 'GWCC-0013' : undefined),
     };
   }
 
@@ -230,6 +231,7 @@ function mapSupabaseUserToProfile(
     role,
     phone,
     department,
+    member_id: isElisha ? 'GWCC-0013' : undefined,
     is_active: true,
     created_at: user.created_at || new Date().toISOString(),
     updated_at: new Date().toISOString(),

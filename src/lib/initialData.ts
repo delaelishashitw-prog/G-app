@@ -57,6 +57,7 @@ export const sampleUsers: UserProfile[] = [
     department: 'Senior Pastoral Board & Executive Council',
     role: 'super_admin',
     is_active: true,
+    member_id: 'GWCC-0013',
     created_at: '2025-01-01T08:00:00.000Z',
     updated_at: '2026-01-10T10:00:00.000Z',
   },

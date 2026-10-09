@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import {
   Church,
   User,
@@ -45,7 +45,7 @@ import {
   HelpCircle,
   DownloadCloud,
 } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, isElishaRichard } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useToast } from '../contexts/ToastContext';
 import {
@@ -252,9 +252,47 @@ export const MemberPortalPage: React.FC = () => {
 
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<PortalTab>('overview');
+  const [activeTab, setActiveTab] = useState<PortalTab>(() => {
+    const validTabs: PortalTab[] = [
+      'overview',
+      'discipleship',
+      'roster',
+      'giving',
+      'welfare',
+      'pledges',
+      'attendance',
+      'ministry',
+      'prayers',
+      'events',
+      'profile',
+    ];
+    const requested = searchParams.get('tab') as PortalTab;
+    return validTabs.includes(requested) ? requested : 'overview';
+  });
+
+  React.useEffect(() => {
+    const requested = searchParams.get('tab') as PortalTab;
+    const validTabs: PortalTab[] = [
+      'overview',
+      'discipleship',
+      'roster',
+      'giving',
+      'welfare',
+      'pledges',
+      'attendance',
+      'ministry',
+      'prayers',
+      'events',
+      'profile',
+    ];
+    if (requested && validTabs.includes(requested)) {
+      setActiveTab(requested);
+    }
+  }, [searchParams]);
+
   const [isMemberClaimModalOpen, setIsMemberClaimModalOpen] = useState(false);
 
   // Sign-in Form States (when not yet logged in as a member)
@@ -286,6 +324,16 @@ export const MemberPortalPage: React.FC = () => {
       if (currentUser.member_id) {
         const byMemId = members.find((m) => m.id === currentUser.member_id || m.member_id === currentUser.member_id);
         if (byMemId) return byMemId;
+      }
+
+      if (isElishaRichard(currentUser, currentUser.email)) {
+        const elishaMember = members.find(
+          (m) =>
+            m.member_id === 'GWCC-0013' ||
+            m.id === 'mem-13' ||
+            (m.first_name.toLowerCase().includes('elisha') && m.last_name.toLowerCase().includes('richard'))
+        );
+        if (elishaMember) return elishaMember;
       }
 
       if (currentUser.email) {
@@ -686,13 +734,17 @@ export const MemberPortalPage: React.FC = () => {
     }
   }, [upcomingRosterDuties.length, memberRosterAssignments.length]);
 
-  const handleConfirmRosterAttendance = (assignmentId: string) => {
-    updateRosterAssignment(assignmentId, { status: 'confirmed' });
+  const handleConfirmRosterAttendance = (assignmentId: string, fallback?: RosterAssignment) => {
+    updateRosterAssignment(assignmentId, { status: 'confirmed' }, fallback);
     toastSuccess('Attendance Confirmed', 'You have confirmed your attendance for this service duty assignment!');
   };
 
   const handleConfirmSubstitute = (assignmentId: string, reason: string, note: string) => {
-    updateRosterAssignment(assignmentId, { status: 'substituted', notes: note });
+    updateRosterAssignment(
+      assignmentId,
+      { status: 'substituted', notes: note },
+      selectedSubstituteAssignment || undefined
+    );
     toastSuccess('Substitute Requested', 'Your substitute request has been logged. The department coordinator has been notified.');
   };
 
@@ -1567,7 +1619,7 @@ export const MemberPortalPage: React.FC = () => {
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => handleConfirmRosterAttendance(nextUpcomingDuty.id)}
+                        onClick={() => handleConfirmRosterAttendance(nextUpcomingDuty.id, nextUpcomingDuty)}
                         className="px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
                       >
                         <Check className="w-3.5 h-3.5" />
@@ -2154,7 +2206,7 @@ export const MemberPortalPage: React.FC = () => {
                     {nextUpcomingDuty.status !== 'confirmed' && (
                       <button
                         type="button"
-                        onClick={() => handleConfirmRosterAttendance(nextUpcomingDuty.id)}
+                        onClick={() => handleConfirmRosterAttendance(nextUpcomingDuty.id, nextUpcomingDuty)}
                         className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition shadow-xs cursor-pointer"
                       >
                         <Check className="w-3.5 h-3.5" />
@@ -2316,7 +2368,7 @@ export const MemberPortalPage: React.FC = () => {
                         {assignment.status !== 'confirmed' && (
                           <button
                             type="button"
-                            onClick={() => handleConfirmRosterAttendance(assignment.id)}
+                            onClick={() => handleConfirmRosterAttendance(assignment.id, assignment)}
                             className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl transition flex items-center gap-1 shadow-2xs cursor-pointer text-xs"
                           >
                             <Check className="w-3.5 h-3.5" />
