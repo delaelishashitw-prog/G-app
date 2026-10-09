@@ -362,7 +362,7 @@ interface ChurchDataContextType {
   // Volunteer & Multi-Department Duty Roster
   rosterAssignments: RosterAssignment[];
   addRosterAssignment: (record: Omit<RosterAssignment, 'id' | 'created_at'>) => RosterAssignment;
-  updateRosterAssignment: (id: string, updates: Partial<RosterAssignment>) => void;
+  updateRosterAssignment: (id: string, updates: Partial<RosterAssignment>, fallbackAssignment?: RosterAssignment) => void;
   deleteRosterAssignment: (id: string) => void;
   batchAddOrUpdateRosterAssignments: (records: Omit<RosterAssignment, 'id' | 'created_at'>[]) => void;
   rosterConflicts: RosterConflict[];
@@ -1530,9 +1530,10 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const updateRosterAssignment = (
     id: string,
-    updates: Partial<RosterAssignment>
+    updates: Partial<RosterAssignment>,
+    fallbackAssignment?: RosterAssignment
   ) => {
-    updateRosterAssignmentRecord(id, updates, setRosterAssignments, logAction);
+    updateRosterAssignmentRecord(id, updates, setRosterAssignments, logAction, fallbackAssignment);
   };
 
   const deleteRosterAssignment = (id: string) => {

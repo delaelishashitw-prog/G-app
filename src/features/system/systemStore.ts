@@ -18,6 +18,11 @@ export function saveToStorage<T>(key: string, data: T) {
       pendingSaves.forEach((val, k) => {
         try {
           localStorage.setItem(`gwcc_${k}`, JSON.stringify(val));
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('gwcc_storage_sync', { detail: { key: k } })
+            );
+          }
         } catch (err) {
           console.error(`Failed to save gwcc_${k}`, err);
         }

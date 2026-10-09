@@ -134,10 +134,28 @@ export function updateRosterAssignment(
   id: string,
   updates: Partial<RosterAssignment>,
   setRosterAssignments: Dispatch<SetStateAction<RosterAssignment[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void
+  logAction: (action: string, module: string, details: string, recordId?: string) => void,
+  fallbackAssignment?: RosterAssignment
 ) {
-  setRosterAssignments((prev) =>
-    prev.map((assignment) => {
+  setRosterAssignments((prev) => {
+    const exists = prev.some((assignment) => assignment.id === id);
+    if (!exists && fallbackAssignment) {
+      const materialized: RosterAssignment = {
+        ...fallbackAssignment,
+        ...updates,
+        id,
+        created_at: new Date().toISOString(),
+      };
+      logAction(
+        'UPDATE_ROSTER_DUTY',
+        'Services',
+        `Materialized roster assignment for ${materialized.member_name} (${materialized.role_title}) to status ${updates.status || materialized.status}`,
+        id
+      );
+      return [materialized, ...prev];
+    }
+
+    return prev.map((assignment) => {
       if (assignment.id !== id) return assignment;
 
       const updated = {
@@ -151,8 +169,8 @@ export function updateRosterAssignment(
         id
       );
       return updated;
-    })
-  );
+    });
+  });
 }
 
 export function deleteRosterAssignment(
