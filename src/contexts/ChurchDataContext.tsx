@@ -528,6 +528,37 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return loaded && loaded.length > 0 ? loaded : sampleIntercessoryWatchSlots;
   });
 
+  useEffect(() => {
+    const handleStorageSync = (event: StorageEvent) => {
+      if (!event.key) return;
+
+      if (event.key === 'services') {
+        try {
+          const nextValue = event.newValue ? JSON.parse(event.newValue) : sampleServices;
+          if (Array.isArray(nextValue)) {
+            setServices(nextValue);
+          }
+        } catch {
+          // Ignore malformed storage payloads and keep current state.
+        }
+      }
+
+      if (event.key === 'rosterAssignments') {
+        try {
+          const nextValue = event.newValue ? JSON.parse(event.newValue) : sampleRosterAssignments;
+          if (Array.isArray(nextValue)) {
+            setRosterAssignments(nextValue);
+          }
+        } catch {
+          // Ignore malformed storage payloads and keep current state.
+        }
+      }
+    };
+
+    window.addEventListener('storage', handleStorageSync);
+    return () => window.removeEventListener('storage', handleStorageSync);
+  }, []);
+
   // Supabase states
   const [supabaseConfig, setSupabaseConfig] = useState(getStoredSupabaseConfig());
   const [supabaseStatus, setSupabaseStatus] = useState<SupabaseStatus>(() => getInitialSupabaseStatus());
