@@ -64,6 +64,8 @@ import { cleanGhanaPhone } from '../lib/currencyUtils';
 import { ApplyWelfareClaimModal } from '../components/welfare/ApplyWelfareClaimModal';
 import { MemberCertificateModal } from '../components/portal/MemberCertificateModal';
 import { RequestSubstituteModal } from '../components/portal/RequestSubstituteModal';
+import { DownloadMyDutyModal } from '../components/portal/DownloadMyDutyModal';
+import { downloadMyDutyRosterPdf } from '../lib/myDutyPdfGenerator';
 
 type PortalTab =
   | 'overview'
@@ -713,8 +715,15 @@ export const MemberPortalPage: React.FC = () => {
 
   // Discipleship & Roster Modals & States
   const [isCertificateModalOpen, setIsCertificateModalOpen] = useState(false);
+  const [isDownloadDutyModalOpen, setIsDownloadDutyModalOpen] = useState(false);
+  const [dutyModalInitialAssignmentId, setDutyModalInitialAssignmentId] = useState<string | undefined>(undefined);
   const [selectedSubstituteAssignment, setSelectedSubstituteAssignment] = useState<RosterAssignment | null>(null);
   const [rosterViewFilter, setRosterViewFilter] = useState<'upcoming' | 'all' | 'past'>('upcoming');
+
+  const handleOpenDownloadDutyModal = (assignmentId?: string) => {
+    setDutyModalInitialAssignmentId(assignmentId);
+    setIsDownloadDutyModalOpen(true);
+  };
 
   // Displayed Duties based on selected filter (ensures duties are immediately visible)
   const displayedDuties = useMemo(() => {
@@ -1635,14 +1644,28 @@ export const MemberPortalPage: React.FC = () => {
                     </div>
                   ) : null}
 
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('roster')}
-                    className="text-xs text-teal-700 hover:text-teal-900 font-bold inline-flex items-center gap-1 ml-auto cursor-pointer"
-                  >
-                    <span>View My Duty Schedule</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-2 ml-auto">
+                    {memberRosterAssignments.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenDownloadDutyModal()}
+                        className="px-3 py-1.5 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 text-xs font-bold inline-flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
+                        title="Download your duty roster as a printable PDF"
+                      >
+                        <Download className="w-3.5 h-3.5 text-teal-700" />
+                        <span>Download My Duty</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('roster')}
+                      className="text-xs text-teal-700 hover:text-teal-900 font-bold inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>View My Duty Schedule</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2176,14 +2199,28 @@ export const MemberPortalPage: React.FC = () => {
                   </p>
                 </div>
 
-                <div className="text-right sm:self-auto self-start">
-                  <span className="text-[10px] uppercase font-bold tracking-wider text-teal-300 block">
-                    Upcoming Assignments
-                  </span>
-                  <span className="text-3xl font-black text-white">
-                    {upcomingRosterDuties.length}
-                  </span>
-                  <span className="text-[10px] text-slate-300 block">Scheduled shifts</span>
+                <div className="flex flex-col sm:items-end gap-2 sm:self-auto self-start">
+                  <div className="text-right sm:block hidden">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-teal-300 block">
+                      Upcoming Assignments
+                    </span>
+                    <span className="text-3xl font-black text-white">
+                      {upcomingRosterDuties.length}
+                    </span>
+                    <span className="text-[10px] text-slate-300 block">Scheduled shifts</span>
+                  </div>
+
+                  {memberRosterAssignments.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDownloadDutyModal()}
+                      className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-xl text-xs flex items-center gap-2 transition shadow-md cursor-pointer hover:scale-[1.02] active:scale-[0.98]"
+                      title="Download printable PDF of your duty roster"
+                    >
+                      <Download className="w-4 h-4 text-slate-950" />
+                      <span>Download My Duty</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -2219,6 +2256,15 @@ export const MemberPortalPage: React.FC = () => {
                       className="px-3.5 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-semibold border border-white/20 transition cursor-pointer"
                     >
                       Request Substitute
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDownloadDutyModal(nextUpcomingDuty.id)}
+                      className="px-3.5 py-1.5 bg-teal-800/80 hover:bg-teal-700 text-teal-100 rounded-xl text-xs font-bold border border-teal-400/40 transition cursor-pointer flex items-center gap-1.5"
+                      title="Download PDF slip for this upcoming service"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download Slip</span>
                     </button>
                   </div>
                 </div>
@@ -2263,9 +2309,22 @@ export const MemberPortalPage: React.FC = () => {
                 </button>
               </div>
 
-              <p className="text-[11px] text-slate-500 hidden sm:block">
-                Greater Works City Church Roster Protocol
-              </p>
+              <div className="flex items-center gap-2">
+                {memberRosterAssignments.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenDownloadDutyModal()}
+                    className="px-3.5 py-1.5 rounded-xl bg-white hover:bg-emerald-50 text-emerald-950 border border-emerald-300 text-xs font-bold inline-flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
+                    title="Download personal duty roster as printable PDF"
+                  >
+                    <Download className="w-3.5 h-3.5 text-emerald-800" />
+                    <span>Download My Duty</span>
+                  </button>
+                )}
+                <p className="text-[11px] text-slate-500 hidden sm:block">
+                  Greater Works City Church Roster Protocol
+                </p>
+              </div>
             </div>
 
             {/* Filter Notice Banner if upcoming is empty but member has assignments */}
@@ -2365,6 +2424,16 @@ export const MemberPortalPage: React.FC = () => {
                       </div>
 
                       <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDownloadDutyModal(assignment.id)}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl transition flex items-center gap-1 cursor-pointer text-xs"
+                          title="Download printable PDF slip for this shift"
+                        >
+                          <Download className="w-3.5 h-3.5 text-slate-500" />
+                          <span>Download Slip</span>
+                        </button>
+
                         {assignment.status !== 'confirmed' && (
                           <button
                             type="button"
@@ -3632,6 +3701,18 @@ export const MemberPortalPage: React.FC = () => {
           assignment={selectedSubstituteAssignment}
           onConfirmSubstitute={handleConfirmSubstitute}
           settings={settings}
+        />
+      )}
+
+      {/* Download My Duty PDF Modal */}
+      {isDownloadDutyModalOpen && activeMember && (
+        <DownloadMyDutyModal
+          isOpen={isDownloadDutyModalOpen}
+          onClose={() => setIsDownloadDutyModalOpen(false)}
+          assignments={memberRosterAssignments}
+          member={activeMember}
+          settings={settings}
+          initialSelectedAssignmentId={dutyModalInitialAssignmentId}
         />
       )}
     </div>
