@@ -1526,7 +1526,28 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // MULTI-DEPARTMENT DUTY ROSTER
   const addRosterAssignment = (
     data: Omit<RosterAssignment, 'id' | 'created_at'>
-  ): RosterAssignment => addRosterAssignmentRecord(data, setRosterAssignments, logAction);
+  ): RosterAssignment => {
+    const created = addRosterAssignmentRecord(data, setRosterAssignments, logAction);
+    try {
+      fetch('/api/roster/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'ROSTER_ASSIGNED',
+          memberId: created.member_id,
+          memberName: created.member_name,
+          dutyId: created.id,
+          serviceName: created.service_name,
+          date: created.date,
+          department: created.department,
+          roleTitle: created.role_title,
+          reportTime: created.report_time,
+          notes: created.notes,
+        }),
+      }).catch(() => {});
+    } catch {}
+    return created;
+  };
 
   const updateRosterAssignment = (
     id: string,
@@ -1534,6 +1555,34 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     fallbackAssignment?: RosterAssignment
   ) => {
     updateRosterAssignmentRecord(id, updates, setRosterAssignments, logAction, fallbackAssignment);
+    try {
+      const target = rosterAssignments.find((a) => a.id === id) || fallbackAssignment;
+      if (target) {
+        const type =
+          updates.status === 'confirmed'
+            ? 'ROSTER_CONFIRMED'
+            : updates.status === 'substituted'
+            ? 'ROSTER_SUBSTITUTED'
+            : 'ROSTER_UPDATED';
+
+        fetch('/api/roster/notify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type,
+            memberId: target.member_id,
+            memberName: target.member_name,
+            dutyId: target.id,
+            serviceName: target.service_name,
+            date: target.date,
+            department: target.department,
+            roleTitle: target.role_title,
+            reportTime: target.report_time,
+            notes: updates.notes || target.notes,
+          }),
+        }).catch(() => {});
+      }
+    } catch {}
   };
 
   const deleteRosterAssignment = (id: string) => {

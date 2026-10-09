@@ -66,6 +66,8 @@ import { MemberCertificateModal } from '../components/portal/MemberCertificateMo
 import { RequestSubstituteModal } from '../components/portal/RequestSubstituteModal';
 import { DownloadMyDutyModal } from '../components/portal/DownloadMyDutyModal';
 import { downloadMyDutyRosterPdf } from '../lib/myDutyPdfGenerator';
+import { useRealtimeRosterNotifications } from '../hooks/useRealtimeRosterNotifications';
+import { RosterNotificationCenter } from '../components/portal/RosterNotificationCenter';
 
 type PortalTab =
   | 'overview'
@@ -720,6 +722,25 @@ export const MemberPortalPage: React.FC = () => {
   const [selectedSubstituteAssignment, setSelectedSubstituteAssignment] = useState<RosterAssignment | null>(null);
   const [rosterViewFilter, setRosterViewFilter] = useState<'upcoming' | 'all' | 'past'>('upcoming');
 
+  // Real-time Service Duty Roster WebSocket Notifications
+  const {
+    status: wsStatus,
+    notifications: rosterAlerts,
+    unreadCount: unreadRosterAlertCount,
+    latestAlert: latestRosterAlert,
+    clearLatestAlert,
+    markAsRead: markRosterAlertAsRead,
+    markAllAsRead: markAllRosterAlertsAsRead,
+    simulateDutyAlert,
+  } = useRealtimeRosterNotifications({
+    memberId: activeMember?.member_id || activeMember?.id,
+    memberName: activeMember ? `${activeMember.first_name} ${activeMember.last_name}` : undefined,
+    enabled: Boolean(activeMember),
+    onNotificationReceived: (notif) => {
+      toastSuccess('Duty Roster Alert', notif.message);
+    },
+  });
+
   const handleOpenDownloadDutyModal = (assignmentId?: string) => {
     setDutyModalInitialAssignmentId(assignmentId);
     setIsDownloadDutyModalOpen(true);
@@ -1279,8 +1300,22 @@ export const MemberPortalPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Member Profile Badge & Sign Out */}
-            <div className="flex items-center gap-3">
+            {/* Member Profile Badge & Notifications & Sign Out */}
+            <div className="flex items-center gap-2.5 sm:gap-3">
+              {/* Real-time Duty Roster Notification Center */}
+              <RosterNotificationCenter
+                notifications={rosterAlerts}
+                unreadCount={unreadRosterAlertCount}
+                status={wsStatus}
+                latestAlert={latestRosterAlert}
+                onClearLatestAlert={clearLatestAlert}
+                onMarkAsRead={markRosterAlertAsRead}
+                onMarkAllAsRead={markAllRosterAlertsAsRead}
+                onViewDuty={(_dutyId) => setActiveTab('roster')}
+                onDownloadDutyPdf={(dutyId) => handleOpenDownloadDutyModal(dutyId)}
+                onSimulateTestAlert={simulateDutyAlert}
+              />
+
               <div className="flex items-center gap-2 bg-emerald-900/60 border border-emerald-700/60 rounded-full py-1 px-3">
                 {activeMember.profile_photo_url ? (
                   <img
@@ -1338,8 +1373,14 @@ export const MemberPortalPage: React.FC = () => {
                   id: 'roster',
                   label: 'My Duty Roster',
                   icon: UserCheck,
-                  badge: upcomingRosterDuties.length > 0 ? `${upcomingRosterDuties.length}` : undefined,
-                  badgeColor: 'bg-emerald-400 text-slate-950 font-bold',
+                  badge: unreadRosterAlertCount > 0
+                    ? `${unreadRosterAlertCount} New`
+                    : upcomingRosterDuties.length > 0
+                    ? `${upcomingRosterDuties.length}`
+                    : undefined,
+                  badgeColor: unreadRosterAlertCount > 0
+                    ? 'bg-amber-400 text-slate-950 font-black animate-pulse'
+                    : 'bg-emerald-400 text-slate-950 font-bold',
                 },
                 { id: 'giving', label: 'Tithes & Giving', icon: Wallet },
                 { id: 'welfare', label: 'Welfare & Relief', icon: HeartHandshake },
@@ -2182,7 +2223,7 @@ export const MemberPortalPage: React.FC = () => {
             <div className="bg-linear-to-r from-teal-950 via-slate-900 to-emerald-950 text-white p-6 sm:p-8 rounded-3xl border border-teal-700/50 shadow-md relative overflow-hidden space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-teal-400/20 text-teal-300 border border-teal-400/30 flex items-center gap-1">
                       <UserCheck className="w-3.5 h-3.5" />
                       Volunteer & Duty Roster Hub
@@ -2190,6 +2231,18 @@ export const MemberPortalPage: React.FC = () => {
                     <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-white/10 text-emerald-200">
                       {activeMember.ministry_name || 'Department Volunteer'}
                     </span>
+                    <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white/10 text-emerald-200 border border-white/15">
+                      <span className={`w-1.5 h-1.5 rounded-full ${wsStatus === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                      <span>{wsStatus === 'connected' ? 'Live Duty Sync Active' : 'Syncing...'}</span>
+                      <button
+                        type="button"
+                        onClick={() => simulateDutyAlert()}
+                        className="ml-1 text-[9px] text-amber-300 hover:text-amber-200 underline font-bold cursor-pointer"
+                        title="Simulate incoming duty assignment alert via WebSocket"
+                      >
+                        (Test Alert)
+                      </button>
+                    </div>
                   </div>
                   <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
                     My Service Duty Roster

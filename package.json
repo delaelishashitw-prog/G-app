@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "node --test src/lib/financeDateUtils.test.js src/lib/networkStatus.test.js src/lib/keyboardShortcuts.test.js src/lib/refreshFunctionality.test.js src/lib/attendanceDateUtils.test.js && tsx --test src/lib/familyUtils.test.js src/lib/supabaseWelfareSync.test.js src/lib/myDutyPdfGenerator.test.js"
+    "test": "node --test src/lib/financeDateUtils.test.js src/lib/networkStatus.test.js src/lib/keyboardShortcuts.test.js src/lib/refreshFunctionality.test.js src/lib/attendanceDateUtils.test.js src/lib/rosterNotification.test.js && tsx --test src/lib/familyUtils.test.js src/lib/supabaseWelfareSync.test.js src/lib/myDutyPdfGenerator.test.js"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -30,16 +30,18 @@
     "react-dom": "^19.0.1",
     "react-router-dom": "^7.18.4",
     "recharts": "^3.10.1",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
+    "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.18.2",
     "autoprefixer": "^10.4.21",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
-    "typescript": "^7.0.2",
-    "@types/express": "^4.17.21"
+    "typescript": "^7.0.2"
   }
 }
