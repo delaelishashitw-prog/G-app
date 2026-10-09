@@ -145,6 +145,14 @@ export function useKeyboardShortcuts({
       action: () => navigateWithFeedback('/reports', 'Analytics & Reports', 'Ctrl+R'),
     },
     {
+      id: 'nav-users',
+      category: 'Navigation',
+      label: 'Staff Directory & Access Control',
+      keys: ['Ctrl', 'U'],
+      description: 'Staff Registry, Roles & Password Reset',
+      action: () => navigateWithFeedback('/users', 'Staff Directory & Access Control', 'Ctrl+U'),
+    },
+    {
       id: 'nav-settings',
       category: 'Navigation',
       label: 'Settings & Supabase',
@@ -354,6 +362,12 @@ export function useKeyboardShortcuts({
           case 'r':
             e.preventDefault();
             navigateWithFeedback('/reports', 'Analytics & Reports', modifier ? 'Ctrl+R' : 'Alt+R');
+            break;
+
+          // Ctrl+U: Staff Directory & Access Control
+          case 'u':
+            e.preventDefault();
+            navigateWithFeedback('/users', 'Staff Directory & Access Control', modifier ? 'Ctrl+U' : 'Alt+U');
             break;
 
           // Ctrl+J: Pastoral AI Assistant

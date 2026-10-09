@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, X, Users, UserCheck, Calendar, ArrowRight, Phone, MapPin, Hash } from 'lucide-react';
+import { Search, X, Users, UserCheck, Calendar, ArrowRight, Phone, MapPin, Hash, Shield } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useChurchData } from '../contexts/ChurchDataContext';
 
@@ -78,7 +78,24 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
       )
     : [];
 
-  const totalResults = matchingMembers.length + matchingVisitors.length + matchingEvents.length;
+  const SYSTEM_PAGES = [
+    { title: 'Staff Directory & Access Control', path: '/users', keywords: ['staff', 'users', 'roles', 'directory', 'access', 'admin', 'permissions', 'super admin', 'password'], desc: 'Staff registry, role permissions & password management' },
+    { title: 'Church Settings & Supabase', path: '/settings', keywords: ['settings', 'supabase', 'database', 'security', 'password', 'config'], desc: 'System configuration, security policies & cloud database' },
+    { title: 'Members Directory', path: '/members', keywords: ['members', 'directory', 'people'], desc: 'Full member registry and profiles' },
+    { title: 'Finance & Giving', path: '/finance', keywords: ['finance', 'giving', 'tithe', 'offering'], desc: 'Giving transactions, collections and accounts' },
+    { title: 'Pastoral Care', path: '/pastoral-care', keywords: ['pastoral', 'visitation', 'care', 'counseling'], desc: 'Pastoral visits, counseling and requests' },
+    { title: 'Welfare & Benevolence', path: '/welfare', keywords: ['welfare', 'benevolence', 'aid', 'claims', 'contributions'], desc: 'Benevolence funds and welfare claims' },
+  ];
+
+  const matchingPages = cleanQuery
+    ? SYSTEM_PAGES.filter(
+        (p) =>
+          p.title.toLowerCase().includes(cleanQuery) ||
+          p.keywords.some((k) => k.includes(cleanQuery) || cleanQuery.includes(k))
+      )
+    : [];
+
+  const totalResults = matchingMembers.length + matchingVisitors.length + matchingEvents.length + matchingPages.length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-16 px-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
@@ -126,6 +143,41 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
             <div className="py-8 text-center text-slate-400">
               <p className="text-sm font-medium text-slate-600">No records found matching &quot;{query}&quot;</p>
               <p className="text-xs text-slate-400 mt-1">Try checking for typos or searching by phone number.</p>
+            </div>
+          )}
+
+          {/* Quick Navigation Matches */}
+          {matchingPages.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-indigo-800 mb-2">
+                <Shield className="w-4 h-4 text-indigo-600" />
+                <span>Modules & Workstations ({matchingPages.length})</span>
+              </div>
+              <div className="space-y-1.5">
+                {matchingPages.map((page) => (
+                  <div
+                    key={page.path}
+                    onClick={() => {
+                      onClose();
+                      navigate(page.path);
+                    }}
+                    className="flex items-center justify-between p-3 rounded-xl border border-indigo-100 bg-indigo-50/40 hover:bg-indigo-50 hover:border-indigo-300 cursor-pointer transition group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                        <Shield className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="font-bold text-sm text-slate-900 group-hover:text-indigo-900">
+                          {page.title}
+                        </div>
+                        <div className="text-xs text-slate-500">{page.desc}</div>
+                      </div>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-indigo-600 transition" />
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

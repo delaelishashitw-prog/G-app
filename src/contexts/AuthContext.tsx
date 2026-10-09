@@ -100,6 +100,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
     'prayer_requests',
     'communication',
     'reports',
+    'users',
+    'settings',
     'audit_logs',
   ],
   administrator: [
@@ -113,6 +115,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
     'events',
     'communication',
     'reports',
+    'users',
     'settings',
     'audit_logs',
   ],
@@ -1156,12 +1159,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const canAccess = (module: string): boolean => {
+    if (isElishaRichard(currentUser) || currentUser.role === 'super_admin') {
+      return true;
+    }
     const allowed = ROLE_PERMISSIONS[currentUser.role] || [];
-    return allowed.includes(module) || currentUser.role === 'super_admin';
+    return allowed.includes(module);
   };
 
   const hasRole = (roles: UserRole[]): boolean => {
-    return roles.includes(currentUser.role) || currentUser.role === 'super_admin';
+    if (isElishaRichard(currentUser) || currentUser.role === 'super_admin') {
+      return true;
+    }
+    return roles.includes(currentUser.role);
   };
 
   const isMemberPortalUser = currentUser.role === 'member' || currentMember !== null;

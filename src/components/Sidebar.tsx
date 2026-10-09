@@ -177,7 +177,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       items: [
         { name: 'Reports & Analytics', path: '/reports', icon: BarChart3, module: 'reports' },
         { name: 'Asset Inventory', path: '/inventory', icon: Package, module: 'settings' },
-        { name: 'Users & Roles', path: '/users', icon: ShieldCheck, module: 'users' },
+        {
+          name: 'Staff Directory & Access Control',
+          path: '/users',
+          icon: ShieldCheck,
+          module: 'users',
+          badge: 'Staff',
+          badgeColor: 'bg-indigo-600 text-white font-medium text-[10px]',
+        },
         { name: 'Audit Logs', path: '/audit-logs', icon: History, module: 'audit_logs' },
         { name: 'Settings & Supabase', path: '/settings', icon: Settings, module: 'settings' },
       ],
