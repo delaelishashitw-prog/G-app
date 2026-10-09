@@ -795,7 +795,63 @@ CREATE TABLE IF NOT EXISTS public.communications (
   created_by TEXT
 );
 
--- 3.18 AUDIT TRAIL LOGS
+-- 3.18 WELFARE CONTRIBUTIONS & RELIEF FUND
+CREATE TABLE IF NOT EXISTS public.welfare_contributions (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  member_id TEXT NOT NULL,
+  member_name VARCHAR(150) NOT NULL,
+  tithe_number VARCHAR(50),
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  month VARCHAR(7) NOT NULL,
+  amount DECIMAL(14,2) NOT NULL DEFAULT 0.00 CHECK (amount >= 0),
+  payment_method VARCHAR(50) NOT NULL DEFAULT 'mobile_money',
+  payment_channel VARCHAR(100),
+  reference_no VARCHAR(100),
+  notes TEXT,
+  recorded_by VARCHAR(150) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.welfare_claims (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  claim_number VARCHAR(50) UNIQUE NOT NULL,
+  member_id TEXT NOT NULL,
+  member_name VARCHAR(150) NOT NULL,
+  member_phone VARCHAR(50),
+  category VARCHAR(50) NOT NULL CHECK (
+    category IN (
+      'bereavement',
+      'hospital_medical',
+      'childbirth_naming',
+      'wedding_marriage',
+      'education_welfare',
+      'emergency_relief'
+    )
+  ),
+  title VARCHAR(200) NOT NULL,
+  description TEXT NOT NULL,
+  amount_requested DECIMAL(14,2) NOT NULL DEFAULT 0.00 CHECK (amount_requested >= 0),
+  amount_approved DECIMAL(14,2) DEFAULT 0.00 CHECK (amount_approved IS NULL OR amount_approved >= 0),
+  status VARCHAR(30) NOT NULL DEFAULT 'pending' CHECK (
+    status IN ('pending', 'under_review', 'approved', 'disbursed', 'declined')
+  ),
+  emergency_level VARCHAR(20) NOT NULL DEFAULT 'normal' CHECK (
+    emergency_level IN ('normal', 'urgent', 'critical')
+  ),
+  date_submitted DATE NOT NULL DEFAULT CURRENT_DATE,
+  date_reviewed DATE,
+  reviewed_by VARCHAR(150),
+  pastoral_notes TEXT,
+  disbursement_date DATE,
+  disbursement_method VARCHAR(50),
+  disbursement_channel VARCHAR(100),
+  disbursement_voucher_no VARCHAR(100),
+  supporting_documents TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 3.19 AUDIT TRAIL LOGS
 CREATE TABLE IF NOT EXISTS public.audit_logs (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   user_name VARCHAR(150) NOT NULL,
@@ -1032,6 +1088,12 @@ CREATE INDEX IF NOT EXISTS idx_pastoral_date ON public.pastoral_care(date);
 CREATE INDEX IF NOT EXISTS idx_prayer_date ON public.prayer_requests(date_submitted);
 CREATE INDEX IF NOT EXISTS idx_prayer_status ON public.prayer_requests(status);
 
+CREATE INDEX IF NOT EXISTS idx_welfare_contributions_member_id ON public.welfare_contributions(member_id);
+CREATE INDEX IF NOT EXISTS idx_welfare_contributions_month ON public.welfare_contributions(month);
+CREATE INDEX IF NOT EXISTS idx_welfare_claims_member_id ON public.welfare_claims(member_id);
+CREATE INDEX IF NOT EXISTS idx_welfare_claims_status ON public.welfare_claims(status);
+CREATE INDEX IF NOT EXISTS idx_welfare_claims_category ON public.welfare_claims(category);
+
 CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON public.audit_logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_module ON public.audit_logs(module);
 
@@ -1085,6 +1147,11 @@ CREATE TRIGGER trg_settings_updated_at
   BEFORE UPDATE ON public.settings
   FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 
+DROP TRIGGER IF EXISTS trg_welfare_claims_updated_at ON public.welfare_claims;
+CREATE TRIGGER trg_welfare_claims_updated_at
+  BEFORE UPDATE ON public.welfare_claims
+  FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
 -- ==============================================================================
 -- 7. ROW LEVEL SECURITY (RLS) POLICIES & SCHEMA PERMISSIONS
 -- ==============================================================================
@@ -1116,6 +1183,8 @@ ALTER TABLE public.pastoral_care ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.prayer_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.communications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.welfare_contributions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.welfare_claims ENABLE ROW LEVEL SECURITY;
 
 DO $$
 DECLARE
@@ -1124,12 +1193,15 @@ DECLARE
     'settings', 'profiles', 'ministries', 'small_groups', 'members',
     'visitors', 'services', 'attendance', 'headcounts', 'giving',
     'pledge_campaigns', 'pledges', 'expenses', 'events', 'pastoral_care',
-    'prayer_requests', 'communications', 'audit_logs'
+    'prayer_requests', 'communications', 'audit_logs',
+    'welfare_contributions', 'welfare_claims'
   ];
 BEGIN
   FOREACH t IN ARRAY tables LOOP
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = t) THEN
       EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_all_%s" ON public.%I;', t, t);
+      EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_select_%s" ON public.%I;', t, t);
+      EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_write_%s" ON public.%I;', t, t);
       EXECUTE format('DROP POLICY IF EXISTS "Allow all for anon" ON public.%I;', t);
       EXECUTE format('DROP POLICY IF EXISTS "Enable read access for all users" ON public.%I;', t);
       EXECUTE format('DROP POLICY IF EXISTS "Enable insert for all users" ON public.%I;', t);
@@ -1145,7 +1217,7 @@ $$;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.members, public.giving, public.attendance, public.visitors, public.services, public.pledges;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.members, public.giving, public.attendance, public.visitors, public.services, public.pledges, public.welfare_contributions, public.welfare_claims;
   END IF;
 EXCEPTION
   WHEN duplicate_object THEN NULL;
@@ -1544,7 +1616,50 @@ ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS general_secretary VARCHAR(1
 ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS senior_pastor VARCHAR(150) DEFAULT 'Prophet Elisha K. Richard';
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
--- 2. Grant permissions on schema public to anon and authenticated API roles
+-- 2. Ensure Welfare tables exist in PostgreSQL
+CREATE TABLE IF NOT EXISTS public.welfare_contributions (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  member_id TEXT NOT NULL,
+  member_name VARCHAR(150) NOT NULL,
+  tithe_number VARCHAR(50),
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  month VARCHAR(7) NOT NULL,
+  amount DECIMAL(14,2) NOT NULL DEFAULT 0.00 CHECK (amount >= 0),
+  payment_method VARCHAR(50) NOT NULL DEFAULT 'mobile_money',
+  payment_channel VARCHAR(100),
+  reference_no VARCHAR(100),
+  notes TEXT,
+  recorded_by VARCHAR(150) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.welfare_claims (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  claim_number VARCHAR(50) UNIQUE NOT NULL,
+  member_id TEXT NOT NULL,
+  member_name VARCHAR(150) NOT NULL,
+  member_phone VARCHAR(50),
+  category VARCHAR(50) NOT NULL,
+  title VARCHAR(200) NOT NULL,
+  description TEXT NOT NULL,
+  amount_requested DECIMAL(14,2) NOT NULL DEFAULT 0.00 CHECK (amount_requested >= 0),
+  amount_approved DECIMAL(14,2) DEFAULT 0.00,
+  status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  emergency_level VARCHAR(20) NOT NULL DEFAULT 'normal',
+  date_submitted DATE NOT NULL DEFAULT CURRENT_DATE,
+  date_reviewed DATE,
+  reviewed_by VARCHAR(150),
+  pastoral_notes TEXT,
+  disbursement_date DATE,
+  disbursement_method VARCHAR(50),
+  disbursement_channel VARCHAR(100),
+  disbursement_voucher_no VARCHAR(100),
+  supporting_documents TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 3. Grant full API permissions on schema public to anon and authenticated roles
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
@@ -1554,7 +1669,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authentic
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO anon, authenticated, service_role;
 
--- 3. Configure Row-Level Security policies to allow full read/write for the app
+-- 4. Configure Row-Level Security policies to allow full read/write for all church operations
 DO $$
 DECLARE
   t text;
@@ -1562,13 +1677,16 @@ DECLARE
     'settings', 'profiles', 'ministries', 'small_groups', 'members',
     'visitors', 'services', 'attendance', 'headcounts', 'giving',
     'pledge_campaigns', 'pledges', 'expenses', 'events', 'pastoral_care',
-    'prayer_requests', 'communications', 'audit_logs'
+    'prayer_requests', 'communications', 'audit_logs',
+    'welfare_contributions', 'welfare_claims'
   ];
 BEGIN
   FOREACH t IN ARRAY tables LOOP
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = t) THEN
       EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', t);
       EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_all_%s" ON public.%I;', t, t);
+      EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_select_%s" ON public.%I;', t, t);
+      EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_write_%s" ON public.%I;', t, t);
       EXECUTE format('DROP POLICY IF EXISTS "Allow all for anon" ON public.%I;', t);
       EXECUTE format('DROP POLICY IF EXISTS "Enable read access for all users" ON public.%I;', t);
       EXECUTE format('DROP POLICY IF EXISTS "Enable insert for all users" ON public.%I;', t);
@@ -1577,4 +1695,86 @@ BEGIN
   END LOOP;
 END $$;
 `;
+
+/**
+ * DEDICATED QUICK FIX SCRIPT SPECIFICALLY FOR WELFARE RLS POLICIES
+ * Run this directly in the Supabase SQL Editor if:
+ * "new row violates row-level security policy for table welfare_contributions" or "welfare_claims"
+ */
+export const SQL_FIX_WELFARE_SCHEMA = `-- ==============================================================================
+-- GREATER WORKS CITY CHURCH (GWCC) - WELFARE RLS POLICY REPAIR SCRIPT
+-- Paste and Run in Supabase SQL Editor: https://supabase.com/dashboard/project/_/sql/new
+-- Resolves: "new row violates row-level security policy for table welfare_contributions / welfare_claims"
+-- ==============================================================================
+
+-- 1. Ensure welfare tables exist
+CREATE TABLE IF NOT EXISTS public.welfare_contributions (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  member_id TEXT NOT NULL,
+  member_name VARCHAR(150) NOT NULL,
+  tithe_number VARCHAR(50),
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  month VARCHAR(7) NOT NULL,
+  amount DECIMAL(14,2) NOT NULL DEFAULT 0.00 CHECK (amount >= 0),
+  payment_method VARCHAR(50) NOT NULL DEFAULT 'mobile_money',
+  payment_channel VARCHAR(100),
+  reference_no VARCHAR(100),
+  notes TEXT,
+  recorded_by VARCHAR(150) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.welfare_claims (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  claim_number VARCHAR(50) UNIQUE NOT NULL,
+  member_id TEXT NOT NULL,
+  member_name VARCHAR(150) NOT NULL,
+  member_phone VARCHAR(50),
+  category VARCHAR(50) NOT NULL,
+  title VARCHAR(200) NOT NULL,
+  description TEXT NOT NULL,
+  amount_requested DECIMAL(14,2) NOT NULL DEFAULT 0.00 CHECK (amount_requested >= 0),
+  amount_approved DECIMAL(14,2) DEFAULT 0.00,
+  status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  emergency_level VARCHAR(20) NOT NULL DEFAULT 'normal',
+  date_submitted DATE NOT NULL DEFAULT CURRENT_DATE,
+  date_reviewed DATE,
+  reviewed_by VARCHAR(150),
+  pastoral_notes TEXT,
+  disbursement_date DATE,
+  disbursement_method VARCHAR(50),
+  disbursement_channel VARCHAR(100),
+  disbursement_voucher_no VARCHAR(100),
+  supporting_documents TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 2. Grant table permissions to API roles
+GRANT ALL ON TABLE public.welfare_contributions TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.welfare_claims TO anon, authenticated, service_role;
+
+-- 3. Enable RLS and remove old restrictive policies
+ALTER TABLE public.welfare_contributions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.welfare_claims ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "gwcc_policy_all_welfare_contributions" ON public.welfare_contributions;
+DROP POLICY IF EXISTS "gwcc_policy_select_welfare_contributions" ON public.welfare_contributions;
+DROP POLICY IF EXISTS "gwcc_policy_write_welfare_contributions" ON public.welfare_contributions;
+DROP POLICY IF EXISTS "Allow all for anon" ON public.welfare_contributions;
+DROP POLICY IF EXISTS "Enable read access for all users" ON public.welfare_contributions;
+DROP POLICY IF EXISTS "Enable insert for all users" ON public.welfare_contributions;
+
+DROP POLICY IF EXISTS "gwcc_policy_all_welfare_claims" ON public.welfare_claims;
+DROP POLICY IF EXISTS "gwcc_policy_select_welfare_claims" ON public.welfare_claims;
+DROP POLICY IF EXISTS "gwcc_policy_write_welfare_claims" ON public.welfare_claims;
+DROP POLICY IF EXISTS "Allow all for anon" ON public.welfare_claims;
+DROP POLICY IF EXISTS "Enable read access for all users" ON public.welfare_claims;
+DROP POLICY IF EXISTS "Enable insert for all users" ON public.welfare_claims;
+
+-- 4. Apply open read/write RLS policies for church application operations
+CREATE POLICY "gwcc_policy_all_welfare_contributions" ON public.welfare_contributions FOR ALL TO public USING (true) WITH CHECK (true);
+CREATE POLICY "gwcc_policy_all_welfare_claims" ON public.welfare_claims FOR ALL TO public USING (true) WITH CHECK (true);
+`;
+
 

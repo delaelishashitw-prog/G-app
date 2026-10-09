@@ -50,7 +50,7 @@ import {
   DEFAULT_SUPABASE_URL,
   DEFAULT_SUPABASE_ANON_KEY,
 } from '../lib/supabase';
-import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA } from '../lib/supabaseSchema';
+import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA } from '../lib/supabaseSchema';
 
 export const SettingsPage: React.FC = () => {
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
@@ -157,7 +157,9 @@ export const SettingsPage: React.FC = () => {
   // SQL code viewer state
   const [copiedSql, setCopiedSql] = useState(false);
   const [copiedFixSql, setCopiedFixSql] = useState(false);
+  const [copiedWelfareSql, setCopiedWelfareSql] = useState(false);
   const [showSqlEditor, setShowSqlEditor] = useState(false);
+  const [showWelfareSql, setShowWelfareSql] = useState(false);
 
   // Supabase project direct URL helpers
   const projectRef = getSupabaseProjectRef(supabaseUrlInput || supabaseConfig.url || '');
@@ -486,6 +488,13 @@ export const SettingsPage: React.FC = () => {
     setCopiedFixSql(true);
     toastSuccess('Fix Script Copied', 'Paste and run in your Supabase SQL Editor to resolve RLS policies and missing columns.');
     setTimeout(() => setCopiedFixSql(false), 2500);
+  };
+
+  const copyWelfareSqlToClipboard = () => {
+    navigator.clipboard.writeText(SQL_FIX_WELFARE_SCHEMA);
+    setCopiedWelfareSql(true);
+    toastSuccess('Welfare RLS Fix Copied', 'Paste and run in your Supabase SQL Editor to enable writes to welfare_contributions and welfare_claims.');
+    setTimeout(() => setCopiedWelfareSql(false), 2500);
   };
 
   const downloadSqlScript = () => {
@@ -1778,43 +1787,82 @@ export const SettingsPage: React.FC = () => {
                     (syncResult.text.includes('violates row-level security policy') ||
                       syncResult.text.includes('schema cache') ||
                       syncResult.text.includes('column')) && (
-                      <div className="p-4 bg-amber-50/90 border-2 border-amber-300 rounded-2xl text-xs space-y-3 animate-in fade-in">
+                      <div className="p-4 bg-amber-50/95 border-2 border-amber-400 rounded-2xl text-xs space-y-3.5 animate-in fade-in shadow-xs">
                         <div className="flex items-start gap-2.5">
                           <div className="w-8 h-8 rounded-xl bg-amber-200 text-amber-950 flex items-center justify-center shrink-0 mt-0.5">
-                            <Shield className="w-4 h-4 text-amber-900" />
+                            <Shield className="w-4.5 h-4.5 text-amber-900" />
                           </div>
                           <div className="space-y-1">
                             <h4 className="font-bold text-amber-950 text-sm flex items-center gap-2">
-                              <span>Action Required: Row-Level Security (RLS) & Schema Fix</span>
+                              <span>Action Required: Supabase Row-Level Security (RLS) Policy Fix</span>
                               <span className="px-2 py-0.5 rounded text-[10px] bg-amber-200 text-amber-900 font-mono font-semibold">
-                                Easy 1-Minute Fix
+                                30-Second Fix
                               </span>
                             </h4>
                             <p className="text-amber-900/90 leading-relaxed text-[11px]">
-                              Your Supabase PostgreSQL database tables have Row-Level Security active without public API permissions, or are missing newly added columns (<code className="font-mono bg-amber-200/60 px-1 rounded">tithe_number</code>, <code className="font-mono bg-amber-200/60 px-1 rounded">general_secretary</code>, <code className="font-mono bg-amber-200/60 px-1 rounded">updated_at</code>). Run our quick SQL script in your Supabase SQL Editor to resolve all schema errors immediately!
+                              {syncResult.text.includes('welfare_contributions') || syncResult.text.includes('welfare_claims') ? (
+                                <>
+                                  All core church records were synced, but writing to <strong>welfare_contributions</strong> and <strong>welfare_claims</strong> was blocked because PostgreSQL Row-Level Security is active on those tables without an open church application policy.
+                                </>
+                              ) : (
+                                <>
+                                  Your Supabase PostgreSQL tables have Row-Level Security active without application write permissions, or are missing newly added columns.
+                                </>
+                              )}
                             </p>
                           </div>
                         </div>
 
-                        <div className="p-3 bg-white/95 rounded-xl border border-amber-200 space-y-2">
-                          <p className="font-bold text-slate-800 text-[11px] uppercase tracking-wide">
-                            How to solve this in 3 easy steps:
+                        <div className="p-3.5 bg-white/95 rounded-xl border border-amber-200 space-y-2.5">
+                          <p className="font-bold text-slate-800 text-[11px] uppercase tracking-wide flex items-center gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                            <span>Quick 3-step fix to complete sync:</span>
                           </p>
                           <ol className="list-decimal list-inside space-y-1 text-slate-700 text-xs pl-1">
-                            <li>Click the green <strong>"Copy RLS & Schema Fix SQL"</strong> button below.</li>
-                            <li>Click <strong>"Open Supabase SQL Editor"</strong>, paste the script into the query box, and click <strong>"Run" (▶)</strong>.</li>
-                            <li>Return here and click <strong>"Push Local Data to Supabase"</strong> — your data will sync cleanly!</li>
+                            <li>Click <strong>"Copy Welfare RLS SQL Fix"</strong> below.</li>
+                            <li>Click <strong>"Open Supabase SQL Editor"</strong>, paste into the query window, and click <strong>"Run" (▶)</strong>.</li>
+                            <li>Click <strong>"Retry Push to Supabase"</strong> — all welfare dues & claims will sync cleanly!</li>
                           </ol>
+                        </div>
+
+                        {/* SQL Snippet Preview */}
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-amber-950">
+                              SQL Script to Run in Supabase:
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setShowWelfareSql(!showWelfareSql)}
+                              className="text-[10px] text-amber-800 hover:text-amber-950 underline font-semibold"
+                            >
+                              {showWelfareSql ? 'Collapse preview' : 'View full script'}
+                            </button>
+                          </div>
+                          <pre className="p-3 bg-slate-950 text-emerald-400 font-mono text-[10px] rounded-xl overflow-x-auto border border-slate-800 max-h-48 leading-relaxed">
+                            {showWelfareSql ? SQL_FIX_WELFARE_SCHEMA : `-- Fix Welfare Contributions & Claims RLS in Supabase
+ALTER TABLE public.welfare_contributions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.welfare_claims ENABLE ROW LEVEL SECURITY;
+
+GRANT ALL ON TABLE public.welfare_contributions TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.welfare_claims TO anon, authenticated, service_role;
+
+DROP POLICY IF EXISTS "gwcc_policy_all_welfare_contributions" ON public.welfare_contributions;
+DROP POLICY IF EXISTS "gwcc_policy_all_welfare_claims" ON public.welfare_claims;
+
+CREATE POLICY "gwcc_policy_all_welfare_contributions" ON public.welfare_contributions FOR ALL TO public USING (true) WITH CHECK (true);
+CREATE POLICY "gwcc_policy_all_welfare_claims" ON public.welfare_claims FOR ALL TO public USING (true) WITH CHECK (true);`}
+                          </pre>
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2 pt-1">
                           <button
                             type="button"
-                            onClick={copyFixSqlToClipboard}
+                            onClick={copyWelfareSqlToClipboard}
                             className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition"
                           >
-                            {copiedFixSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                            <span>{copiedFixSql ? 'Fix Script Copied!' : 'Copy RLS & Schema Fix SQL'}</span>
+                            {copiedWelfareSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                            <span>{copiedWelfareSql ? 'Welfare Fix Copied!' : 'Copy Welfare RLS SQL Fix'}</span>
                           </button>
 
                           <a
@@ -1829,10 +1877,20 @@ export const SettingsPage: React.FC = () => {
 
                           <button
                             type="button"
-                            onClick={() => setShowSqlEditor(!showSqlEditor)}
+                            onClick={handlePushData}
+                            disabled={isSyncingPush}
+                            className="px-4 py-2 bg-white hover:bg-slate-50 text-emerald-900 border border-emerald-300 font-bold rounded-xl text-xs flex items-center gap-1.5 transition shadow-2xs"
+                          >
+                            {isSyncingPush ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <UploadCloud className="w-3.5 h-3.5 text-emerald-700" />}
+                            <span>Retry Push to Supabase</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={copyFixSqlToClipboard}
                             className="px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-semibold rounded-xl text-xs transition ml-auto"
                           >
-                            {showSqlEditor ? 'Hide SQL Code' : 'View Fix Script'}
+                            {copiedFixSql ? 'All RLS Copied!' : 'Copy Complete Schema Fix'}
                           </button>
                         </div>
                       </div>
@@ -1852,7 +1910,7 @@ export const SettingsPage: React.FC = () => {
                           : 'bg-amber-100 text-amber-800'
                       }`}
                     >
-                      {tableStatus.ready ? 'All 16 Tables Ready' : `${tableStatus.missing.length} Tables Missing`}
+                      {tableStatus.ready ? `All ${tableStatus.existing.length} Tables Ready` : `${tableStatus.missing.length} Tables Missing`}
                     </span>
                   </div>
                   {tableStatus.missing.length > 0 && (

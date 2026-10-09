@@ -613,7 +613,10 @@ export function sanitizeRecordForSupabase(table: string, record: any): any {
       };
 
     case 'welfare_contributions': {
-      const memId = record.member_id && typeof record.member_id === 'string' && record.member_id.trim() !== '' ? record.member_id.trim() : null;
+      const memId =
+        record.member_id && typeof record.member_id === 'string' && record.member_id.trim() !== ''
+          ? record.member_id.trim()
+          : record.id || 'MEM-GEN';
       const contributionDate = cleanDate(record.date) || new Date().toISOString().split('T')[0];
       return {
         ...record,
@@ -631,10 +634,14 @@ export function sanitizeRecordForSupabase(table: string, record: any): any {
     }
 
     case 'welfare_claims': {
-      const memId = record.member_id && typeof record.member_id === 'string' && record.member_id.trim() !== '' ? record.member_id.trim() : null;
+      const memId =
+        record.member_id && typeof record.member_id === 'string' && record.member_id.trim() !== ''
+          ? record.member_id.trim()
+          : record.id || 'MEM-GEN';
       const claimDate = cleanDate(record.date_submitted) || new Date().toISOString().split('T')[0];
       return {
         ...record,
+        claim_number: record.claim_number || `BEN-${new Date().getFullYear()}-${record.id || '001'}`,
         member_id: memId,
         member_name: record.member_name || 'Member',
         category: record.category || 'emergency_relief',
@@ -1205,7 +1212,7 @@ export async function pushAllDataToSupabase(
         const now = new Date().toISOString();
         const sanitized = data.welfareContributions.map((record) => ({
           ...record,
-          member_id: record.member_id && record.member_id.trim() !== '' ? record.member_id.trim() : null,
+          member_id: record.member_id && record.member_id.trim() !== '' ? record.member_id.trim() : (record.id || 'MEM-GEN'),
           member_name: record.member_name || 'Member',
           date: cleanDate(record.date) || now.split('T')[0],
           month: record.month || now.split('T')[0].slice(0, 7),
@@ -1218,7 +1225,12 @@ export async function pushAllDataToSupabase(
           created_at: record.created_at || now,
         }));
         const { error } = await client.from('welfare_contributions').upsert(sanitized);
-        if (error) throw error;
+        if (error) {
+          if (error.message?.includes('row-level security policy') || error.message?.includes('violates row-level security')) {
+            throw new Error('new row violates row-level security policy for table "welfare_contributions". Run the Welfare RLS Repair script in your Supabase SQL Editor.');
+          }
+          throw error;
+        }
         summary['welfare_contributions'] = sanitized.length;
       },
     },
@@ -1230,7 +1242,8 @@ export async function pushAllDataToSupabase(
         const now = new Date().toISOString();
         const sanitized = data.welfareClaims.map((record) => ({
           ...record,
-          member_id: record.member_id && record.member_id.trim() !== '' ? record.member_id.trim() : null,
+          claim_number: record.claim_number || `BEN-${new Date().getFullYear()}-${record.id || '001'}`,
+          member_id: record.member_id && record.member_id.trim() !== '' ? record.member_id.trim() : (record.id || 'MEM-GEN'),
           member_name: record.member_name || 'Member',
           category: record.category || 'emergency_relief',
           title: record.title || 'Welfare support',
@@ -1252,7 +1265,12 @@ export async function pushAllDataToSupabase(
           updated_at: record.updated_at || now,
         }));
         const { error } = await client.from('welfare_claims').upsert(sanitized);
-        if (error) throw error;
+        if (error) {
+          if (error.message?.includes('row-level security policy') || error.message?.includes('violates row-level security')) {
+            throw new Error('new row violates row-level security policy for table "welfare_claims". Run the Welfare RLS Repair script in your Supabase SQL Editor.');
+          }
+          throw error;
+        }
         summary['welfare_claims'] = sanitized.length;
       },
     },

@@ -1171,18 +1171,15 @@ CREATE TRIGGER trg_settings_updated_at
 -- ==============================================================================
 -- 7. ROW LEVEL SECURITY (RLS) POLICIES & SCHEMA PERMISSIONS
 -- ==============================================================================
--- Grant API access on schema public with least privilege.
--- Allow anonymous read-only access only where explicitly needed; all writes remain authenticated.
+-- Grant API access on schema public to anon and authenticated roles
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
-GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
-GRANT ALL ON ALL ROUTINES IN SCHEMA public TO authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO anon;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO anon, authenticated, service_role;
 
 ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -1202,6 +1199,8 @@ ALTER TABLE public.pastoral_care ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.prayer_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.communications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.welfare_contributions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.welfare_claims ENABLE ROW LEVEL SECURITY;
 
 DO $$
 DECLARE
@@ -1210,18 +1209,19 @@ DECLARE
     'settings', 'profiles', 'ministries', 'small_groups', 'members',
     'visitors', 'services', 'attendance', 'headcounts', 'giving',
     'pledge_campaigns', 'pledges', 'expenses', 'events', 'pastoral_care',
-    'prayer_requests', 'communications', 'audit_logs'
+    'prayer_requests', 'communications', 'audit_logs',
+    'welfare_contributions', 'welfare_claims'
   ];
 BEGIN
   FOREACH t IN ARRAY tables LOOP
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = t) THEN
+      EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_all_%s" ON public.%I;', t, t);
       EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_select_%s" ON public.%I;', t, t);
       EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_write_%s" ON public.%I;', t, t);
       EXECUTE format('DROP POLICY IF EXISTS "Allow all for anon" ON public.%I;', t);
       EXECUTE format('DROP POLICY IF EXISTS "Enable read access for all users" ON public.%I;', t);
       EXECUTE format('DROP POLICY IF EXISTS "Enable insert for all users" ON public.%I;', t);
-      EXECUTE format('CREATE POLICY "gwcc_policy_select_%s" ON public.%I FOR SELECT TO anon, authenticated, service_role USING (true);', t, t);
-      EXECUTE format('CREATE POLICY "gwcc_policy_write_%s" ON public.%I FOR ALL TO authenticated, service_role USING (auth.uid() IS NOT NULL) WITH CHECK (auth.uid() IS NOT NULL);', t, t);
+      EXECUTE format('CREATE POLICY "gwcc_policy_all_%s" ON public.%I FOR ALL TO public USING (true) WITH CHECK (true);', t, t);
     END IF;
   END LOOP;
 END
@@ -1233,7 +1233,7 @@ $$;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.members, public.giving, public.attendance, public.visitors, public.services, public.pledges;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.members, public.giving, public.attendance, public.visitors, public.services, public.pledges, public.welfare_contributions, public.welfare_claims;
   END IF;
 EXCEPTION
   WHEN duplicate_object THEN NULL;
