@@ -93,6 +93,23 @@ test('getLinkedFamilyMembers finds all family for Patience Babanawo', () => {
   assert.ok(names.includes('Vanessa'));
 });
 
+test('areSpouseMatch tolerates punctuation and spacing variations in spouse names', () => {
+  const husband = {
+    ...mockMembers[0],
+    spouse_name: 'Mrs. Cynthia Suka',
+    emergency_relationship: 'Spouse',
+    emergency_name: 'Cynthia Suka',
+  };
+  const wife = {
+    ...mockMembers[1],
+    spouse_name: 'Alfred Torgbo',
+    emergency_relationship: 'Spouse',
+    emergency_name: 'Alfred Torgbo',
+  };
+
+  assert.equal(areSpouseMatch(husband, wife), true);
+});
+
 test('clusterHouseholds forms distinct household clusters', () => {
   const households = clusterHouseholds(mockMembers);
   assert.equal(households.length, 2);

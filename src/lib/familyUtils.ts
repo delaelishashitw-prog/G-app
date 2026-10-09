@@ -44,11 +44,38 @@ export interface ChurchHousehold {
 }
 
 function normalizeStr(s?: string | null): string {
-  return (s || '').trim().toLowerCase();
+  return (s || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\u2019']/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function cleanPhone(p?: string | null): string {
   return (p || '').replace(/[^0-9]/g, '');
+}
+
+function spouseNameMatches(spouseName: string | null | undefined, member: Member): boolean {
+  const candidate = normalizeStr(spouseName);
+  if (!candidate) return false;
+
+  const first = normalizeStr(member.first_name);
+  const last = normalizeStr(member.last_name);
+
+  if (!first) return false;
+
+  const exactFirstLast = `${first} ${last}`.trim();
+  const exactLastFirst = `${last} ${first}`.trim();
+  if (candidate === exactFirstLast || candidate === exactLastFirst) return true;
+
+  if (!candidate.includes(first)) return false;
+
+  if (!last) return candidate === first;
+
+  const lastPrefix = last.slice(0, Math.min(4, last.length));
+  return candidate.includes(last) || candidate.includes(lastPrefix);
 }
 
 const GENERIC_LOCALITIES = new Set([
@@ -98,35 +125,21 @@ export function getMemberAgeGroup(m: Member): 'child' | 'youth' | 'adult' | 'sen
 export function areSpouseMatch(m1: Member, m2: Member): boolean {
   if (m1.id === m2.id) return false;
 
-  const m1Spouse = normalizeStr(m1.spouse_name);
-  const m2Spouse = normalizeStr(m2.spouse_name);
+  if (spouseNameMatches(m1.spouse_name, m2)) return true;
+  if (spouseNameMatches(m2.spouse_name, m1)) return true;
 
   const m1First = normalizeStr(m1.first_name);
-  const m1Last = normalizeStr(m1.last_name);
   const m2First = normalizeStr(m2.first_name);
-  const m2Last = normalizeStr(m2.last_name);
 
-  // Check if m1 has m2 recorded as spouse
-  if (m1Spouse && m1Spouse.length >= 3) {
-    if (m1Spouse.includes(m2First) && (m2Last.length < 3 || m1Spouse.includes(m2Last.slice(0, 4)))) {
-      return true;
-    }
-    if (m1Spouse.includes(`${m2First} ${m2Last}`)) {
-      return true;
-    }
-  }
+  if (!m1First || !m2First) return false;
 
-  // Check if m2 has m1 recorded as spouse
-  if (m2Spouse && m2Spouse.length >= 3) {
-    if (m2Spouse.includes(m1First) && (m1Last.length < 3 || m2Spouse.includes(m1Last.slice(0, 4)))) {
-      return true;
-    }
-    if (m2Spouse.includes(`${m1First} ${m1Last}`)) {
-      return true;
-    }
-  }
+  const emergencyRelationMatches =
+    (normalizeStr(m1.emergency_relationship).includes('spouse') &&
+      normalizeStr(m1.emergency_name).includes(m2First)) ||
+    (normalizeStr(m2.emergency_relationship).includes('spouse') &&
+      normalizeStr(m2.emergency_name).includes(m1First));
 
-  return false;
+  return emergencyRelationMatches;
 }
 
 /**
