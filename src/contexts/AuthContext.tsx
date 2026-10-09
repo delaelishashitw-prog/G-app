@@ -43,6 +43,7 @@ interface AuthContextType {
     department?: string;
   }) => Promise<{ success: boolean; message: string; user?: UserProfile }>;
   resetPassword: (email: string) => Promise<{ success: boolean; message: string }>;
+  changePassword: (newPassword: string, oldPassword?: string) => Promise<{ success: boolean; message: string }>;
   quickLoginAs: (user: UserProfile) => void;
   logout: () => Promise<void>;
   refreshSession: () => Promise<void>;
@@ -162,31 +163,61 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   ],
 };
 
+export const isElishaRichard = (
+  user?: Partial<UserProfile> | null,
+  emailCandidate?: string
+): boolean => {
+  if (!user && !emailCandidate) return false;
+  const cleanEmail = (emailCandidate || user?.email || '').trim().toLowerCase();
+  const elishaEmails = [
+    'prophet@greaterworkscitychurch.org',
+    'senior.pastor@greaterworkscitychurch.org',
+    'delaelishashitw@gmail.com',
+  ];
+  if (cleanEmail && elishaEmails.includes(cleanEmail)) return true;
+
+  const firstName = (user?.first_name || '').trim().toLowerCase();
+  const lastName = (user?.last_name || '').trim().toLowerCase();
+  if (firstName.includes('elisha') && (lastName.includes('richard') || user?.id === 'usr-1' || user?.id === 'usr-001')) {
+    return true;
+  }
+  if (user?.id === 'usr-1' || user?.id === 'usr-001') return true;
+  return false;
+};
+
 function mapSupabaseUserToProfile(
   user: User,
   existingProfiles: UserProfile[]
 ): UserProfile {
   const cleanEmail = (user.email || '').trim().toLowerCase();
+  const isElisha = isElishaRichard(undefined, cleanEmail);
 
   // Check existing profiles first
   const existing = existingProfiles.find(
-    (u) => u.id === user.id || (Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail)
+    (u) =>
+      u.id === user.id ||
+      (Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail) ||
+      (isElisha && isElishaRichard(u))
   );
   if (existing) {
+    const role: UserRole = isElisha || isElishaRichard(existing) ? 'super_admin' : existing.role;
     return {
       ...existing,
       id: existing.id || user.id,
       email: cleanEmail || existing.email,
+      role,
     };
   }
 
   // Derive from Supabase metadata
   const meta = user.user_metadata || {};
-  const firstName = meta.first_name || (cleanEmail ? cleanEmail.split('@')[0].replace('.', ' ') : 'Staff');
-  const lastName = meta.last_name || 'Member';
-  const role: UserRole = (meta.role as UserRole) || 'member';
+  const firstName = meta.first_name || (isElisha ? 'Elisha' : cleanEmail ? cleanEmail.split('@')[0].replace('.', ' ') : 'Staff');
+  const lastName = meta.last_name || (isElisha ? 'Richard' : 'Member');
+  const role: UserRole = isElisha || isElishaRichard({ first_name: firstName, last_name: lastName })
+    ? 'super_admin'
+    : ((meta.role as UserRole) || 'member');
   const phone = meta.phone || user.phone || undefined;
-  const department = meta.department || undefined;
+  const department = meta.department || (isElisha ? 'Senior Pastoral Board & Executive Council' : undefined);
 
   return {
     id: user.id,
@@ -205,17 +236,34 @@ function mapSupabaseUserToProfile(
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [usersList, setUsersList] = useState<UserProfile[]>(() => {
     const saved = localStorage.getItem('gwcc_registered_users');
+    let list = sampleUsers;
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          list = parsed;
         }
       } catch {
         // fallback
       }
     }
-    return sampleUsers;
+
+    // Always enforce super_admin role for Elisha Richard across local/saved accounts
+    const withSuperAdmin = list.map((u) => {
+      if (isElishaRichard(u)) {
+        return {
+          ...u,
+          role: 'super_admin' as UserRole,
+          department: u.department || 'Senior Pastoral Board & Executive Council',
+        };
+      }
+      return u;
+    });
+
+    if (!withSuperAdmin.some((u) => isElishaRichard(u))) {
+      return [sampleUsers[0], ...withSuperAdmin];
+    }
+    return withSuperAdmin;
   });
 
   const [currentUser, setCurrentUser] = useState<UserProfile>(() => {
@@ -224,6 +272,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.first_name && parsed.email !== 'guest@local') {
+          if (isElishaRichard(parsed)) {
+            return {
+              ...parsed,
+              role: 'super_admin' as UserRole,
+              department: parsed.department || 'Senior Pastoral Board & Executive Council',
+            };
+          }
           return parsed;
         }
       } catch {
@@ -522,17 +577,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             (error as any).status === 403;
 
           // If the cloud database key is rejected or offline, check if user exists in local staff directory
-          const staff = usersList.find((u) => Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail);
+          const staff = usersList.find(
+            (u) =>
+              (Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail) ||
+              (isElishaRichard(undefined, cleanEmail) && isElishaRichard(u))
+          );
           if (staff) {
-            setCurrentUser(staff);
+            const effectiveStaff: UserProfile = isElishaRichard(staff, cleanEmail)
+              ? { ...staff, role: 'super_admin' as UserRole }
+              : staff;
+            setCurrentUser(effectiveStaff);
             setIsAuthenticated(true);
             localStorage.setItem('gwcc_auth_authenticated', 'true');
-            localStorage.setItem('gwcc_active_user', JSON.stringify(staff));
+            localStorage.setItem('gwcc_active_user', JSON.stringify(effectiveStaff));
             return {
               success: true,
               message: isApiKeyError
-                ? `Welcome back, ${staff.first_name}! (Logged in via Local Staff Directory. Note: Supabase API key is invalid/expired).`
-                : `Welcome back, ${staff.first_name}!`,
+                ? `Welcome back, ${effectiveStaff.first_name}! (Logged in via Local Staff Directory. Note: Supabase API key is invalid/expired).`
+                : `Welcome back, ${effectiveStaff.first_name}!${effectiveStaff.role === 'super_admin' ? ' (Super Admin Access)' : ''}`,
             };
           }
 
@@ -558,16 +620,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     }
 
-    const staff = usersList.find((u) => Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail);
+    const staff = usersList.find(
+      (u) =>
+        (Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail) ||
+        (isElishaRichard(undefined, cleanEmail) && isElishaRichard(u))
+    );
     if (staff) {
       if (!password || password.trim().length < 4) {
         return { success: false, message: 'Please provide a valid password.' };
       }
-      setCurrentUser(staff);
+      const effectiveStaff: UserProfile = isElishaRichard(staff, cleanEmail)
+        ? { ...staff, role: 'super_admin' as UserRole }
+        : staff;
+      setCurrentUser(effectiveStaff);
       setIsAuthenticated(true);
       localStorage.setItem('gwcc_auth_authenticated', 'true');
-      localStorage.setItem('gwcc_active_user', JSON.stringify(staff));
-      return { success: true, message: `Welcome back, ${staff.first_name}!` };
+      localStorage.setItem('gwcc_active_user', JSON.stringify(effectiveStaff));
+      return { success: true, message: `Welcome back, ${effectiveStaff.first_name}!${effectiveStaff.role === 'super_admin' ? ' (Super Admin Access)' : ''}` };
     }
 
     return { success: false, message: 'Invalid staff email or password. Please check your credentials or register for an account.' };
@@ -827,6 +896,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   };
 
+  const changePassword = async (
+    newPassword: string,
+    _oldPassword?: string
+  ): Promise<{ success: boolean; message: string }> => {
+    const trimmed = (newPassword || '').trim();
+    if (trimmed.length < 6) {
+      return { success: false, message: 'New password must contain at least 6 characters.' };
+    }
+
+    const client = getSupabaseClient();
+    if (client && session) {
+      try {
+        const { error } = await client.auth.updateUser({
+          password: trimmed,
+        });
+        if (error) {
+          return { success: false, message: error.message };
+        }
+      } catch (err: any) {
+        console.warn('Supabase password change error:', err);
+      }
+    }
+
+    // Save in local staff passwords store for offline/direct staff credentials
+    if (currentUser?.email) {
+      try {
+        const cleanEmail = currentUser.email.trim().toLowerCase();
+        const storedPass = localStorage.getItem('gwcc_staff_passwords');
+        const passMap = storedPass ? JSON.parse(storedPass) : {};
+        passMap[cleanEmail] = trimmed;
+        localStorage.setItem('gwcc_staff_passwords', JSON.stringify(passMap));
+      } catch (e) {
+        console.warn('Error saving local staff password:', e);
+      }
+    }
+
+    return {
+      success: true,
+      message: 'Password successfully updated! Your new password is now active.',
+    };
+  };
+
   const loginAsMember = async (
     identifier: string,
     pinOrPassword?: string
@@ -1015,10 +1126,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const quickLoginAs = (user: UserProfile) => {
-    setCurrentUser(user);
+    const effectiveUser: UserProfile = isElishaRichard(user)
+      ? { ...user, role: 'super_admin' as UserRole }
+      : user;
+    setCurrentUser(effectiveUser);
     setIsAuthenticated(true);
     localStorage.setItem('gwcc_auth_authenticated', 'true');
-    localStorage.setItem('gwcc_active_user', JSON.stringify(user));
+    localStorage.setItem('gwcc_active_user', JSON.stringify(effectiveUser));
   };
 
   const logout = async () => {
@@ -1056,9 +1170,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUsersList((prev) => {
       const index = prev.findIndex((u) => u.id === userId);
       if (index === -1) return prev;
+      const isTargetElisha = isElishaRichard(prev[index]);
       const updatedUser: UserProfile = {
         ...prev[index],
         ...updates,
+        role: isTargetElisha ? 'super_admin' : (updates.role || prev[index].role),
         updated_at: new Date().toISOString(),
       };
       const next = [...prev];
@@ -1157,6 +1273,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       register,
       createUser,
       resetPassword,
+      changePassword,
       quickLoginAs,
       logout,
       refreshSession,

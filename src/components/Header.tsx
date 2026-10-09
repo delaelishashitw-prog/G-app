@@ -22,7 +22,9 @@ import {
   Keyboard,
   RefreshCw,
   ShieldAlert,
+  Key,
 } from 'lucide-react';
+import { ChangePasswordModal } from './ChangePasswordModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -82,6 +84,7 @@ export const Header: React.FC<HeaderProps> = ({
   const { success, warning } = useToast();
   const [profileOpen, setProfileOpen] = useState(false);
   const [quickMenuOpen, setQuickMenuOpen] = useState(false);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
 
   const handleHeaderRefresh = async () => {
     const res = await refreshData();
@@ -467,6 +470,16 @@ export const Header: React.FC<HeaderProps> = ({
                       <span>Church & Account Settings</span>
                     </Link>
                   )}
+                  <button
+                    onClick={() => {
+                      setProfileOpen(false);
+                      setIsChangePasswordOpen(true);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition text-left cursor-pointer"
+                  >
+                    <Key className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                    <span>Change Account Password</span>
+                  </button>
                 </div>
 
                 <div className="p-2 space-y-1">
@@ -489,6 +502,11 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
       </div>
+
+      <ChangePasswordModal
+        isOpen={isChangePasswordOpen}
+        onClose={() => setIsChangePasswordOpen(false)}
+      />
     </header>
   );
 };

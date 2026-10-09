@@ -532,7 +532,7 @@ export const LoginPage: React.FC = () => {
                       required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Enter secret workstation key"
+                      placeholder="Enter password (default: Gwcc@2026)"
                       className="w-full pl-9 pr-10 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-900 placeholder:text-slate-400 focus:outline-emerald-800 focus:ring-2 focus:ring-emerald-800/20 focus:border-emerald-800 transition shadow-2xs"
                     />
                     <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -853,6 +853,15 @@ export const LoginPage: React.FC = () => {
               <p>
                 In production, credentials authenticate directly against your church <strong>Supabase Auth</strong> cluster or are managed by your church IT & Administration desk.
               </p>
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                <p className="text-[11px] font-bold text-slate-700">Initial System Default Password:</p>
+                <p className="font-mono text-emerald-800 font-bold bg-white px-2 py-1 rounded border border-slate-200 w-fit">
+                  Gwcc@2026
+                </p>
+                <p className="text-[10px] text-slate-500">
+                  New staff profiles are provisioned with this default password unless customized by an administrator.
+                </p>
+              </div>
               <p className="text-xs text-slate-600 leading-relaxed">
                 If you have forgotten your password, enter your staff email in the <strong>Password Help</strong> tab to request a secure reset link, or contact the church administration office.
               </p>

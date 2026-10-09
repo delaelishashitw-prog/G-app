@@ -117,7 +117,7 @@ export const UsersPage: React.FC = () => {
       desc: 'Full system control, database access, user management, audit logs, and security enforcement',
       category: 'Executive',
       badgeColor: 'bg-purple-100 text-purple-900 border-purple-200',
-      typicalHolders: 'IT Director, Senior Pastoral Board, Lead Systems Administrator',
+      typicalHolders: 'Prophet Elisha K. Richard (General Overseer & Senior Pastor), IT Director, Senior Pastoral Board',
       keyPrivileges: [
         'Full read/write on every church module',
         'Staff account creation, role assignment, and suspension',
@@ -132,7 +132,7 @@ export const UsersPage: React.FC = () => {
       desc: 'General Overseer pastoral oversight, confidential member records, treasury review, giving, and reports',
       category: 'Pastoral',
       badgeColor: 'bg-indigo-100 text-indigo-900 border-indigo-200',
-      typicalHolders: 'Prophet Elisha K. Richard, Resident Head Pastor, Church Council Lead',
+      typicalHolders: 'Resident Associate Pastor, Pastoral Board Member, District Overseer',
       keyPrivileges: [
         'Congregational health & attendance analytics',
         'Pastoral care counseling, visitation logs, and prayer requests',

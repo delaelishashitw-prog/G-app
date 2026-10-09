@@ -63,3 +63,27 @@ test('SQL schema scripts include full welfare tables and RLS permissions', () =>
   assert.ok(SQL_FIX_WELFARE_SCHEMA.includes('CREATE POLICY "gwcc_policy_all_welfare_claims"'));
 });
 
+test('Elisha Richard has super_admin role and unrestricted permissions', async () => {
+  const { sampleUsers } = await import('./initialData.ts');
+  const { isElishaRichard, ROLE_PERMISSIONS } = await import('../contexts/AuthContext.tsx');
+
+  const elisha = sampleUsers.find((u) => u.first_name === 'Elisha' && u.last_name === 'Richard');
+  assert.ok(elisha, 'Elisha Richard must exist in sampleUsers');
+  assert.equal(elisha.role, 'super_admin', 'Elisha Richard must have role super_admin');
+
+  // Verify helper recognition
+  assert.ok(isElishaRichard(elisha));
+  assert.ok(isElishaRichard(null, 'prophet@greaterworkscitychurch.org'));
+  assert.ok(isElishaRichard(null, 'delaelishashitw@gmail.com'));
+  assert.ok(isElishaRichard({ first_name: 'Elisha', last_name: 'Richard' }));
+
+  // Verify super_admin has all core modules
+  const superAdminModules = ROLE_PERMISSIONS.super_admin;
+  assert.ok(superAdminModules.includes('users'));
+  assert.ok(superAdminModules.includes('settings'));
+  assert.ok(superAdminModules.includes('audit_logs'));
+  assert.ok(superAdminModules.includes('finance'));
+  assert.ok(superAdminModules.includes('members'));
+});
+
+

@@ -51,9 +51,11 @@ import {
   DEFAULT_SUPABASE_ANON_KEY,
 } from '../lib/supabase';
 import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA } from '../lib/supabaseSchema';
+import { useAuth } from '../contexts/AuthContext';
 
 export const SettingsPage: React.FC = () => {
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
+  const { currentUser, changePassword } = useAuth();
   const {
     settings,
     updateSettings,
@@ -78,7 +80,49 @@ export const SettingsPage: React.FC = () => {
   const { theme, resolvedTheme, isDark, setTheme, toggleTheme } = useTheme();
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<'identity' | 'appearance' | 'finance' | 'services' | 'supabase' | 'backup'>('identity');
+  const [activeTab, setActiveTab] = useState<'identity' | 'appearance' | 'finance' | 'services' | 'supabase' | 'backup' | 'security'>('identity');
+
+  // Security & Password state
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+  const [passwordStatusMsg, setPasswordStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const handleSettingsChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordStatusMsg(null);
+    const trimmed = newPasswordInput.trim();
+    if (trimmed.length < 6) {
+      setPasswordStatusMsg({ type: 'error', text: 'New password must contain at least 6 characters.' });
+      return;
+    }
+    if (trimmed !== confirmPasswordInput.trim()) {
+      setPasswordStatusMsg({ type: 'error', text: 'Passwords do not match. Please ensure both fields are identical.' });
+      return;
+    }
+
+    setIsUpdatingPassword(true);
+    try {
+      const res = await changePassword(trimmed);
+      if (res.success) {
+        setPasswordStatusMsg({ type: 'success', text: res.message });
+        toastSuccess('Password Changed', res.message);
+        setNewPasswordInput('');
+        setConfirmPasswordInput('');
+      } else {
+        setPasswordStatusMsg({ type: 'error', text: res.message });
+        toastError('Password Update Failed', res.message);
+      }
+    } catch (err: any) {
+      const msg = err?.message || 'Error occurred while updating password.';
+      setPasswordStatusMsg({ type: 'error', text: msg });
+      toastError('Error', msg);
+    } finally {
+      setIsUpdatingPassword(false);
+    }
+  };
 
   // General Settings state
   const [churchName, setChurchName] = useState(settings.church_name || 'Church Management System');
@@ -637,6 +681,18 @@ export const SettingsPage: React.FC = () => {
         >
           <Server className="w-4 h-4 text-amber-600" />
           <span>Backup & Maintenance</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('security')}
+          className={`pb-3 px-3 text-xs font-bold border-b-2 flex items-center gap-2 transition shrink-0 ${
+            activeTab === 'security'
+              ? 'border-[#064e3b] dark:border-emerald-400 text-[#064e3b] dark:text-emerald-400'
+              : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+          }`}
+        >
+          <Key className="w-4 h-4 text-amber-500" />
+          <span>Security & Password</span>
         </button>
       </div>
 
@@ -2091,6 +2147,206 @@ CREATE POLICY "gwcc_policy_all_welfare_claims" ON public.welfare_claims FOR ALL 
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Reset to Clean Seed Data</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 7: SECURITY & PASSWORD MANAGEMENT */}
+      {activeTab === 'security' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-6">
+            {/* Default Password Card */}
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+              <div className="border-b border-slate-100 dark:border-slate-800 pb-3 flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <Key className="w-4 h-4 text-amber-500" />
+                    <span>Church System Password Policy</span>
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Standard credential configuration for staff members and workstations.
+                  </p>
+                </div>
+                <span className="px-2.5 py-1 bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 rounded-lg text-xs font-mono font-bold">
+                  Standard Policy
+                </span>
+              </div>
+
+              <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/60 space-y-2">
+                <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                  What is the Default Password?
+                </p>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-600 dark:text-slate-300">Initial Default Password:</span>
+                  <div className="flex items-center gap-2 font-mono text-base font-bold text-emerald-800 dark:text-emerald-400 bg-white dark:bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <span>Gwcc@2026</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText('Gwcc@2026');
+                        toastSuccess('Copied', 'Default password copied to clipboard');
+                      }}
+                      className="p-1 text-slate-400 hover:text-emerald-700 transition"
+                      title="Copy default password"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed pt-1">
+                  When new church staff accounts or administrator accounts are provisioned, the initial password defaults to{' '}
+                  <strong className="font-mono text-slate-700 dark:text-slate-300">Gwcc@2026</strong> unless a custom password is specified during creation.
+                </p>
+              </div>
+
+              {/* Change Current User Password Form */}
+              <div className="pt-2 space-y-3">
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <Shield className="w-4 h-4 text-emerald-600" />
+                  <span>Change Your Account Password</span>
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Update the password for your active session (<strong className="text-slate-700 dark:text-slate-300">{currentUser.email}</strong>).
+                </p>
+
+                {passwordStatusMsg && (
+                  <div
+                    className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                      passwordStatusMsg.type === 'success'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                        : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+                    }`}
+                  >
+                    {passwordStatusMsg.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                    )}
+                    <span>{passwordStatusMsg.text}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleSettingsChangePassword} className="space-y-3 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                        New Password *
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showNewPassword ? 'text' : 'password'}
+                          required
+                          value={newPasswordInput}
+                          onChange={(e) => setNewPasswordInput(e.target.value)}
+                          placeholder="Min 6 characters"
+                          className="w-full px-3 py-2 pr-9 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono focus:outline-emerald-800"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowNewPassword(!showNewPassword)}
+                          className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 absolute right-2 top-1/2 -translate-y-1/2"
+                        >
+                          {showNewPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                        Confirm New Password *
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showConfirmPassword ? 'text' : 'password'}
+                          required
+                          value={confirmPasswordInput}
+                          onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                          placeholder="Re-type new password"
+                          className="w-full px-3 py-2 pr-9 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono focus:outline-emerald-800"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                          className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 absolute right-2 top-1/2 -translate-y-1/2"
+                        >
+                          {showConfirmPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={isUpdatingPassword || !newPasswordInput || !confirmPasswordInput}
+                      className="px-4 py-2 bg-[#064e3b] hover:bg-[#047857] text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-xs disabled:opacity-50"
+                    >
+                      {isUpdatingPassword ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Updating Password...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Key className="w-3.5 h-3.5" />
+                          <span>Save New Password</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column: Account & Staff Reset Info */}
+          <div className="space-y-6">
+            {/* Active User Card */}
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white">Active Account Profile</h3>
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl space-y-2 border border-slate-100 dark:border-slate-700/60">
+                <div className="font-bold text-slate-900 dark:text-white text-sm">
+                  {currentUser.first_name} {currentUser.last_name}
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400 break-all">{currentUser.email}</div>
+                <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800">
+                    {currentUser.role === 'super_admin' ? 'Super Admin' : currentUser.role}
+                  </span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 bg-slate-200/60 dark:bg-slate-700/60 px-2 py-0.5 rounded">
+                    {currentUser.department || 'Executive'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* How to Reset for Other Staff */}
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-indigo-600" />
+                <span>How to Change Other Staff Passwords</span>
+              </h3>
+              <div className="text-xs text-slate-600 dark:text-slate-400 space-y-2 leading-relaxed">
+                <p>
+                  As a <strong>Super Admin</strong>, you have full control over credentials for every church staff member:
+                </p>
+                <ol className="list-decimal pl-4 space-y-1 text-slate-600 dark:text-slate-400">
+                  <li>Navigate to <strong>Staff Directory & Access Control</strong>.</li>
+                  <li>Locate the target staff member card or table row.</li>
+                  <li>Click the <strong>Key (Staff Credential Recovery)</strong> button.</li>
+                  <li>A one-time temporary access code (e.g. <code className="font-mono text-emerald-700">Gwcc@4920</code>) is generated, or click <strong>Dispatch Reset Email</strong>.</li>
+                </ol>
+                <div className="pt-2">
+                  <a
+                    href="/users"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded-xl font-bold text-xs hover:bg-indigo-100 transition"
+                  >
+                    <span>Go to Staff Directory</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              </div>
             </div>
           </div>
         </div>

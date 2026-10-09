@@ -1297,7 +1297,7 @@ INSERT INTO public.settings (
 -- 11.2 User Profiles
 INSERT INTO public.profiles (id, first_name, last_name, email, phone, department, role, is_active)
 VALUES
-  ('usr-001', 'Prophet Elisha', 'K. Richard', 'senior.pastor@greaterworkscitychurch.org', '+233 24 111 2233', 'Pastoral Board', 'senior_pastor', true),
+  ('usr-001', 'Prophet Elisha', 'K. Richard', 'senior.pastor@greaterworkscitychurch.org', '+233 24 111 2233', 'Senior Pastoral Board & Executive Council', 'super_admin', true),
   ('usr-002', 'Kofi', 'Mensah-Bonsu', 'admin@greaterworkscitychurch.org', '+233 24 222 3344', 'Administration', 'super_admin', true),
   ('usr-003', 'Akosua', 'Frimpong', 'finance@greaterworkscitychurch.org', '+233 20 333 4455', 'Finance & Treasury', 'finance_officer', true),
   ('usr-004', 'Pastor David', 'Osei-Tutu', 'pastor.david@greaterworkscitychurch.org', '+233 55 444 5566', 'Pastoral Care', 'pastor', true),
