@@ -82,6 +82,57 @@ type PortalTab =
   | 'events'
   | 'profile';
 
+const MEMBER_PIN_STORAGE_KEY = 'gwcc_member_passwords_v2';
+const LEGACY_MEMBER_PIN_STORAGE_KEY = 'gwcc_member_passwords';
+
+async function hashMemberPin(pin: string): Promise<string> {
+  const normalized = (pin || '').trim();
+  if (!normalized) return '';
+
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  return normalized;
+}
+
+function readMemberPinMap(): Record<string, string> {
+  try {
+    const sessionValue = sessionStorage.getItem(MEMBER_PIN_STORAGE_KEY);
+    if (sessionValue) {
+      const parsed = JSON.parse(sessionValue);
+      if (parsed && typeof parsed === 'object') {
+        return parsed as Record<string, string>;
+      }
+    }
+  } catch {}
+
+  try {
+    const legacyValue = localStorage.getItem(LEGACY_MEMBER_PIN_STORAGE_KEY);
+    if (legacyValue) {
+      const parsed = JSON.parse(legacyValue);
+      if (parsed && typeof parsed === 'object') {
+        return parsed as Record<string, string>;
+      }
+    }
+  } catch {}
+
+  return {};
+}
+
+function persistMemberPinMap(map: Record<string, string>): void {
+  try {
+    sessionStorage.setItem(MEMBER_PIN_STORAGE_KEY, JSON.stringify(map));
+  } catch {}
+
+  try {
+    localStorage.removeItem(LEGACY_MEMBER_PIN_STORAGE_KEY);
+  } catch {}
+}
+
 const FOUNDATION_CURRICULUM = [
   {
     moduleNumber: 1,
@@ -312,58 +363,19 @@ export const MemberPortalPage: React.FC = () => {
 
   // Selected Member Resolution
   const activeMember: Member | null = useMemo(() => {
-    // 1. Explicitly selected via Staff Preview Dropdown
     if (previewMemberId) {
       const found = members.find((m) => m.id === previewMemberId || m.member_id === previewMemberId);
       if (found) return found;
     }
 
-    // 2. Explicitly authenticated as a church member
     if (currentMember) {
       return currentMember;
     }
 
-    // 3. If staff is authenticated, automatically link to their personal member record if present
-    if (isAuthenticated && currentUser) {
-      if (currentUser.member_id) {
-        const byMemId = members.find((m) => m.id === currentUser.member_id || m.member_id === currentUser.member_id);
-        if (byMemId) return byMemId;
-      }
-
-      if (isElishaRichard(currentUser, currentUser.email)) {
-        const elishaMember = members.find(
-          (m) =>
-            m.member_id === 'GWCC-0013' ||
-            m.id === 'mem-13' ||
-            (m.first_name.toLowerCase().includes('elisha') && m.last_name.toLowerCase().includes('richard'))
-        );
-        if (elishaMember) return elishaMember;
-      }
-
-      if (currentUser.email) {
-        const byEmail = members.find((m) => m.email && m.email.toLowerCase() === currentUser.email.toLowerCase());
-        if (byEmail) return byEmail;
-      }
-
-      if (currentUser.phone) {
-        const byPhone = members.find((m) => m.phone && cleanGhanaPhone(m.phone) === cleanGhanaPhone(currentUser.phone));
-        if (byPhone) return byPhone;
-      }
-
-      const byName = members.find(
-        (m) =>
-          m.first_name.toLowerCase() === (currentUser.first_name || '').toLowerCase() &&
-          m.last_name.toLowerCase() === (currentUser.last_name || '').toLowerCase()
-      );
-      if (byName) return byName;
-
-      // When staff is logged in and browses to Member Portal, default to first member so they can audit and use Member Switcher
-      return members.find((m) => m.member_id === 'GWCC-0001' || m.member_id === 'GWCC-0002') || members[0] || null;
-    }
-
-    // Default: Must sign in with Member ID and PIN
+    // Staff and other authenticated users must explicitly choose a member to inspect.
+    // Autolinking to a real member record from staff identity is a privacy risk and is disabled.
     return null;
-  }, [currentMember, isAuthenticated, currentUser, previewMemberId, members]);
+  }, [currentMember, previewMemberId, members]);
 
   // Member's Giving Data
   const memberGiving = useMemo(() => {
@@ -991,7 +1003,7 @@ export const MemberPortalPage: React.FC = () => {
   };
 
   // Save Member Profile Changes
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeMember) return;
 
@@ -1013,11 +1025,11 @@ export const MemberPortalPage: React.FC = () => {
 
       if (newPortalPin) {
         try {
-          const savedPins = localStorage.getItem('gwcc_member_passwords');
-          const pinsMap: Record<string, string> = savedPins ? JSON.parse(savedPins) : {};
-          pinsMap[activeMember.id] = newPortalPin.trim();
-          pinsMap[activeMember.member_id] = newPortalPin.trim();
-          localStorage.setItem('gwcc_member_passwords', JSON.stringify(pinsMap));
+          const pinsMap = readMemberPinMap();
+          const hashedValue = await hashMemberPin(newPortalPin.trim());
+          pinsMap[activeMember.id] = hashedValue;
+          pinsMap[activeMember.member_id] = hashedValue;
+          persistMemberPinMap(pinsMap);
           toastSuccess('Portal PIN Updated', 'Your Member Portal PIN has been securely saved.');
           setNewPortalPin('');
           setConfirmPortalPin('');

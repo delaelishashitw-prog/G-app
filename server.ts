@@ -49,8 +49,7 @@ interface ConnectedClient {
 
 const connectedClients = new Set<ConnectedClient>();
 
-// Initialize WebSocket server attached to HTTP server on /ws path
-const wss = new WebSocketServer({ server, path: '/ws' });
+let wss: WebSocketServer | undefined;
 
 function broadcastRosterNotification(notification: ServerRosterNotification): number {
   const payload = JSON.stringify({
@@ -82,74 +81,80 @@ function broadcastRosterNotification(notification: ServerRosterNotification): nu
   return sentCount;
 }
 
-wss.on('connection', (ws: WebSocket) => {
-  const client: ConnectedClient = {
-    ws,
-    subscribedAt: Date.now(),
-  };
-  connectedClients.add(client);
+function attachWebSocketServer(): void {
+  if (wss) {
+    return;
+  }
 
-  ws.on('message', (rawMessage: string) => {
-    try {
-      const data = JSON.parse(rawMessage.toString());
-      if (data.type === 'subscribe') {
-        client.memberId = (data.memberId || '').trim();
-        client.memberName = (data.memberName || '').trim();
+  wss = new WebSocketServer({ server, path: '/ws' });
 
-        // Send confirmation back along with relevant recent notifications
-        const memberNotifs = rosterNotifications.filter(
-          (n) =>
-            !client.memberId ||
-            n.memberId === client.memberId ||
-            client.memberId.includes(n.memberId) ||
-            n.memberId.includes(client.memberId)
-        );
+  wss.on('connection', (ws: WebSocket) => {
+    const client: ConnectedClient = {
+      ws,
+      subscribedAt: Date.now(),
+    };
+    connectedClients.add(client);
 
-        ws.send(
-          JSON.stringify({
-            type: 'SUBSCRIBED',
-            memberId: client.memberId,
-            unreadCount: memberNotifs.filter((n) => !n.read).length,
-            notifications: memberNotifs.slice(-20),
-            timestamp: new Date().toISOString(),
-          })
-        );
-      } else if (data.type === 'ping') {
-        ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
-      } else if (data.type === 'mark_read') {
-        if (data.notificationId) {
-          const found = rosterNotifications.find((n) => n.id === data.notificationId);
-          if (found) found.read = true;
-        } else if (data.all && client.memberId) {
-          rosterNotifications.forEach((n) => {
-            if (n.memberId === client.memberId) n.read = true;
-          });
+    ws.on('message', (rawMessage: string) => {
+      try {
+        const data = JSON.parse(rawMessage.toString());
+        if (data.type === 'subscribe') {
+          client.memberId = (data.memberId || '').trim();
+          client.memberName = (data.memberName || '').trim();
+
+          const memberNotifs = rosterNotifications.filter(
+            (n) =>
+              !client.memberId ||
+              n.memberId === client.memberId ||
+              client.memberId.includes(n.memberId) ||
+              n.memberId.includes(client.memberId)
+          );
+
+          ws.send(
+            JSON.stringify({
+              type: 'SUBSCRIBED',
+              memberId: client.memberId,
+              unreadCount: memberNotifs.filter((n) => !n.read).length,
+              notifications: memberNotifs.slice(-20),
+              timestamp: new Date().toISOString(),
+            })
+          );
+        } else if (data.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+        } else if (data.type === 'mark_read') {
+          if (data.notificationId) {
+            const found = rosterNotifications.find((n) => n.id === data.notificationId);
+            if (found) found.read = true;
+          } else if (data.all && client.memberId) {
+            rosterNotifications.forEach((n) => {
+              if (n.memberId === client.memberId) n.read = true;
+            });
+          }
         }
+      } catch {
+        // Ignore malformed message
       }
-    } catch {
-      // Ignore malformed message
-    }
-  });
+    });
 
-  ws.on('close', () => {
-    connectedClients.delete(client);
-  });
+    ws.on('close', () => {
+      connectedClients.delete(client);
+    });
 
-  ws.on('error', () => {
-    connectedClients.delete(client);
-  });
+    ws.on('error', () => {
+      connectedClients.delete(client);
+    });
 
-  // Initial welcome event
-  try {
-    ws.send(
-      JSON.stringify({
-        type: 'CONNECTED',
-        message: 'Connected to Greater Works City Church Real-time Notification Engine',
-        timestamp: new Date().toISOString(),
-      })
-    );
-  } catch {}
-});
+    try {
+      ws.send(
+        JSON.stringify({
+          type: 'CONNECTED',
+          message: 'Connected to Greater Works City Church Real-time Notification Engine',
+          timestamp: new Date().toISOString(),
+        })
+      );
+    } catch {}
+  });
+}
 
 function getAllowedOrigins(): string[] {
   const configured = (process.env.ALLOWED_ORIGINS || '')
@@ -229,20 +234,28 @@ app.use(enforceApiGuard);
 
 function startListening(targetPort: number, retries = 5): Promise<number> {
   return new Promise((resolve, reject) => {
-    server.listen(targetPort, '0.0.0.0', () => {
-      resolve(targetPort);
-    });
+    const tryPort = (port: number, remaining: number) => {
+      const onError = (error: NodeJS.ErrnoException) => {
+        if (error.code === 'EADDRINUSE' && remaining > 0) {
+          const fallbackPort = port + 1;
+          console.warn(`Port ${port} is busy; retrying on ${fallbackPort} (${remaining - 1} retries left)...`);
+          tryPort(fallbackPort, remaining - 1);
+          return;
+        }
 
-    server.on('error', (error: NodeJS.ErrnoException) => {
-      if (error.code === 'EADDRINUSE' && retries > 0) {
-        console.warn(`Port ${targetPort} is busy; waiting to retry on ${targetPort} (${retries} attempts left)...`);
-        setTimeout(() => {
-          resolve(startListening(targetPort, retries - 1));
-        }, 1000);
-        return;
-      }
-      reject(error);
-    });
+        reject(error);
+      };
+
+      server.once('error', onError);
+      server.once('listening', () => {
+        server.removeListener('error', onError);
+        resolve(port);
+      });
+
+      server.listen(port, '0.0.0.0');
+    };
+
+    tryPort(targetPort, retries);
   });
 }
 
@@ -521,7 +534,12 @@ async function startServer() {
 
   try {
     const port = await startListening(PORT);
-    console.log(`GWCC Server listening on port ${port} (${isProductionMode() ? 'production' : 'development'})`);
+    if (port !== PORT) {
+      console.log(`GWCC Server listening on fallback port ${port} (${isProductionMode() ? 'production' : 'development'})`);
+    } else {
+      console.log(`GWCC Server listening on port ${port} (${isProductionMode() ? 'production' : 'development'})`);
+    }
+    attachWebSocketServer();
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);

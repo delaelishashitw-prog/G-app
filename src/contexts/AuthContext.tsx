@@ -54,6 +54,57 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const MEMBER_PIN_STORAGE_KEY = 'gwcc_member_passwords_v2';
+const LEGACY_MEMBER_PIN_STORAGE_KEY = 'gwcc_member_passwords';
+
+async function hashMemberPin(pin: string): Promise<string> {
+  const normalized = (pin || '').trim();
+  if (!normalized) return '';
+
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  return normalized;
+}
+
+function readMemberPinMap(): Record<string, string> {
+  try {
+    const sessionValue = sessionStorage.getItem(MEMBER_PIN_STORAGE_KEY);
+    if (sessionValue) {
+      const parsed = JSON.parse(sessionValue);
+      if (parsed && typeof parsed === 'object') {
+        return parsed as Record<string, string>;
+      }
+    }
+  } catch {}
+
+  try {
+    const legacyValue = localStorage.getItem(LEGACY_MEMBER_PIN_STORAGE_KEY);
+    if (legacyValue) {
+      const parsed = JSON.parse(legacyValue);
+      if (parsed && typeof parsed === 'object') {
+        return parsed as Record<string, string>;
+      }
+    }
+  } catch {}
+
+  return {};
+}
+
+function persistMemberPinMap(map: Record<string, string>): void {
+  try {
+    sessionStorage.setItem(MEMBER_PIN_STORAGE_KEY, JSON.stringify(map));
+  } catch {}
+
+  try {
+    localStorage.removeItem(LEGACY_MEMBER_PIN_STORAGE_KEY);
+  } catch {}
+}
+
 const isDemoAuthEnabled = (): boolean => {
   const configured = (import.meta.env.VITE_ENABLE_DEMO_AUTH ?? '').toString().trim().toLowerCase();
   if (configured === 'true' || configured === '1' || configured === 'yes') {
@@ -1032,8 +1083,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Check PIN / Password
     try {
-      const savedPins = localStorage.getItem('gwcc_member_passwords');
-      const pinsMap: Record<string, string> = savedPins ? JSON.parse(savedPins) : {};
+      const pinsMap = readMemberPinMap();
       const expectedPin = pinsMap[member.id] || pinsMap[member.member_id];
       const memberPhoneDigits = (member.phone || '').replace(/[^0-9]/g, '');
       const phoneSuffix = memberPhoneDigits.slice(-4);
@@ -1046,9 +1096,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
+      const providedPinHash = await hashMemberPin(providedPin);
+
       if (expectedPin) {
-        // Explicit PIN has been established by user or administration
-        const matchesExpected = providedPin === expectedPin.trim();
+        const normalizedStoredPin = expectedPin.trim();
+        const matchesExpected = normalizedStoredPin === providedPin || normalizedStoredPin === providedPinHash;
         const matchesSuffixRecovery = phoneSuffix.length === 4 && providedPin === phoneSuffix;
 
         if (!matchesExpected && !matchesSuffixRecovery) {
@@ -1057,8 +1109,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             message: 'Incorrect PIN or password. Please enter your 4-digit PIN (or last 4 digits of your registered phone), or contact the church office.',
           };
         }
+
+        if (normalizedStoredPin !== providedPinHash && normalizedStoredPin !== providedPin) {
+          pinsMap[member.id] = providedPinHash;
+          pinsMap[member.member_id] = providedPinHash;
+          persistMemberPinMap(pinsMap);
+        }
       } else {
-        // First-time login: verify if providedPin matches phone suffix OR is a valid 4-digit PIN
         const defaultPin = phoneSuffix.length === 4 ? phoneSuffix : '1234';
         const matchesDefault = providedPin === defaultPin;
         const isValidNewPin = /^\d{4,8}$/.test(providedPin);
@@ -1070,10 +1127,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           };
         }
 
-        // Establish and persist this PIN
-        pinsMap[member.id] = providedPin;
-        pinsMap[member.member_id] = providedPin;
-        localStorage.setItem('gwcc_member_passwords', JSON.stringify(pinsMap));
+        pinsMap[member.id] = providedPinHash;
+        pinsMap[member.member_id] = providedPinHash;
+        persistMemberPinMap(pinsMap);
       }
     } catch (e) {
       console.warn('Member PIN verification error:', e);
