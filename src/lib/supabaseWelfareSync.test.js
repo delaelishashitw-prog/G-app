@@ -1,8 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { sanitizeRecordForSupabase } from './supabase.ts';
 import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA } from './supabaseSchema.ts';
+
+const ROSTER_MIGRATION = readFileSync(
+  new URL('../../supabase/migrations/20261010000001_secure_roster_assignments.sql', import.meta.url),
+  'utf8'
+);
 
 test('sanitizes welfare contribution and claim records for Supabase persistence', () => {
   const contribution = sanitizeRecordForSupabase('welfare_contributions', {
@@ -63,6 +69,39 @@ test('SQL schema scripts include full welfare tables and RLS permissions', () =>
   assert.ok(SQL_FIX_WELFARE_SCHEMA.includes('CREATE POLICY "gwcc_policy_all_welfare_claims"'));
 });
 
+test('sanitizes roster assignments for Supabase persistence', () => {
+  const assignment = sanitizeRecordForSupabase('roster_assignments', {
+    id: 'duty-123',
+    service_id: '',
+    service_name: 'Sunday Worship',
+    date: '2026-10-11',
+    member_id: '  member-001  ',
+    member_name: 'Jane Doe',
+    department: 'choir',
+    role_title: 'Lead Singer',
+    report_time: '08:30',
+    status: 'confirmed',
+  });
+
+  assert.equal(assignment.id, 'duty-123');
+  assert.equal(assignment.member_id, 'member-001');
+  assert.equal(assignment.service_id, null);
+  assert.equal(assignment.service_name, 'Sunday Worship');
+  assert.equal(assignment.date, '2026-10-11');
+  assert.equal(assignment.role_title, 'Lead Singer');
+  assert.equal(assignment.status, 'confirmed');
+});
+
+test('roster migration limits member reads and staff writes', () => {
+  assert.ok(ROSTER_MIGRATION.includes('CREATE TABLE IF NOT EXISTS public.roster_assignments'));
+  assert.ok(ROSTER_MIGRATION.includes('CREATE TABLE IF NOT EXISTS public.roster_managers'));
+  assert.ok(ROSTER_MIGRATION.includes('CREATE POLICY roster_assignments_member_read'));
+  assert.ok(ROSTER_MIGRATION.includes('public.is_roster_manager()'));
+  assert.ok(ROSTER_MIGRATION.includes('auth.users AS auth_user'));
+  assert.ok(ROSTER_MIGRATION.includes('auth_user.email_confirmed_at IS NOT NULL'));
+  assert.ok(ROSTER_MIGRATION.includes('ALTER PUBLICATION supabase_realtime ADD TABLE public.roster_assignments'));
+});
+
 test('Elisha Richard has super_admin role and unrestricted permissions', async () => {
   const { sampleUsers } = await import('./initialData.ts');
   const { isElishaRichard, ROLE_PERMISSIONS } = await import('../contexts/AuthContext.tsx');
@@ -85,5 +124,3 @@ test('Elisha Richard has super_admin role and unrestricted permissions', async (
   assert.ok(superAdminModules.includes('finance'));
   assert.ok(superAdminModules.includes('members'));
 });
-
-

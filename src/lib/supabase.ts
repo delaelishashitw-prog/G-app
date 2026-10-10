@@ -19,6 +19,7 @@ import {
   HeadcountRecord,
   WelfareContribution,
   WelfareClaim,
+  RosterAssignment,
 } from '../types/database.types';
 
 const STORAGE_KEY_URL = 'gwcc_supabase_url';
@@ -343,6 +344,7 @@ export async function checkSupabaseTables(): Promise<{
     'members',
     'visitors',
     'services',
+    'roster_assignments',
     'attendance',
     'headcounts',
     'giving',
@@ -450,6 +452,24 @@ export function sanitizeRecordForSupabase(table: string, record: any): any {
         service_attended: record.service_attended || 'Sunday Main Service',
         follow_up_status: record.follow_up_status || 'new',
       };
+
+    case 'roster_assignments': {
+      const memId = record.member_id && typeof record.member_id === 'string' && record.member_id.trim() !== '' ? record.member_id.trim() : null;
+      return {
+        ...record,
+        member_id: memId,
+        service_id: record.service_id || null,
+        service_name: record.service_name || 'Church Service',
+        date: cleanDate(record.date) || new Date().toISOString().split('T')[0],
+        department: record.department || 'ushers_protocol',
+        role_title: record.role_title || 'Volunteer',
+        report_time: record.report_time || '08:00',
+        status: record.status || 'pending',
+        notes: record.notes || null,
+        created_at: record.created_at || new Date().toISOString(),
+        updated_at: record.updated_at || new Date().toISOString(),
+      };
+    }
 
     case 'attendance': {
       const memId = record.member_id && typeof record.member_id === 'string' && record.member_id.trim() !== '' ? record.member_id.trim() : null;
@@ -674,6 +694,7 @@ export interface ChurchAllData {
   members: Member[];
   visitors: Visitor[];
   services: ChurchService[];
+  rosterAssignments?: RosterAssignment[];
   attendance: AttendanceRecord[];
   headcounts?: HeadcountRecord[];
   giving: GivingRecord[];
@@ -917,6 +938,31 @@ export async function pushAllDataToSupabase(
         const { error } = await client.from('services').upsert(sanitized);
         if (error) throw error;
         summary['services'] = sanitized.length;
+      },
+    },
+    {
+      name: 'roster_assignments',
+      label: 'Service Duty Roster',
+      run: async () => {
+        if (!data.rosterAssignments || data.rosterAssignments.length === 0) return;
+        const now = new Date().toISOString();
+        const sanitized = data.rosterAssignments.map((assignment) => ({
+          ...assignment,
+          member_id: assignment.member_id || null,
+          service_id: assignment.service_id || null,
+          service_name: assignment.service_name || 'Church Service',
+          date: cleanDate(assignment.date) || now.split('T')[0],
+          department: assignment.department || 'ushers_protocol',
+          role_title: assignment.role_title || 'Volunteer',
+          report_time: assignment.report_time || '08:00',
+          status: assignment.status || 'pending',
+          notes: assignment.notes || null,
+          created_at: (assignment as any).created_at || now,
+          updated_at: (assignment as any).updated_at || now,
+        }));
+        const { error } = await client.from('roster_assignments').upsert(sanitized);
+        if (error) throw error;
+        summary['roster_assignments'] = sanitized.length;
       },
     },
     {
@@ -1330,6 +1376,7 @@ export async function pullAllDataFromSupabase(): Promise<{
     { table: 'members', key: 'members' },
     { table: 'visitors', key: 'visitors' },
     { table: 'services', key: 'services' },
+    { table: 'roster_assignments', key: 'rosterAssignments' },
     { table: 'attendance', key: 'attendance' },
     { table: 'headcounts', key: 'headcounts' },
     { table: 'giving', key: 'giving' },
@@ -1356,7 +1403,7 @@ export async function pullAllDataFromSupabase(): Promise<{
         }
         return;
       }
-      if (data && data.length > 0) {
+      if (data && (data.length > 0 || key === 'rosterAssignments')) {
         if (key === 'settings') {
           result.settings = data[0] as ChurchSettings;
         } else {
@@ -1464,6 +1511,44 @@ export async function dbSyncUpsert(table: string, record: any): Promise<void> {
     if (!isTableNotFoundError(err)) {
       console.warn(`Supabase upsert failed on ${table}:`, err?.message || err);
     }
+  }
+}
+
+export async function syncRosterAssignmentToSupabase(
+  assignment: RosterAssignment
+): Promise<{ success: boolean; error?: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase is not configured.' };
+
+  try {
+    const { error } = await client
+      .from('roster_assignments')
+      .upsert(sanitizeRecordForSupabase('roster_assignments', assignment));
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown Supabase roster sync error.';
+    return { success: false, error: message };
+  }
+}
+
+export async function deleteRosterAssignmentFromSupabase(
+  id: string
+): Promise<{ success: boolean; error?: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase is not configured.' };
+
+  try {
+    const { error } = await client.from('roster_assignments').delete().eq('id', id);
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown Supabase roster delete error.';
+    return { success: false, error: message };
   }
 }
 

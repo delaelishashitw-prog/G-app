@@ -72,6 +72,8 @@ import {
   pullAllDataFromSupabase,
   dbSyncUpsert,
   dbSyncDelete,
+  syncRosterAssignmentToSupabase,
+  deleteRosterAssignmentFromSupabase,
   ChurchAllData,
 } from '../lib/supabase';
 import {
@@ -502,6 +504,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const missing = sampleRosterAssignments.filter((r) => !existingIds.has(r.id));
     return missing.length > 0 ? [...loaded, ...missing] : loaded;
   });
+  const previousRosterAssignmentsRef = React.useRef(rosterAssignments);
+  const pendingRosterSyncRef = React.useRef(new Map<string, RosterAssignment | null>());
+  const isRosterSyncingRef = React.useRef(false);
 
   const [foundationCohorts, setFoundationCohorts] = useState<FoundationCohort[]>(() => {
     const loaded = loadFromStorage<FoundationCohort[]>('foundationCohorts', []);
@@ -685,6 +690,98 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     saveToStorage('rosterAssignments', rosterAssignments);
   }, [rosterAssignments]);
 
+  const flushPendingRosterSync = useCallback(async () => {
+    const isOnline = typeof navigator === 'undefined' || navigator.onLine;
+    if (
+      currentUser.role === 'member' ||
+      !isSupabaseConfigured() ||
+      !isOnline ||
+      isRosterSyncingRef.current ||
+      pendingRosterSyncRef.current.size === 0
+    ) {
+      return;
+    }
+
+    isRosterSyncingRef.current = true;
+    const pending = [...pendingRosterSyncRef.current.entries()];
+    const results = await Promise.all(
+      pending.map(async ([id, assignment]) => ({
+        id,
+        assignment,
+        result: assignment
+          ? await syncRosterAssignmentToSupabase(assignment)
+          : await deleteRosterAssignmentFromSupabase(id),
+      }))
+    );
+    const errors: string[] = [];
+
+    results.forEach(({ id, assignment, result }) => {
+      if (!result.success) {
+        errors.push(`${id}: ${result.error || 'Unknown roster sync error.'}`);
+        return;
+      }
+      if (pendingRosterSyncRef.current.get(id) === assignment) {
+        pendingRosterSyncRef.current.delete(id);
+      }
+    });
+
+    isRosterSyncingRef.current = false;
+
+    if (errors.length > 0) {
+      const message = `Service roster cloud sync failed: ${errors.join('; ')}`;
+      console.error(message);
+      setSupabaseStatus('error');
+      setSupabaseError(message);
+      return;
+    }
+
+    const now = new Date().toISOString();
+    setSupabaseStatus('connected');
+    setSupabaseError(null);
+    setLastSyncTime(now);
+    try {
+      localStorage.setItem('gwcc_last_supabase_sync', now);
+    } catch (error) {
+      console.warn('Could not save the roster sync timestamp:', error);
+    }
+
+    if (pendingRosterSyncRef.current.size > 0) {
+      void flushPendingRosterSync();
+    }
+  }, [currentUser.role]);
+
+  useEffect(() => {
+    if (currentUser.role === 'member') {
+      pendingRosterSyncRef.current.clear();
+      previousRosterAssignmentsRef.current = rosterAssignments;
+      return;
+    }
+
+    const previousById = new Map(previousRosterAssignmentsRef.current.map((item) => [item.id, item]));
+    const nextById = new Map(rosterAssignments.map((item) => [item.id, item]));
+
+    previousById.forEach((previous, id) => {
+      if (!nextById.has(id)) pendingRosterSyncRef.current.set(id, null);
+      else if (nextById.get(id) !== previous) pendingRosterSyncRef.current.set(id, nextById.get(id)!);
+    });
+    nextById.forEach((next, id) => {
+      if (!previousById.has(id)) pendingRosterSyncRef.current.set(id, next);
+    });
+
+    previousRosterAssignmentsRef.current = rosterAssignments;
+    void flushPendingRosterSync();
+  }, [currentUser.role, rosterAssignments, flushPendingRosterSync]);
+
+  useEffect(() => {
+    const handleOnline = () => void flushPendingRosterSync();
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [flushPendingRosterSync]);
+
+  useEffect(() => {
+    void flushPendingRosterSync();
+  }, [supabaseConfig.url, flushPendingRosterSync]);
+
   useEffect(() => {
     if (isInitialMount.current) return;
     saveToStorage('foundationCohorts', foundationCohorts);
@@ -712,7 +809,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // Initial Supabase check and hydration
   useEffect(() => {
-    if (!isSupabaseConfigured()) {
+    if (currentUser.role === 'member' || !isSupabaseConfigured()) {
       setSupabaseStatus('disconnected');
       return;
     }
@@ -749,6 +846,11 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (data.members && data.members.length > 0) setMembers(data.members);
           if (data.visitors && data.visitors.length > 0) setVisitors(data.visitors);
           if (data.services && data.services.length > 0) setServices(data.services);
+          if (data.rosterAssignments) {
+            pendingRosterSyncRef.current.clear();
+            previousRosterAssignmentsRef.current = data.rosterAssignments;
+            setRosterAssignments(data.rosterAssignments);
+          }
           if (data.attendance && data.attendance.length > 0) setAttendance(data.attendance);
           if (data.headcounts && data.headcounts.length > 0) setHeadcounts(data.headcounts);
           if (data.giving && data.giving.length > 0) setGiving(data.giving);
@@ -783,7 +885,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [currentUser.role]);
 
   const connectSupabase = useCallback(async (url: string, key: string) => {
     return connectSupabaseRecord(url, key, setSupabaseStatus, setSupabaseError, setSupabaseConfig);
@@ -795,11 +897,18 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const pushToSupabase = useCallback(
     async (onProgress?: (step: string, percent: number) => void) => {
+      if (currentUser.role === 'member') {
+        const errors = ['Member accounts cannot push church-wide records to Supabase.'];
+        setSupabaseError(errors[0]);
+        return { success: false, summary: {}, errors };
+      }
+
       const allData: ChurchAllData = {
         settings,
         members,
         visitors,
         services,
+        rosterAssignments,
         attendance,
         headcounts,
         giving,
@@ -830,6 +939,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       members,
       visitors,
       services,
+      rosterAssignments,
       attendance,
       headcounts,
       giving,
@@ -845,16 +955,26 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       welfareContributions,
       welfareClaims,
       auditLogs,
+      currentUser.role,
+      setSupabaseError,
     ]
   );
 
   const pullFromSupabase = useCallback(async () => {
+    if (currentUser.role === 'member') {
+      return { success: false, errors: ['Member accounts cannot pull the full church dataset.'] };
+    }
+
     const res = await pullSupabaseDataRecord(setSupabaseStatus, setSupabaseError, setLastSyncTime);
     if (res.success && res.data) {
       const { data } = res;
       if (data.members) setMembers(data.members);
       if (data.visitors) setVisitors(data.visitors);
       if (data.services) setServices(data.services);
+      if (data.rosterAssignments) {
+        previousRosterAssignmentsRef.current = data.rosterAssignments;
+        setRosterAssignments(data.rosterAssignments);
+      }
       if (data.attendance) setAttendance(data.attendance);
       if (data.headcounts) setHeadcounts(data.headcounts);
       if (data.giving) setGiving(data.giving);
@@ -875,9 +995,17 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
 
     return { success: false, errors: res.errors };
-  }, []);
+  }, [currentUser.role]);
 
   const refreshData = useCallback(async (): Promise<{ success: boolean; source: 'supabase' | 'local'; message: string }> => {
+    if (currentUser.role === 'member') {
+      return {
+        success: false,
+        source: 'local',
+        message: 'Member accounts can refresh their personal roster from the Member Portal only.',
+      };
+    }
+
     setIsRefreshing(true);
     try {
       const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
@@ -891,6 +1019,11 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (data.members) setMembers(data.members);
           if (data.visitors) setVisitors(data.visitors);
           if (data.services) setServices(data.services);
+          if (data.rosterAssignments) {
+            pendingRosterSyncRef.current.clear();
+            previousRosterAssignmentsRef.current = data.rosterAssignments;
+            setRosterAssignments(data.rosterAssignments);
+          }
           if (data.attendance) setAttendance(data.attendance);
           if (data.headcounts) setHeadcounts(data.headcounts);
           if (data.giving) setGiving(data.giving);
@@ -999,7 +1132,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setIsRefreshing(false);
       }, 500);
     }
-  }, []);
+  }, [currentUser.role]);
 
   const logAction = (action: string, module: string, details: string, recordId?: string) => {
     logActionRecord(action, module, details, recordId, currentUser, setAuditLogs, dbSyncUpsert);

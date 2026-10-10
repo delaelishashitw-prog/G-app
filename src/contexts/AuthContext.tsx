@@ -1081,58 +1081,99 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     }
 
-    // Check PIN / Password
-    try {
-      const pinsMap = readMemberPinMap();
-      const expectedPin = pinsMap[member.id] || pinsMap[member.member_id];
-      const memberPhoneDigits = (member.phone || '').replace(/[^0-9]/g, '');
-      const phoneSuffix = memberPhoneDigits.slice(-4);
-      const providedPin = (pinOrPassword || '').trim();
+    const requiresCloudMemberAuth = import.meta.env.PROD && isSupabaseConfigured();
+    const providedPin = (pinOrPassword || '').trim();
 
-      if (!providedPin) {
+    if (requiresCloudMemberAuth) {
+      if (!member.email) {
         return {
           success: false,
-          message: 'PIN or Password is required. For first-time login, your default PIN is the last 4 digits of your registered phone number.',
+          message: 'A verified email address is required for secure member sign-in. Please contact the church office to update your member record.',
         };
       }
+      if (!providedPin) {
+        return { success: false, message: 'Enter your Supabase member account password.' };
+      }
 
-      const providedPinHash = await hashMemberPin(providedPin);
+      const client = getSupabaseClient();
+      if (!client) {
+        return { success: false, message: 'Secure member sign-in is unavailable. Please try again later.' };
+      }
 
-      if (expectedPin) {
-        const normalizedStoredPin = expectedPin.trim();
-        const matchesExpected = normalizedStoredPin === providedPin || normalizedStoredPin === providedPinHash;
-        const matchesSuffixRecovery = phoneSuffix.length === 4 && providedPin === phoneSuffix;
-
-        if (!matchesExpected && !matchesSuffixRecovery) {
+      try {
+        const { data, error } = await client.auth.signInWithPassword({
+          email: member.email.trim(),
+          password: providedPin,
+        });
+        if (error) {
           return {
             success: false,
-            message: 'Incorrect PIN or password. Please enter your 4-digit PIN (or last 4 digits of your registered phone), or contact the church office.',
+            message: 'Member account sign-in failed. Check your email/password, or contact the church office to activate your Supabase member account.',
+          };
+        }
+        if (!data.session || !data.user.email_confirmed_at) {
+          await client.auth.signOut();
+          return {
+            success: false,
+            message: 'Verify your member email address before signing in. Check your inbox or contact the church office.',
+          };
+        }
+      } catch (error) {
+        console.error('Supabase member sign-in failed:', error);
+        return { success: false, message: 'Secure member sign-in failed. Please try again later.' };
+      }
+    } else {
+      try {
+        const pinsMap = readMemberPinMap();
+        const expectedPin = pinsMap[member.id] || pinsMap[member.member_id];
+        const memberPhoneDigits = (member.phone || '').replace(/[^0-9]/g, '');
+        const phoneSuffix = memberPhoneDigits.slice(-4);
+
+        if (!providedPin) {
+          return {
+            success: false,
+            message: 'PIN or Password is required. For first-time login, your default PIN is the last 4 digits of your registered phone number.',
           };
         }
 
-        if (normalizedStoredPin !== providedPinHash && normalizedStoredPin !== providedPin) {
+        const providedPinHash = await hashMemberPin(providedPin);
+
+        if (expectedPin) {
+          const normalizedStoredPin = expectedPin.trim();
+          const matchesExpected = normalizedStoredPin === providedPin || normalizedStoredPin === providedPinHash;
+          const matchesSuffixRecovery = phoneSuffix.length === 4 && providedPin === phoneSuffix;
+
+          if (!matchesExpected && !matchesSuffixRecovery) {
+            return {
+              success: false,
+              message: 'Incorrect PIN or password. Please enter your 4-digit PIN (or last 4 digits of your registered phone), or contact the church office.',
+            };
+          }
+
+          if (normalizedStoredPin !== providedPinHash && normalizedStoredPin !== providedPin) {
+            pinsMap[member.id] = providedPinHash;
+            pinsMap[member.member_id] = providedPinHash;
+            persistMemberPinMap(pinsMap);
+          }
+        } else {
+          const defaultPin = phoneSuffix.length === 4 ? phoneSuffix : '1234';
+          const matchesDefault = providedPin === defaultPin;
+          const isValidNewPin = /^\d{4,8}$/.test(providedPin);
+
+          if (!matchesDefault && !isValidNewPin) {
+            return {
+              success: false,
+              message: `First-time sign-in requires your 4-digit PIN. Your default PIN is the last 4 digits of your phone (${defaultPin}).`,
+            };
+          }
+
           pinsMap[member.id] = providedPinHash;
           pinsMap[member.member_id] = providedPinHash;
           persistMemberPinMap(pinsMap);
         }
-      } else {
-        const defaultPin = phoneSuffix.length === 4 ? phoneSuffix : '1234';
-        const matchesDefault = providedPin === defaultPin;
-        const isValidNewPin = /^\d{4,8}$/.test(providedPin);
-
-        if (!matchesDefault && !isValidNewPin) {
-          return {
-            success: false,
-            message: `First-time sign-in requires your 4-digit PIN. Your default PIN is the last 4 digits of your phone (${defaultPin}).`,
-          };
-        }
-
-        pinsMap[member.id] = providedPinHash;
-        pinsMap[member.member_id] = providedPinHash;
-        persistMemberPinMap(pinsMap);
+      } catch (e) {
+        console.warn('Member PIN verification error:', e);
       }
-    } catch (e) {
-      console.warn('Member PIN verification error:', e);
     }
 
     const memberProfile: UserProfile = {

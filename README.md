@@ -78,3 +78,16 @@ If you have the Vercel CLI installed on your machine:
 - **`/api/health.js`**: Serverless health check endpoint.
 - **`/api/ai/assistant.js`**: Serverless AI endpoint powered by `@google/genai` (`gemini-3.8-flash`) with pastoral resilience fallbacks.
 - **PWA & Offline Resilience**: Equipped with offline banners and local storage persistence for uninterrupted church operations during network drops.
+
+### Supabase Service Roster Setup
+
+The service roster is cached locally and synced to Supabase when connected. To enable secure cross-device access on an existing Supabase project:
+
+1. Run [`supabase/migrations/20261010000001_secure_roster_assignments.sql`](./supabase/migrations/20261010000001_secure_roster_assignments.sql) in the Supabase SQL Editor. The initial schema migration is for fresh databases; do not rerun it to upgrade an existing project.
+2. Create a Supabase Auth account for each member, confirm its email, and ensure it matches the email on that member's `public.members` record.
+3. Add each staff user's Supabase Auth UUID to `public.roster_managers` to authorize roster management and syncing. For example:
+   ```sql
+   INSERT INTO public.roster_managers (user_id)
+   VALUES ('<staff-auth-user-uuid>');
+   ```
+4. Sign in as an authorized roster manager and sync the existing roster once. Later roster changes sync automatically when online; members can sign in to see only their own assignments.

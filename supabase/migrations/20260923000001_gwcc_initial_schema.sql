@@ -597,7 +597,45 @@ ALTER TABLE public.services ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE public.services ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
 ALTER TABLE public.services ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 
--- 3.8 ATTENDANCE CHECK-IN LOGS
+-- 3.8 SERVICE DUTY ROSTER ASSIGNMENTS
+CREATE TABLE IF NOT EXISTS public.roster_assignments (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  service_id TEXT,
+  service_name VARCHAR(150) NOT NULL,
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  member_id TEXT,
+  member_name VARCHAR(150) NOT NULL,
+  member_phone VARCHAR(50),
+  department VARCHAR(80) NOT NULL DEFAULT 'ushers_protocol',
+  role_title VARCHAR(150) NOT NULL,
+  report_time VARCHAR(30) NOT NULL DEFAULT '08:00',
+  status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Idempotent column additions for pre-existing roster assignments table
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS service_id TEXT;
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS service_name VARCHAR(150);
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS date DATE DEFAULT CURRENT_DATE;
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS member_id TEXT;
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS member_name VARCHAR(150);
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS member_phone VARCHAR(50);
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS department VARCHAR(80) DEFAULT 'ushers_protocol';
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS role_title VARCHAR(150);
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS report_time VARCHAR(30) DEFAULT '08:00';
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'pending';
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS public.roster_managers (
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 3.9 ATTENDANCE CHECK-IN LOGS
 CREATE TABLE IF NOT EXISTS public.attendance (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   service_id TEXT NOT NULL,
@@ -1227,13 +1265,89 @@ BEGIN
 END
 $$;
 
+CREATE INDEX IF NOT EXISTS idx_roster_assignments_member_date
+  ON public.roster_assignments (member_id, date);
+
+ALTER TABLE public.roster_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.roster_managers ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.roster_assignments FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.roster_managers FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.roster_assignments TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.is_roster_manager()
+RETURNS BOOLEAN
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.roster_managers
+    WHERE user_id = auth.uid()
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.is_roster_manager() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_roster_manager() TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.can_read_roster_assignment(assignment_member_id TEXT)
+RETURNS BOOLEAN
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.members AS member
+    JOIN auth.users AS auth_user
+      ON LOWER(BTRIM(COALESCE(member.email, ''))) = LOWER(BTRIM(COALESCE(auth_user.email, '')))
+    WHERE (member.id = assignment_member_id OR member.member_id = assignment_member_id)
+      AND auth_user.id = auth.uid()
+      AND auth_user.email_confirmed_at IS NOT NULL
+      AND COALESCE(auth_user.email, '') <> ''
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.can_read_roster_assignment(TEXT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.can_read_roster_assignment(TEXT) TO authenticated;
+
+DO $$
+DECLARE
+  existing_policy RECORD;
+BEGIN
+  FOR existing_policy IN
+    SELECT policyname
+    FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'roster_assignments'
+  LOOP
+    EXECUTE format('DROP POLICY %I ON public.roster_assignments', existing_policy.policyname);
+  END LOOP;
+END
+$$;
+
+CREATE POLICY roster_assignments_manager_all
+  ON public.roster_assignments
+  FOR ALL
+  TO authenticated
+  USING (public.is_roster_manager())
+  WITH CHECK (public.is_roster_manager());
+
+CREATE POLICY roster_assignments_member_read
+  ON public.roster_assignments
+  FOR SELECT
+  TO authenticated
+  USING (public.can_read_roster_assignment(member_id));
+
 -- ==============================================================================
 -- 8. SUPABASE REALTIME REPLICATION (For live multi-device updates)
 -- ==============================================================================
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.members, public.giving, public.attendance, public.visitors, public.services, public.pledges, public.welfare_contributions, public.welfare_claims;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.members, public.giving, public.attendance, public.visitors, public.services, public.roster_assignments, public.pledges, public.welfare_contributions, public.welfare_claims;
   END IF;
 EXCEPTION
   WHEN duplicate_object THEN NULL;

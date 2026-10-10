@@ -68,6 +68,7 @@ import { DownloadMyDutyModal } from '../components/portal/DownloadMyDutyModal';
 import { downloadMyDutyRosterPdf } from '../lib/myDutyPdfGenerator';
 import { useRealtimeRosterNotifications } from '../hooks/useRealtimeRosterNotifications';
 import { RosterNotificationCenter } from '../components/portal/RosterNotificationCenter';
+import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
 
 type PortalTab =
   | 'overview'
@@ -308,6 +309,7 @@ export const MemberPortalPage: React.FC = () => {
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const requiresCloudMemberAuth = import.meta.env.PROD && isSupabaseConfigured();
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<PortalTab>(() => {
@@ -376,6 +378,79 @@ export const MemberPortalPage: React.FC = () => {
     // Autolinking to a real member record from staff identity is a privacy risk and is disabled.
     return null;
   }, [currentMember, previewMemberId, members]);
+
+  const [cloudRosterAssignments, setCloudRosterAssignments] = useState<RosterAssignment[] | null>(null);
+  const usesPrivateCloudRoster =
+    requiresCloudMemberAuth && currentUser.role === 'member';
+  const memberRosterSource = usesPrivateCloudRoster
+    ? cloudRosterAssignments || []
+    : rosterAssignments;
+
+  React.useEffect(() => {
+    if (!usesPrivateCloudRoster || !activeMember) {
+      setCloudRosterAssignments(null);
+      return;
+    }
+
+    const client = getSupabaseClient();
+    if (!client) {
+      setCloudRosterAssignments([]);
+      toastError('Roster unavailable', 'Secure Supabase roster access is not configured on this device.');
+      return;
+    }
+
+    let isCurrent = true;
+    setCloudRosterAssignments([]);
+
+    const loadMemberRoster = async () => {
+      const { data: sessionData, error: sessionError } = await client.auth.getSession();
+      if (sessionError) throw sessionError;
+      const sessionEmail = sessionData.session?.user.email?.trim().toLowerCase();
+      const memberEmail = activeMember.email?.trim().toLowerCase();
+      if (!sessionEmail || !memberEmail || sessionEmail !== memberEmail) {
+        throw new Error('The signed-in Supabase account does not match this member record.');
+      }
+
+      const memberIds = [...new Set([activeMember.id, activeMember.member_id].filter(Boolean))];
+      const { data, error } = await client
+        .from('roster_assignments')
+        .select('*')
+        .in('member_id', memberIds)
+        .order('date', { ascending: true });
+      if (error) throw error;
+      if (isCurrent) setCloudRosterAssignments((data || []) as RosterAssignment[]);
+    };
+
+    void loadMemberRoster().catch((error: unknown) => {
+      if (!isCurrent) return;
+      setCloudRosterAssignments([]);
+      console.error('Failed to load member roster from Supabase:', error);
+      toastError(
+        'Could not load service roster',
+        error instanceof Error ? error.message : 'Please try again later.'
+      );
+    });
+
+    const channel = client
+      .channel(`member-roster-${activeMember.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'roster_assignments' },
+        () => {
+          void loadMemberRoster().catch((error: unknown) => {
+            if (isCurrent) {
+              console.error('Failed to refresh member roster from Supabase:', error);
+            }
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      isCurrent = false;
+      void client.removeChannel(channel);
+    };
+  }, [activeMember, toastError, usesPrivateCloudRoster]);
 
   // Member's Giving Data
   const memberGiving = useMemo(() => {
@@ -566,7 +641,7 @@ export const MemberPortalPage: React.FC = () => {
     };
 
     // 1. Direct explicit assignments in rosterAssignments
-    const directAssignments = rosterAssignments.filter((r) =>
+    const directAssignments = memberRosterSource.filter((r) =>
       isMemberAssigned(r.member_id, r.member_name, r.member_phone)
     );
 
@@ -587,7 +662,9 @@ export const MemberPortalPage: React.FC = () => {
     };
 
     const serviceDerivedAssignments: RosterAssignment[] = [];
-    const activeServicesList = services.filter((s) => s.is_active !== false);
+    const activeServicesList = usesPrivateCloudRoster
+      ? []
+      : services.filter((s) => s.is_active !== false);
 
     activeServicesList.forEach((s) => {
       [0, 1, 2, 3].forEach((weekOffset) => {
@@ -709,7 +786,7 @@ export const MemberPortalPage: React.FC = () => {
       if (dateA !== dateB) return dateA.localeCompare(dateB);
       return (a.report_time || '').localeCompare(b.report_time || '');
     });
-  }, [activeMember, rosterAssignments, services]);
+  }, [activeMember, memberRosterSource, services, usesPrivateCloudRoster]);
 
   const upcomingRosterDuties = useMemo(() => {
     const today = new Date();
@@ -747,7 +824,7 @@ export const MemberPortalPage: React.FC = () => {
   } = useRealtimeRosterNotifications({
     memberId: activeMember?.member_id || activeMember?.id,
     memberName: activeMember ? `${activeMember.first_name} ${activeMember.last_name}` : undefined,
-    enabled: Boolean(activeMember),
+    enabled: Boolean(activeMember) && !usesPrivateCloudRoster,
     onNotificationReceived: (notif) => {
       toastSuccess('Duty Roster Alert', notif.message);
     },
@@ -856,7 +933,9 @@ export const MemberPortalPage: React.FC = () => {
       return;
     }
     if (!pin.trim()) {
-      setLoginError('Please enter your 4-digit PIN or password.');
+      setLoginError(requiresCloudMemberAuth
+        ? 'Please enter your verified Supabase account password.'
+        : 'Please enter your 4-digit PIN or password.');
       return;
     }
     setIsSigningIn(true);
@@ -1011,6 +1090,17 @@ export const MemberPortalPage: React.FC = () => {
       toastError('PIN Mismatch', 'New portal PIN and confirmation PIN do not match.');
       return;
     }
+    if (usesPrivateCloudRoster && newPortalPin.length < 6) {
+      toastError('Password Too Short', 'Supabase member account passwords must be at least 6 characters.');
+      return;
+    }
+    if (
+      usesPrivateCloudRoster &&
+      editEmail.trim().toLowerCase() !== (activeMember.email || '').trim().toLowerCase()
+    ) {
+      toastError('Email Update Required', 'Contact the church office to change the verified email on your secure member account.');
+      return;
+    }
 
     setIsSavingProfile(true);
     try {
@@ -1024,23 +1114,27 @@ export const MemberPortalPage: React.FC = () => {
       });
 
       if (newPortalPin) {
-        try {
+        if (usesPrivateCloudRoster) {
+          const client = getSupabaseClient();
+          if (!client) throw new Error('Secure member sign-in is unavailable.');
+          const { error } = await client.auth.updateUser({ password: newPortalPin.trim() });
+          if (error) throw error;
+          toastSuccess('Account Password Updated', 'Your Supabase member account password has been changed.');
+        } else {
           const pinsMap = readMemberPinMap();
           const hashedValue = await hashMemberPin(newPortalPin.trim());
           pinsMap[activeMember.id] = hashedValue;
           pinsMap[activeMember.member_id] = hashedValue;
           persistMemberPinMap(pinsMap);
           toastSuccess('Portal PIN Updated', 'Your Member Portal PIN has been securely saved.');
-          setNewPortalPin('');
-          setConfirmPortalPin('');
-        } catch (e) {
-          console.warn('PIN save notice:', e);
         }
+        setNewPortalPin('');
+        setConfirmPortalPin('');
       }
 
       toastSuccess('Profile Updated', 'Your church membership records have been updated.');
     } catch (err: any) {
-      toastError('Error', err?.message || 'Could not update profile.');
+      toastError('Error', err?.message || 'Could not update profile or account password.');
     } finally {
       setIsSavingProfile(false);
     }
@@ -1072,7 +1166,9 @@ export const MemberPortalPage: React.FC = () => {
               Member Self-Service Portal
             </p>
             <p className="text-[11px] text-slate-400">
-              Sign in with your Member ID, registered phone number, or email and your 4-digit PIN.
+              {requiresCloudMemberAuth
+                ? 'Sign in with your Member ID, phone number, or email and your verified Supabase account password.'
+                : 'Sign in with your Member ID, registered phone number, or email and your 4-digit PIN.'}
             </p>
           </div>
 
@@ -1132,15 +1228,17 @@ export const MemberPortalPage: React.FC = () => {
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="block text-xs font-bold text-slate-300">
-                  Password or 4-Digit PIN <span className="text-red-400">*</span>
+                  {requiresCloudMemberAuth ? 'Supabase Account Password' : 'Password or 4-Digit PIN'} <span className="text-red-400">*</span>
                 </label>
-                <span className="text-[10px] text-emerald-400 font-medium">Default: Phone last 4 digits</span>
+                <span className="text-[10px] text-emerald-400 font-medium">
+                  {requiresCloudMemberAuth ? 'Use your verified member account' : 'Default: Phone last 4 digits'}
+                </span>
               </div>
               <div className="relative">
                 <input
                   type={showPin ? 'text' : 'password'}
                   required
-                  placeholder="Enter 4-digit PIN (e.g. 5432)"
+                  placeholder={requiresCloudMemberAuth ? 'Enter your account password' : 'Enter 4-digit PIN (e.g. 5432)'}
                   value={pin}
                   onChange={(e) => setPin(e.target.value)}
                   className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
@@ -2244,16 +2342,18 @@ export const MemberPortalPage: React.FC = () => {
                       {activeMember.ministry_name || 'Department Volunteer'}
                     </span>
                     <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white/10 text-emerald-200 border border-white/15">
-                      <span className={`w-1.5 h-1.5 rounded-full ${wsStatus === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-                      <span>{wsStatus === 'connected' ? 'Live Duty Sync Active' : 'Syncing...'}</span>
-                      <button
-                        type="button"
-                        onClick={() => simulateDutyAlert()}
-                        className="ml-1 text-[9px] text-amber-300 hover:text-amber-200 underline font-bold cursor-pointer"
-                        title="Simulate incoming duty assignment alert via WebSocket"
-                      >
-                        (Test Alert)
-                      </button>
+                      <span className={`w-1.5 h-1.5 rounded-full ${usesPrivateCloudRoster || wsStatus === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                      <span>{usesPrivateCloudRoster ? 'Secure Supabase Live Sync' : wsStatus === 'connected' ? 'Live Duty Sync Active' : 'Syncing...'}</span>
+                      {!usesPrivateCloudRoster && (
+                        <button
+                          type="button"
+                          onClick={() => simulateDutyAlert()}
+                          className="ml-1 text-[9px] text-amber-300 hover:text-amber-200 underline font-bold cursor-pointer"
+                          title="Simulate incoming duty assignment alert via WebSocket"
+                        >
+                          (Test Alert)
+                        </button>
+                      )}
                     </div>
                   </div>
                   <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
@@ -3447,10 +3547,10 @@ export const MemberPortalPage: React.FC = () => {
             <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs">
               <h2 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
                 <User className="w-5 h-5 text-emerald-700" />
-                My Profile & Member Portal PIN Settings
+                My Profile & Member Portal Security Settings
               </h2>
               <p className="text-xs text-slate-500">
-                Keep your church contact details updated and configure your private portal PIN.
+                Keep your church contact details and member account security settings updated.
               </p>
             </div>
 
@@ -3550,20 +3650,22 @@ export const MemberPortalPage: React.FC = () => {
               <div className="pt-4 border-t border-slate-200">
                 <h3 className="text-sm font-bold text-slate-900 mb-1 flex items-center gap-2">
                   <Lock className="w-4 h-4 text-emerald-700" />
-                  Member Portal Security PIN / Password
+                  {usesPrivateCloudRoster ? 'Member Account Password' : 'Member Portal Security PIN / Password'}
                 </h3>
                 <p className="text-xs text-slate-500 mb-3">
-                  Set a private 4 to 6-digit PIN or password for your Member Portal login.
+                  {usesPrivateCloudRoster
+                    ? 'Update the password for your verified Supabase member account.'
+                    : 'Set a private 4 to 6-digit PIN or password for your Member Portal login.'}
                 </p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                   <div>
                     <label className="block font-bold text-slate-700 mb-1">
-                      New Portal PIN / Password
+                      {usesPrivateCloudRoster ? 'New Account Password' : 'New Portal PIN / Password'}
                     </label>
                     <input
                       type="password"
-                      placeholder="Enter new 4-digit PIN"
+                      placeholder={usesPrivateCloudRoster ? 'Enter a new password (6+ characters)' : 'Enter new 4-digit PIN'}
                       value={newPortalPin}
                       onChange={(e) => setNewPortalPin(e.target.value)}
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
