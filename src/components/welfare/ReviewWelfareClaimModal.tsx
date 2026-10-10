@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, CheckCircle2, XCircle, AlertCircle, HeartHandshake, FileText, ArrowRight, Printer } from 'lucide-react';
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -20,17 +20,35 @@ export const ReviewWelfareClaimModal: React.FC<ReviewWelfareClaimModalProps> = (
   const { updateWelfareClaim, welfareContributions, settings } = useChurchData();
   const { success, error: toastError } = useToast();
 
+  const [status, setStatus] = useState<WelfareClaimStatus>(claim?.status || 'pending');
+  const [amountApproved, setAmountApproved] = useState<string>(
+    claim?.amount_approved
+      ? String(claim.amount_approved)
+      : claim?.amount_requested
+      ? String(claim.amount_requested)
+      : ''
+  );
+  const [pastoralNotes, setPastoralNotes] = useState<string>(claim?.pastoral_notes || '');
+
+  // Synchronize state when claim prop changes
+  useEffect(() => {
+    if (claim) {
+      setStatus(claim.status);
+      setAmountApproved(
+        claim.amount_approved
+          ? String(claim.amount_approved)
+          : String(claim.amount_requested)
+      );
+      setPastoralNotes(claim.pastoral_notes || '');
+    }
+  }, [claim]);
+
+  // ALL HOOKS CALLED UNCONDITIONALLY ABOVE
   if (!isOpen || !claim) return null;
 
   // Member's historical contributions
   const memberContributions = welfareContributions.filter((c) => c.member_id === claim.member_id);
   const totalDuesPaid = memberContributions.reduce((sum, c) => sum + c.amount, 0);
-
-  const [status, setStatus] = useState<WelfareClaimStatus>(claim.status);
-  const [amountApproved, setAmountApproved] = useState(
-    claim.amount_approved ? String(claim.amount_approved) : String(claim.amount_requested)
-  );
-  const [pastoralNotes, setPastoralNotes] = useState(claim.pastoral_notes || '');
 
   const handleSaveReview = (e: React.FormEvent) => {
     e.preventDefault();

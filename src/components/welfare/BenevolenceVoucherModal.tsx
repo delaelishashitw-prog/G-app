@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Printer, Download, Check, HeartHandshake, ShieldCheck, FileCheck } from 'lucide-react';
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -18,18 +18,34 @@ export const BenevolenceVoucherModal: React.FC<BenevolenceVoucherModalProps> = (
   const { settings, disburseWelfareClaim } = useChurchData();
   const { success } = useToast();
 
-  if (!isOpen || !claim) return null;
-
-  const defaultVoucherNo = claim.disbursement_voucher_no || `WPV-${new Date().getFullYear()}-${String(Math.floor(100 + Math.random() * 900))}`;
-  const defaultAmount = claim.amount_approved || claim.amount_requested;
+  const defaultVoucherNo = claim?.disbursement_voucher_no || `WPV-${new Date().getFullYear()}-${String(Math.floor(100 + Math.random() * 900))}`;
+  const defaultAmount = claim?.amount_approved || claim?.amount_requested || 0;
 
   const [voucherNo, setVoucherNo] = useState(defaultVoucherNo);
   const [approvedAmount, setApprovedAmount] = useState(String(defaultAmount));
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(claim.disbursement_method || 'mobile_money');
-  const [paymentChannel, setPaymentChannel] = useState(claim.disbursement_channel || 'MTN Mobile Money');
-  const [recipientPhone, setRecipientPhone] = useState(claim.member_phone || '+233 24 ');
-  const [notes, setNotes] = useState(claim.pastoral_notes || 'Approved relief assistance under GWCC Welfare Constitution Article 4.');
-  const [isFinalized, setIsFinalized] = useState(claim.status === 'disbursed');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(claim?.disbursement_method || 'mobile_money');
+  const [paymentChannel, setPaymentChannel] = useState(claim?.disbursement_channel || 'MTN Mobile Money');
+  const [recipientPhone, setRecipientPhone] = useState(claim?.member_phone || '+233 24 ');
+  const [notes, setNotes] = useState(claim?.pastoral_notes || 'Approved relief assistance under GWCC Welfare Constitution Article 4.');
+  const [isFinalized, setIsFinalized] = useState(claim?.status === 'disbursed');
+
+  // Synchronize state when claim changes
+  useEffect(() => {
+    if (claim) {
+      const vNo = claim.disbursement_voucher_no || `WPV-${new Date().getFullYear()}-${String(Math.floor(100 + Math.random() * 900))}`;
+      const amt = claim.amount_approved || claim.amount_requested || 0;
+      setVoucherNo(vNo);
+      setApprovedAmount(String(amt));
+      setPaymentMethod(claim.disbursement_method || 'mobile_money');
+      setPaymentChannel(claim.disbursement_channel || 'MTN Mobile Money');
+      setRecipientPhone(claim.member_phone || '+233 24 ');
+      setNotes(claim.pastoral_notes || 'Approved relief assistance under GWCC Welfare Constitution Article 4.');
+      setIsFinalized(claim.status === 'disbursed');
+    }
+  }, [claim]);
+
+  // ALL HOOKS CALLED UNCONDITIONALLY ABOVE
+  if (!isOpen || !claim) return null;
 
   const handleConfirmDisbursement = () => {
     const num = parseFloat(approvedAmount);
