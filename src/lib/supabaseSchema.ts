@@ -863,6 +863,24 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
   timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 3.20 SERVICE DUTY ROSTER ASSIGNMENTS
+CREATE TABLE IF NOT EXISTS public.roster_assignments (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  service_id TEXT,
+  service_name VARCHAR(150) NOT NULL DEFAULT 'Church Service',
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  member_id TEXT,
+  member_name VARCHAR(150) NOT NULL DEFAULT 'Member',
+  member_phone VARCHAR(50),
+  department VARCHAR(80) NOT NULL DEFAULT 'ushers_protocol',
+  role_title VARCHAR(150) NOT NULL DEFAULT 'Volunteer',
+  report_time VARCHAR(30) NOT NULL DEFAULT '08:00',
+  status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ==============================================================================
 -- 4. NON-DESTRUCTIVE COLUMN MIGRATIONS (Safe for existing live databases)
 -- ==============================================================================
@@ -1185,6 +1203,7 @@ ALTER TABLE public.communications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.welfare_contributions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.welfare_claims ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.roster_assignments ENABLE ROW LEVEL SECURITY;
 
 DO $$
 DECLARE
@@ -1194,7 +1213,7 @@ DECLARE
     'visitors', 'services', 'attendance', 'headcounts', 'giving',
     'pledge_campaigns', 'pledges', 'expenses', 'events', 'pastoral_care',
     'prayer_requests', 'communications', 'audit_logs',
-    'welfare_contributions', 'welfare_claims'
+    'welfare_contributions', 'welfare_claims', 'roster_assignments'
   ];
 BEGIN
   FOREACH t IN ARRAY tables LOOP
@@ -1217,7 +1236,7 @@ $$;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.members, public.giving, public.attendance, public.visitors, public.services, public.pledges, public.welfare_contributions, public.welfare_claims;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.members, public.giving, public.attendance, public.visitors, public.services, public.pledges, public.welfare_contributions, public.welfare_claims, public.roster_assignments;
   END IF;
 EXCEPTION
   WHEN duplicate_object THEN NULL;
@@ -1659,6 +1678,24 @@ CREATE TABLE IF NOT EXISTS public.welfare_claims (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 2.1 Ensure roster_assignments table exists in PostgreSQL
+CREATE TABLE IF NOT EXISTS public.roster_assignments (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  service_id TEXT,
+  service_name VARCHAR(150) NOT NULL DEFAULT 'Church Service',
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  member_id TEXT,
+  member_name VARCHAR(150) NOT NULL DEFAULT 'Member',
+  member_phone VARCHAR(50),
+  department VARCHAR(80) NOT NULL DEFAULT 'ushers_protocol',
+  role_title VARCHAR(150) NOT NULL DEFAULT 'Volunteer',
+  report_time VARCHAR(30) NOT NULL DEFAULT '08:00',
+  status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- 3. Grant full API permissions on schema public to anon and authenticated roles
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
@@ -1678,7 +1715,7 @@ DECLARE
     'visitors', 'services', 'attendance', 'headcounts', 'giving',
     'pledge_campaigns', 'pledges', 'expenses', 'events', 'pastoral_care',
     'prayer_requests', 'communications', 'audit_logs',
-    'welfare_contributions', 'welfare_claims'
+    'welfare_contributions', 'welfare_claims', 'roster_assignments'
   ];
 BEGIN
   FOREACH t IN ARRAY tables LOOP
@@ -1776,5 +1813,68 @@ DROP POLICY IF EXISTS "Enable insert for all users" ON public.welfare_claims;
 CREATE POLICY "gwcc_policy_all_welfare_contributions" ON public.welfare_contributions FOR ALL TO public USING (true) WITH CHECK (true);
 CREATE POLICY "gwcc_policy_all_welfare_claims" ON public.welfare_claims FOR ALL TO public USING (true) WITH CHECK (true);
 `;
+
+/**
+ * DEDICATED QUICK FIX SCRIPT SPECIFICALLY FOR ROSTER ASSIGNMENTS PERMISSIONS & RLS
+ * Run this directly in the Supabase SQL Editor if:
+ * "permission denied for table roster_assignments" occurs.
+ */
+export const SQL_FIX_ROSTER_SCHEMA = `-- ==============================================================================
+-- GREATER WORKS CITY CHURCH (GWCC) - ROSTER ASSIGNMENTS PERMISSION REPAIR SCRIPT
+-- Paste and Run in Supabase SQL Editor: https://supabase.com/dashboard/project/_/sql/new
+-- Resolves: "permission denied for table roster_assignments"
+-- ==============================================================================
+
+-- 1. Ensure table exists with all standard columns
+CREATE TABLE IF NOT EXISTS public.roster_assignments (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  service_id TEXT,
+  service_name VARCHAR(150) NOT NULL DEFAULT 'Church Service',
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  member_id TEXT,
+  member_name VARCHAR(150) NOT NULL DEFAULT 'Member',
+  member_phone VARCHAR(50),
+  department VARCHAR(80) NOT NULL DEFAULT 'ushers_protocol',
+  role_title VARCHAR(150) NOT NULL DEFAULT 'Volunteer',
+  report_time VARCHAR(30) NOT NULL DEFAULT '08:00',
+  status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 2. Grant table and schema privileges to anon and authenticated roles
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.roster_assignments TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+
+-- 3. Configure Row-Level Security
+ALTER TABLE public.roster_assignments ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "gwcc_policy_all_roster_assignments" ON public.roster_assignments;
+DROP POLICY IF EXISTS "roster_assignments_manager_all" ON public.roster_assignments;
+DROP POLICY IF EXISTS "roster_assignments_member_read" ON public.roster_assignments;
+DROP POLICY IF EXISTS "roster_assignments_public_all" ON public.roster_assignments;
+DROP POLICY IF EXISTS "Allow all for anon" ON public.roster_assignments;
+
+CREATE POLICY "gwcc_policy_all_roster_assignments"
+  ON public.roster_assignments
+  FOR ALL
+  TO public
+  USING (true)
+  WITH CHECK (true);
+
+-- 4. Enable real-time updates
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.roster_assignments;
+  END IF;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN undefined_object THEN NULL;
+END $$;
+`;
+
 
 

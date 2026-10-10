@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { sanitizeRecordForSupabase } from './supabase.ts';
-import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA } from './supabaseSchema.ts';
+import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA, SQL_FIX_ROSTER_SCHEMA } from './supabaseSchema.ts';
 
 const ROSTER_MIGRATION = readFileSync(
   new URL('../../supabase/migrations/20261010000001_secure_roster_assignments.sql', import.meta.url),
@@ -56,17 +56,24 @@ test('sanitizes welfare contribution and claim records for Supabase persistence'
   assert.ok(claim.claim_number.startsWith('BEN-'));
 });
 
-test('SQL schema scripts include full welfare tables and RLS permissions', () => {
+test('SQL schema scripts include full welfare and roster tables and RLS permissions', () => {
   assert.ok(SQL_MIGRATION_SCHEMA.includes('welfare_contributions'));
   assert.ok(SQL_MIGRATION_SCHEMA.includes('welfare_claims'));
+  assert.ok(SQL_MIGRATION_SCHEMA.includes('roster_assignments'));
   assert.ok(SQL_MIGRATION_SCHEMA.includes('ALTER TABLE public.welfare_contributions ENABLE ROW LEVEL SECURITY;'));
   assert.ok(SQL_MIGRATION_SCHEMA.includes('ALTER TABLE public.welfare_claims ENABLE ROW LEVEL SECURITY;'));
+  assert.ok(SQL_MIGRATION_SCHEMA.includes('ALTER TABLE public.roster_assignments ENABLE ROW LEVEL SECURITY;'));
 
   assert.ok(SQL_FIX_RLS_SCHEMA.includes('welfare_contributions'));
   assert.ok(SQL_FIX_RLS_SCHEMA.includes('welfare_claims'));
+  assert.ok(SQL_FIX_RLS_SCHEMA.includes('roster_assignments'));
 
   assert.ok(SQL_FIX_WELFARE_SCHEMA.includes('CREATE POLICY "gwcc_policy_all_welfare_contributions"'));
   assert.ok(SQL_FIX_WELFARE_SCHEMA.includes('CREATE POLICY "gwcc_policy_all_welfare_claims"'));
+
+  assert.ok(SQL_FIX_ROSTER_SCHEMA.includes('permission denied for table roster_assignments'));
+  assert.ok(SQL_FIX_ROSTER_SCHEMA.includes('GRANT ALL ON TABLE public.roster_assignments TO anon, authenticated, service_role;'));
+  assert.ok(SQL_FIX_ROSTER_SCHEMA.includes('CREATE POLICY "gwcc_policy_all_roster_assignments"'));
 });
 
 test('sanitizes roster assignments for Supabase persistence', () => {

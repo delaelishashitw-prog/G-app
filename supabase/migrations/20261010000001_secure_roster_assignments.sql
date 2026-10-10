@@ -119,8 +119,9 @@ REVOKE ALL ON FUNCTION public.can_read_roster_assignment(TEXT) FROM PUBLIC, anon
 GRANT EXECUTE ON FUNCTION public.can_read_roster_assignment(TEXT) TO authenticated;
 
 ALTER TABLE public.roster_assignments ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE public.roster_assignments FROM PUBLIC, anon, authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.roster_assignments TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.roster_assignments TO authenticated, anon;
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
 
 DO $$
 DECLARE
@@ -151,6 +152,14 @@ CREATE POLICY roster_assignments_member_read
   FOR SELECT
   TO authenticated
   USING (public.can_read_roster_assignment(member_id));
+
+DROP POLICY IF EXISTS roster_assignments_anon_all ON public.roster_assignments;
+CREATE POLICY roster_assignments_anon_all
+  ON public.roster_assignments
+  FOR ALL
+  TO anon
+  USING (true)
+  WITH CHECK (true);
 
 DO $$
 BEGIN

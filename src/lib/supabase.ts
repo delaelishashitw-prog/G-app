@@ -222,6 +222,21 @@ export function isTableNotFoundError(error: any): boolean {
   );
 }
 
+// Helper to check if an error is due to missing privileges / RLS restrictions
+export function isPermissionDeniedError(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '').toUpperCase();
+  const msg = String(error.message || '').toLowerCase();
+  const details = String(error.details || '').toLowerCase();
+  return (
+    code === '42501' ||
+    code === 'PGRST301' ||
+    msg.includes('permission denied') ||
+    msg.includes('row-level security') ||
+    details.includes('permission denied')
+  );
+}
+
 // Extract project ref from https://<ref>.supabase.co
 export function getSupabaseProjectRef(url: string): string | null {
   try {
@@ -371,6 +386,9 @@ export async function checkSupabaseTables(): Promise<{
       const { error } = await client.from(table).select('*', { count: 'exact', head: true });
       if (error && isTableNotFoundError(error)) {
         missing.push(table);
+      } else if (error && isPermissionDeniedError(error)) {
+        // Table exists in Postgres but has restrictive RLS/permissions
+        existing.push(table);
       } else if (error) {
         missing.push(table);
       } else {
@@ -961,7 +979,13 @@ export async function pushAllDataToSupabase(
           updated_at: (assignment as any).updated_at || now,
         }));
         const { error } = await client.from('roster_assignments').upsert(sanitized);
-        if (error) throw error;
+        if (error) {
+          if (isPermissionDeniedError(error) || isTableNotFoundError(error)) {
+            console.warn('Supabase permission denied or table not ready for roster_assignments during push:', error.message);
+            return;
+          }
+          throw error;
+        }
         summary['roster_assignments'] = sanitized.length;
       },
     },
@@ -1399,7 +1423,14 @@ export async function pullAllDataFromSupabase(): Promise<{
       const { data, error } = await targetClient.from(table).select('*');
       if (error) {
         if (!isTableNotFoundError(error)) {
-          errors.push(`${table}: ${error.message}`);
+          if (isPermissionDeniedError(error)) {
+            console.warn(`[Supabase] Table "${table}" access restricted by permissions/RLS: ${error.message}. Local data retained.`);
+            if (table !== 'roster_assignments') {
+              errors.push(`${table}: ${error.message}`);
+            }
+          } else {
+            errors.push(`${table}: ${error.message}`);
+          }
         }
         return;
       }
@@ -1412,7 +1443,14 @@ export async function pullAllDataFromSupabase(): Promise<{
       }
     } catch (err: any) {
       if (!isTableNotFoundError(err)) {
-        errors.push(`${table}: ${err.message}`);
+        if (isPermissionDeniedError(err)) {
+          console.warn(`[Supabase] Table "${table}" access restricted by permissions: ${err?.message || err}`);
+          if (table !== 'roster_assignments') {
+            errors.push(`${table}: ${err.message}`);
+          }
+        } else {
+          errors.push(`${table}: ${err.message}`);
+        }
       }
     }
   };
@@ -1449,8 +1487,12 @@ export async function pullAllDataFromSupabase(): Promise<{
     await Promise.allSettled(tableList.map((t) => fetchTable(verifiedClient, t.table, t.key)));
   }
 
+  const hasSuccessfulData = Object.keys(result).length > 0;
+  const fatalErrors = errors.filter((e) => !e.toLowerCase().includes('permission denied'));
+  const isSuccessful = errors.length === 0 || (hasSuccessfulData && fatalErrors.length === 0);
+
   return {
-    success: errors.length === 0,
+    success: isSuccessful,
     data: result,
     errors,
   };

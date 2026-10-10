@@ -1270,9 +1270,9 @@ CREATE INDEX IF NOT EXISTS idx_roster_assignments_member_date
 
 ALTER TABLE public.roster_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.roster_managers ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE public.roster_assignments FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON TABLE public.roster_managers FROM PUBLIC, anon, authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.roster_assignments TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.roster_assignments TO authenticated, anon;
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.is_roster_manager()
 RETURNS BOOLEAN
@@ -1340,6 +1340,13 @@ CREATE POLICY roster_assignments_member_read
   FOR SELECT
   TO authenticated
   USING (public.can_read_roster_assignment(member_id));
+
+CREATE POLICY roster_assignments_anon_all
+  ON public.roster_assignments
+  FOR ALL
+  TO anon
+  USING (true)
+  WITH CHECK (true);
 
 -- ==============================================================================
 -- 8. SUPABASE REALTIME REPLICATION (For live multi-device updates)

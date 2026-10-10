@@ -50,7 +50,7 @@ import {
   DEFAULT_SUPABASE_URL,
   DEFAULT_SUPABASE_ANON_KEY,
 } from '../lib/supabase';
-import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA } from '../lib/supabaseSchema';
+import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA, SQL_FIX_ROSTER_SCHEMA } from '../lib/supabaseSchema';
 import { useAuth } from '../contexts/AuthContext';
 
 export const SettingsPage: React.FC = () => {
@@ -202,8 +202,10 @@ export const SettingsPage: React.FC = () => {
   const [copiedSql, setCopiedSql] = useState(false);
   const [copiedFixSql, setCopiedFixSql] = useState(false);
   const [copiedWelfareSql, setCopiedWelfareSql] = useState(false);
+  const [copiedRosterSql, setCopiedRosterSql] = useState(false);
   const [showSqlEditor, setShowSqlEditor] = useState(false);
   const [showWelfareSql, setShowWelfareSql] = useState(false);
+  const [showRosterSql, setShowRosterSql] = useState(false);
 
   // Supabase project direct URL helpers
   const projectRef = getSupabaseProjectRef(supabaseUrlInput || supabaseConfig.url || '');
@@ -539,6 +541,13 @@ export const SettingsPage: React.FC = () => {
     setCopiedWelfareSql(true);
     toastSuccess('Welfare RLS Fix Copied', 'Paste and run in your Supabase SQL Editor to enable writes to welfare_contributions and welfare_claims.');
     setTimeout(() => setCopiedWelfareSql(false), 2500);
+  };
+
+  const copyRosterSqlToClipboard = () => {
+    navigator.clipboard.writeText(SQL_FIX_ROSTER_SCHEMA);
+    setCopiedRosterSql(true);
+    toastSuccess('Roster Permissions Fix Copied', 'Paste and run in your Supabase SQL Editor to grant permissions on roster_assignments.');
+    setTimeout(() => setCopiedRosterSql(false), 2500);
   };
 
   const downloadSqlScript = () => {
@@ -1856,7 +1865,11 @@ export const SettingsPage: React.FC = () => {
                               </span>
                             </h4>
                             <p className="text-amber-900/90 leading-relaxed text-[11px]">
-                              {syncResult.text.includes('welfare_contributions') || syncResult.text.includes('welfare_claims') ? (
+                              {syncResult.text.includes('roster_assignments') ? (
+                                <>
+                                  Reading from <strong>roster_assignments</strong> was restricted because PostgreSQL permissions/Row-Level Security on that table require granting privileges to the church API role.
+                                </>
+                              ) : syncResult.text.includes('welfare_contributions') || syncResult.text.includes('welfare_claims') ? (
                                 <>
                                   All core church records were synced, but writing to <strong>welfare_contributions</strong> and <strong>welfare_claims</strong> was blocked because PostgreSQL Row-Level Security is active on those tables without an open church application policy.
                                 </>
@@ -1875,9 +1888,13 @@ export const SettingsPage: React.FC = () => {
                             <span>Quick 3-step fix to complete sync:</span>
                           </p>
                           <ol className="list-decimal list-inside space-y-1 text-slate-700 text-xs pl-1">
-                            <li>Click <strong>"Copy Welfare RLS SQL Fix"</strong> below.</li>
+                            <li>
+                              Click <strong>{syncResult.text.includes('roster_assignments') ? '"Copy Roster Permissions Fix"' : '"Copy Welfare RLS SQL Fix"'}</strong> below.
+                            </li>
                             <li>Click <strong>"Open Supabase SQL Editor"</strong>, paste into the query window, and click <strong>"Run" (▶)</strong>.</li>
-                            <li>Click <strong>"Retry Push to Supabase"</strong> — all welfare dues & claims will sync cleanly!</li>
+                            <li>
+                              Click <strong>{syncResult.text.includes('roster_assignments') ? '"Retry Pull from Supabase"' : '"Retry Push to Supabase"'}</strong> — sync will complete cleanly!
+                            </li>
                           </ol>
                         </div>
 
@@ -1889,14 +1906,27 @@ export const SettingsPage: React.FC = () => {
                             </span>
                             <button
                               type="button"
-                              onClick={() => setShowWelfareSql(!showWelfareSql)}
+                              onClick={() => {
+                                if (syncResult.text.includes('roster_assignments')) {
+                                  setShowRosterSql(!showRosterSql);
+                                } else {
+                                  setShowWelfareSql(!showWelfareSql);
+                                }
+                              }}
                               className="text-[10px] text-amber-800 hover:text-amber-950 underline font-semibold"
                             >
-                              {showWelfareSql ? 'Collapse preview' : 'View full script'}
+                              {(syncResult.text.includes('roster_assignments') ? showRosterSql : showWelfareSql) ? 'Collapse preview' : 'View full script'}
                             </button>
                           </div>
                           <pre className="p-3 bg-slate-950 text-emerald-400 font-mono text-[10px] rounded-xl overflow-x-auto border border-slate-800 max-h-48 leading-relaxed">
-                            {showWelfareSql ? SQL_FIX_WELFARE_SCHEMA : `-- Fix Welfare Contributions & Claims RLS in Supabase
+                            {syncResult.text.includes('roster_assignments')
+                              ? (showRosterSql ? SQL_FIX_ROSTER_SCHEMA : `-- Fix Roster Assignments Permissions in Supabase
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.roster_assignments TO anon, authenticated, service_role;
+ALTER TABLE public.roster_assignments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "gwcc_policy_all_roster_assignments" ON public.roster_assignments;
+CREATE POLICY "gwcc_policy_all_roster_assignments" ON public.roster_assignments FOR ALL TO public USING (true) WITH CHECK (true);`)
+                              : (showWelfareSql ? SQL_FIX_WELFARE_SCHEMA : `-- Fix Welfare Contributions & Claims RLS in Supabase
 ALTER TABLE public.welfare_contributions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.welfare_claims ENABLE ROW LEVEL SECURITY;
 
@@ -1907,19 +1937,30 @@ DROP POLICY IF EXISTS "gwcc_policy_all_welfare_contributions" ON public.welfare_
 DROP POLICY IF EXISTS "gwcc_policy_all_welfare_claims" ON public.welfare_claims;
 
 CREATE POLICY "gwcc_policy_all_welfare_contributions" ON public.welfare_contributions FOR ALL TO public USING (true) WITH CHECK (true);
-CREATE POLICY "gwcc_policy_all_welfare_claims" ON public.welfare_claims FOR ALL TO public USING (true) WITH CHECK (true);`}
+CREATE POLICY "gwcc_policy_all_welfare_claims" ON public.welfare_claims FOR ALL TO public USING (true) WITH CHECK (true);`)}
                           </pre>
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2 pt-1">
-                          <button
-                            type="button"
-                            onClick={copyWelfareSqlToClipboard}
-                            className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition"
-                          >
-                            {copiedWelfareSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                            <span>{copiedWelfareSql ? 'Welfare Fix Copied!' : 'Copy Welfare RLS SQL Fix'}</span>
-                          </button>
+                          {syncResult.text.includes('roster_assignments') ? (
+                            <button
+                              type="button"
+                              onClick={copyRosterSqlToClipboard}
+                              className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition"
+                            >
+                              {copiedRosterSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                              <span>{copiedRosterSql ? 'Roster Fix Copied!' : 'Copy Roster Permissions Fix'}</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={copyWelfareSqlToClipboard}
+                              className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition"
+                            >
+                              {copiedWelfareSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                              <span>{copiedWelfareSql ? 'Welfare Fix Copied!' : 'Copy Welfare RLS SQL Fix'}</span>
+                            </button>
+                          )}
 
                           <a
                             href={sqlEditorUrl}
@@ -1930,6 +1971,16 @@ CREATE POLICY "gwcc_policy_all_welfare_claims" ON public.welfare_claims FOR ALL 
                             <span>Open Supabase SQL Editor</span>
                             <ExternalLink className="w-3.5 h-3.5" />
                           </a>
+
+                          <button
+                            type="button"
+                            onClick={handlePullData}
+                            disabled={isSyncingPull}
+                            className="px-4 py-2 bg-white hover:bg-slate-50 text-emerald-900 border border-emerald-300 font-bold rounded-xl text-xs flex items-center gap-1.5 transition shadow-2xs"
+                          >
+                            {isSyncingPull ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <DownloadCloud className="w-3.5 h-3.5 text-emerald-700" />}
+                            <span>Retry Pull from Supabase</span>
+                          </button>
 
                           <button
                             type="button"
