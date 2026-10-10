@@ -58,8 +58,15 @@ CREATE TABLE IF NOT EXISTS public.roster_managers (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+INSERT INTO public.roster_managers (user_id)
+SELECT au.id
+FROM auth.users AS au
+WHERE au.email IS NOT NULL
+  AND LOWER(au.email) LIKE '%@greaterworkscitychurch.org'
+ON CONFLICT (user_id) DO NOTHING;
+
 COMMENT ON TABLE public.roster_managers IS
-  'Trusted Supabase Auth users authorized to manage all service roster assignments. Add or remove entries through the Supabase SQL editor using the auth.users UUID.';
+  'Trusted Supabase Auth users authorized to manage all service roster assignments. Official church staff emails are auto-authorized, and additional trusted users can be added manually through the Supabase SQL editor.';
 
 ALTER TABLE public.roster_managers ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.roster_managers FROM PUBLIC, anon, authenticated;
@@ -75,6 +82,13 @@ AS $$
     SELECT 1
     FROM public.roster_managers
     WHERE user_id = auth.uid()
+  )
+  OR EXISTS (
+    SELECT 1
+    FROM auth.users AS au
+    WHERE au.id = auth.uid()
+      AND au.email IS NOT NULL
+      AND LOWER(au.email) LIKE '%@greaterworkscitychurch.org'
   );
 $$;
 

@@ -95,6 +95,8 @@ test('sanitizes roster assignments for Supabase persistence', () => {
 test('roster migration limits member reads and staff writes', () => {
   assert.ok(ROSTER_MIGRATION.includes('CREATE TABLE IF NOT EXISTS public.roster_assignments'));
   assert.ok(ROSTER_MIGRATION.includes('CREATE TABLE IF NOT EXISTS public.roster_managers'));
+  assert.ok(ROSTER_MIGRATION.includes('INSERT INTO public.roster_managers (user_id)'));
+  assert.ok(ROSTER_MIGRATION.includes("LOWER(au.email) LIKE '%@greaterworkscitychurch.org'"));
   assert.ok(ROSTER_MIGRATION.includes('CREATE POLICY roster_assignments_member_read'));
   assert.ok(ROSTER_MIGRATION.includes('public.is_roster_manager()'));
   assert.ok(ROSTER_MIGRATION.includes('auth.users AS auth_user'));
