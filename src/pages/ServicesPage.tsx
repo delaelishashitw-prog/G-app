@@ -76,6 +76,7 @@ export const ServicesPage: React.FC = () => {
   const {
     services,
     attendance,
+    headcounts,
     giving,
     members,
     settings,
@@ -177,6 +178,7 @@ export const ServicesPage: React.FC = () => {
       string,
       {
         checkinCount: number;
+        latestCheckinCount: number;
         givingTotal: number;
         lastDate: string;
       }
@@ -186,10 +188,17 @@ export const ServicesPage: React.FC = () => {
       const sName = (s.name || '').trim().toLowerCase();
       const sPrefix = sName.length >= 3 ? sName.slice(0, 15) : '';
 
-      // Find matching attendance
+      // Find matching individual attendance check-ins
       const matchingAtt = attendance.filter((a) => {
         if (a.service_id && a.service_id === s.id) return true;
         if (sPrefix && a.service_name && a.service_name.toLowerCase().includes(sPrefix)) return true;
+        return false;
+      });
+
+      // Find matching sanctuary headcounts tallies
+      const matchingHeadcounts = (headcounts || []).filter((h) => {
+        if (h.service_id && h.service_id === s.id) return true;
+        if (sPrefix && h.service_name && h.service_name.toLowerCase().includes(sPrefix)) return true;
         return false;
       });
 
@@ -202,27 +211,47 @@ export const ServicesPage: React.FC = () => {
 
       const givingTotal = matchingGiving.reduce((sum, g) => sum + g.amount, 0);
 
-      const sortedDates = matchingAtt
-        .map((a) => a.date)
-        .filter(Boolean)
-        .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+      const sortedDates = Array.from(
+        new Set([
+          ...matchingAtt.map((a) => a.date).filter(Boolean),
+          ...matchingHeadcounts.map((h) => h.date).filter(Boolean),
+        ])
+      ).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+
+      const latestDate = sortedDates[0] || '';
+
+      // Verified check-ins present
+      const verifiedCheckins = matchingAtt.filter((a) => a.status !== 'absent').length;
+
+      // Latest session check-ins / headcount
+      const latestAttCount = matchingAtt.filter((a) => a.date === latestDate && a.status !== 'absent').length;
+      const latestHeadcount = matchingHeadcounts.find((h) => h.date === latestDate);
+      const latestHeadcountCount = latestHeadcount?.total_auditorium || 0;
+      const latestSessionCount = latestAttCount > 0 ? latestAttCount : latestHeadcountCount;
+
+      // Total live attendees: priority to verified member check-ins, falling back to headcount tally if no personal check-ins
+      const totalLiveCheckins = verifiedCheckins > 0 ? verifiedCheckins : latestHeadcountCount;
 
       map.set(s.id, {
-        checkinCount: matchingAtt.length,
+        checkinCount: totalLiveCheckins,
+        latestCheckinCount: latestSessionCount,
         givingTotal,
-        lastDate: sortedDates[0] || 'Recent',
+        lastDate: latestDate || 'Recent',
       });
     });
 
     return map;
-  }, [services, attendance, giving]);
+  }, [services, attendance, headcounts, giving]);
 
   // Overall metrics
   const activeServices = useMemo(() => services.filter((s) => s.is_active), [services]);
   const totalWeeklyCapacity = useMemo(
-    () => activeServices.reduce((sum, s) => sum + (s.expected_attendance || 150), 0),
+    () => activeServices.reduce((sum, s) => sum + (s.expected_attendance || 0), 0),
     [activeServices]
   );
+  const totalLiveAttendees = useMemo(() => {
+    return Array.from(serviceStatsMap.values()).reduce((sum, s) => sum + s.checkinCount, 0);
+  }, [serviceStatsMap]);
   const totalConnectedServiceInflow = useMemo(() => {
     const connected = Array.from(serviceStatsMap.values()).reduce((sum, s) => sum + s.givingTotal, 0);
     return connected > 0 ? connected : giving.reduce((sum, g) => sum + g.amount, 0);
@@ -320,6 +349,12 @@ export const ServicesPage: React.FC = () => {
   const todayDayName = useMemo(() => {
     return DAYS_ORDER[new Date().getDay()].toLowerCase();
   }, []);
+
+  // Connected stats for current upcoming/live service
+  const upcomingStats = useMemo(() => {
+    if (!upcomingServiceInfo?.service) return null;
+    return serviceStatsMap.get(upcomingServiceInfo.service.id) || null;
+  }, [upcomingServiceInfo, serviceStatsMap]);
 
   // Filtered services
   const filteredServices = useMemo(() => {
@@ -546,9 +581,15 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                   <Mic className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
                   <strong>Preacher:</strong> {upcomingServiceInfo.service.preacher || 'Prophet Elisha K. Richard'}
                 </span>
-                <span className="flex items-center gap-1">
-                  <Users className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
-                  <strong>Expected:</strong> {upcomingServiceInfo.service.expected_attendance || 200} worshippers
+                {upcomingServiceInfo.service.expected_attendance ? (
+                  <span className="flex items-center gap-1">
+                    <Users className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                    <strong>Capacity:</strong> {upcomingServiceInfo.service.expected_attendance} worshippers
+                  </span>
+                ) : null}
+                <span className="flex items-center gap-1 font-bold text-amber-300 bg-white/10 px-2.5 py-0.5 rounded-full border border-amber-300/30">
+                  <UserCheck className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                  <strong>Live Check-Ins:</strong> {upcomingStats ? `${upcomingStats.checkinCount} attendees` : '0 attendees'}
                 </span>
               </div>
             </div>
@@ -615,14 +656,20 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
           </span>
         </div>
 
-        {/* Estimated Weekly Capacity */}
+        {/* Estimated Weekly Capacity & Check-Ins */}
         <div className="p-4 bg-white dark:bg-[#0e1726] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
           <div>
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
-              Auditorium Capacity
+              Auditorium Capacity & Check-Ins
             </span>
             <span className="text-2xl font-extrabold text-slate-900 dark:text-white font-mono mt-0.5 block">
-              {totalWeeklyCapacity.toLocaleString()} <span className="text-xs text-slate-400 dark:text-slate-500 font-normal">seats / wk</span>
+              {totalWeeklyCapacity > 0 ? totalWeeklyCapacity.toLocaleString() : 'Open'}{' '}
+              <span className="text-xs text-slate-400 dark:text-slate-500 font-normal">
+                {totalWeeklyCapacity > 0 ? 'seats / wk' : 'capacity'}
+              </span>
+            </span>
+            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold block mt-0.5">
+              {totalLiveAttendees} live recorded check-ins
             </span>
           </div>
           <span className="p-2.5 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 rounded-xl">
@@ -875,7 +922,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                       <div className="p-2 bg-slate-50 dark:bg-slate-900/60 rounded-lg border border-slate-100 dark:border-slate-800">
                         <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase block">Capacity</span>
                         <span className="font-bold text-slate-800 dark:text-slate-200 font-mono">
-                          {svc.expected_attendance || 200}
+                          {svc.expected_attendance ? `${svc.expected_attendance}` : 'Open'}
                         </span>
                       </div>
                       <div className="p-2 bg-emerald-50/60 dark:bg-emerald-950/40 rounded-lg border border-emerald-100 dark:border-emerald-800">

@@ -26,7 +26,7 @@ export const ServiceFormModal: React.FC<ServiceFormModalProps> = ({
     service_leader: initialService?.service_leader || '',
     preacher: initialService?.preacher || '',
     worship_leader: initialService?.worship_leader || '',
-    expected_attendance: initialService?.expected_attendance ? initialService.expected_attendance.toString() : '200',
+    expected_attendance: initialService?.expected_attendance ? initialService.expected_attendance.toString() : '',
     description: initialService?.description || '',
     is_active: initialService !== undefined && initialService !== null ? initialService.is_active : true,
   });

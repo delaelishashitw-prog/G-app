@@ -61,7 +61,7 @@ export function generateServicesIcs(
         `Preacher: ${service.preacher || 'Senior Pastor'}`,
         `Service Leader: ${service.service_leader || 'Pastoral Board'}`,
         `Venue: ${service.venue || 'Main Sanctuary, Joma, Accra'}`,
-        `Expected Attendance: ${service.expected_attendance || 200}`,
+        `Expected Attendance: ${service.expected_attendance ? `${service.expected_attendance} worshippers` : 'Auditorium Open'}`,
         programSummary ? `\\nLITURGY / ORDER OF SERVICE:\\n${programSummary}` : '',
         `\\nGreater Works City Church — Joma Assembly, Accra, Ghana`,
       ]
