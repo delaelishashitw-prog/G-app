@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Printer, Users } from 'lucide-react';
+import { X, Printer, Users, Megaphone } from 'lucide-react';
 import { RosterAssignment, ChurchSettings } from '../../types/database.types';
 
 interface PrintRosterModalProps {
@@ -47,6 +47,14 @@ export const PrintRosterModal: React.FC<PrintRosterModalProps> = ({
       return matchDate && matchService;
     });
   }, [assignments, selectedDate, selectedServiceName]);
+
+  // Extract all unique announcements for this date/service
+  const serviceAnnouncements = React.useMemo(() => {
+    const list = filteredAssignments
+      .map((a) => a.announcement)
+      .filter((ann): ann is string => Boolean(ann && ann.trim()));
+    return Array.from(new Set(list));
+  }, [filteredAssignments]);
 
   // Group filtered assignments by department
   const groupedByDept = React.useMemo(() => {
@@ -125,6 +133,21 @@ export const PrintRosterModal: React.FC<PrintRosterModalProps> = ({
             </div>
           </div>
 
+          {/* Official Announcements Box if present */}
+          {serviceAnnouncements.length > 0 && (
+            <div className="mb-6 p-4 bg-amber-50/90 border-2 border-amber-300 rounded-xl space-y-2">
+              <div className="flex items-center gap-2 text-amber-950 font-bold text-xs uppercase tracking-wider">
+                <Megaphone className="w-4 h-4 text-amber-700" />
+                <span>Official Service Announcements & Ministerial Notices</span>
+              </div>
+              <div className="space-y-1.5 pl-6 text-xs text-slate-900 leading-relaxed font-medium">
+                {serviceAnnouncements.map((ann, idx) => (
+                  <div key={idx}>• {ann}</div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Duty Assignments Grouped by Department */}
           <div className="space-y-6">
             {filteredAssignments.length === 0 ? (
@@ -154,7 +177,7 @@ export const PrintRosterModal: React.FC<PrintRosterModalProps> = ({
                       <th className="p-2.5">Assigned Role</th>
                       <th className="p-2.5">Report Call Time</th>
                       <th className="p-2.5">Phone Contact</th>
-                      <th className="p-2.5">Duty Notes</th>
+                      <th className="p-2.5">Announcement / Notes</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -164,7 +187,12 @@ export const PrintRosterModal: React.FC<PrintRosterModalProps> = ({
                         <td className="p-2.5 font-semibold text-emerald-900">{a.role_title}</td>
                         <td className="p-2.5 font-mono text-slate-700">{a.report_time}</td>
                         <td className="p-2.5 font-mono text-slate-600">{a.member_phone || '—'}</td>
-                        <td className="p-2.5 text-slate-600 text-[11px]">{a.notes || '—'}</td>
+                        <td className="p-2.5 text-slate-700 text-[11px]">
+                          {a.announcement && (
+                            <span className="block font-bold text-amber-900 mb-0.5">📢 {a.announcement}</span>
+                          )}
+                          <span>{a.notes || (!a.announcement ? '—' : '')}</span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

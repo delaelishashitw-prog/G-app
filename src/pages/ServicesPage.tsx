@@ -38,6 +38,8 @@ import {
   UserPlus,
   MessageSquare,
   Flame,
+  Megaphone,
+  X,
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useChurchData } from '../contexts/ChurchDataContext';
@@ -133,6 +135,8 @@ export const ServicesPage: React.FC = () => {
   const [liveRunnerService, setLiveRunnerService] = useState<ChurchService | null>(null);
   const [isShareScheduleOpen, setIsShareScheduleOpen] = useState(false);
   const [isBroadcastRosterOpen, setIsBroadcastRosterOpen] = useState(false);
+  const [editingAnnouncementAssignment, setEditingAnnouncementAssignment] = useState<RosterAssignment | null>(null);
+  const [assignmentAnnouncementText, setAssignmentAnnouncementText] = useState('');
 
   // Sync state if URL search query changes
   useEffect(() => {
@@ -178,11 +182,15 @@ export const ServicesPage: React.FC = () => {
       string,
       {
         checkinCount: number;
+        todayCheckinCount: number;
         latestCheckinCount: number;
+        headcountCount: number;
         givingTotal: number;
         lastDate: string;
       }
     >();
+
+    const todayStr = new Date().toISOString().split('T')[0];
 
     services.forEach((s) => {
       const sName = (s.name || '').trim().toLowerCase();
@@ -191,6 +199,7 @@ export const ServicesPage: React.FC = () => {
       // Find matching individual attendance check-ins
       const matchingAtt = attendance.filter((a) => {
         if (a.service_id && a.service_id === s.id) return true;
+        if (s.name && a.service_name && a.service_name.toLowerCase() === s.name.toLowerCase()) return true;
         if (sPrefix && a.service_name && a.service_name.toLowerCase().includes(sPrefix)) return true;
         return false;
       });
@@ -198,6 +207,7 @@ export const ServicesPage: React.FC = () => {
       // Find matching sanctuary headcounts tallies
       const matchingHeadcounts = (headcounts || []).filter((h) => {
         if (h.service_id && h.service_id === s.id) return true;
+        if (s.name && h.service_name && h.service_name.toLowerCase() === s.name.toLowerCase()) return true;
         if (sPrefix && h.service_name && h.service_name.toLowerCase().includes(sPrefix)) return true;
         return false;
       });
@@ -205,6 +215,7 @@ export const ServicesPage: React.FC = () => {
       // Find matching giving
       const matchingGiving = giving.filter((g) => {
         if (g.service_id && g.service_id === s.id) return true;
+        if (s.name && g.service_name && g.service_name.toLowerCase() === s.name.toLowerCase()) return true;
         if (sPrefix && g.service_name && g.service_name.toLowerCase().includes(sPrefix)) return true;
         return false;
       });
@@ -220,21 +231,20 @@ export const ServicesPage: React.FC = () => {
 
       const latestDate = sortedDates[0] || '';
 
-      // Verified check-ins present
+      // Real live verified check-ins from attendance records
       const verifiedCheckins = matchingAtt.filter((a) => a.status !== 'absent').length;
+      const todayCheckins = matchingAtt.filter((a) => a.date === todayStr && a.status !== 'absent').length;
 
-      // Latest session check-ins / headcount
-      const latestAttCount = matchingAtt.filter((a) => a.date === latestDate && a.status !== 'absent').length;
+      // Latest session check-ins
+      const latestAttCount = latestDate ? matchingAtt.filter((a) => a.date === latestDate && a.status !== 'absent').length : 0;
       const latestHeadcount = matchingHeadcounts.find((h) => h.date === latestDate);
       const latestHeadcountCount = latestHeadcount?.total_auditorium || 0;
-      const latestSessionCount = latestAttCount > 0 ? latestAttCount : latestHeadcountCount;
-
-      // Total live attendees: priority to verified member check-ins, falling back to headcount tally if no personal check-ins
-      const totalLiveCheckins = verifiedCheckins > 0 ? verifiedCheckins : latestHeadcountCount;
 
       map.set(s.id, {
-        checkinCount: totalLiveCheckins,
-        latestCheckinCount: latestSessionCount,
+        checkinCount: verifiedCheckins,
+        todayCheckinCount: todayCheckins,
+        latestCheckinCount: latestAttCount,
+        headcountCount: latestHeadcountCount,
         givingTotal,
         lastDate: latestDate || 'Recent',
       });
@@ -250,8 +260,8 @@ export const ServicesPage: React.FC = () => {
     [activeServices]
   );
   const totalLiveAttendees = useMemo(() => {
-    return Array.from(serviceStatsMap.values()).reduce((sum, s) => sum + s.checkinCount, 0);
-  }, [serviceStatsMap]);
+    return attendance.filter((a) => a.status !== 'absent').length;
+  }, [attendance]);
   const totalConnectedServiceInflow = useMemo(() => {
     const connected = Array.from(serviceStatsMap.values()).reduce((sum, s) => sum + s.givingTotal, 0);
     return connected > 0 ? connected : giving.reduce((sum, g) => sum + g.amount, 0);
@@ -831,7 +841,14 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
             </div>
           ) : (
             filteredServices.map((svc) => {
-              const stats = serviceStatsMap.get(svc.id) || { checkinCount: 0, givingTotal: 0, lastDate: '-' };
+              const stats = serviceStatsMap.get(svc.id) || {
+                checkinCount: 0,
+                todayCheckinCount: 0,
+                latestCheckinCount: 0,
+                headcountCount: 0,
+                givingTotal: 0,
+                lastDate: '-',
+              };
               const programItemsCount = svc.order_of_service?.length || 0;
 
               return (
@@ -928,8 +945,13 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                       <div className="p-2 bg-emerald-50/60 dark:bg-emerald-950/40 rounded-lg border border-emerald-100 dark:border-emerald-800">
                         <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold uppercase block">Attendees</span>
                         <span className="font-bold text-emerald-900 dark:text-emerald-300 font-mono">
-                          {stats.checkinCount} check-ins
+                          {stats.checkinCount} {stats.checkinCount === 1 ? 'check-in' : 'check-ins'}
                         </span>
+                        {stats.headcountCount > 0 && (
+                          <span className="text-[9px] text-emerald-700/80 dark:text-emerald-400/80 block font-semibold truncate" title={`Auditorium Headcount: ${stats.headcountCount}`}>
+                            Tally: {stats.headcountCount}
+                          </span>
+                        )}
                       </div>
                       <div className="p-2 bg-purple-50/60 dark:bg-purple-950/40 rounded-lg border border-purple-100 dark:border-purple-800">
                         <span className="text-[10px] text-purple-700 dark:text-purple-400 font-bold uppercase block">Liturgy</span>
@@ -1473,6 +1495,11 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
 
                 return Array.from(groups.entries()).map(([groupKey, groupItems]) => {
                   const pendingInGroup = groupItems.filter((i) => i.status === 'pending');
+                  const groupAnnouncement =
+                    groupItems.find((i) => i.announcement)?.announcement ||
+                    services.find(
+                      (s) => s.id === groupItems[0]?.service_id || (s.name && groupKey.startsWith(s.name))
+                    )?.announcements;
 
                   return (
                     <div
@@ -1507,6 +1534,23 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                         </div>
                       </div>
 
+                      {/* Group Service Announcement Banner if present */}
+                      {groupAnnouncement && (
+                        <div className="px-5 py-2.5 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-900/60 flex items-start justify-between gap-3 text-xs">
+                          <div className="flex items-start gap-2">
+                            <Megaphone className="w-4 h-4 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
+                            <div>
+                              <span className="font-bold text-amber-950 dark:text-amber-200">
+                                Service Announcements & Ministerial Notices:
+                              </span>
+                              <p className="text-amber-900 dark:text-amber-300 font-medium mt-0.5 whitespace-pre-line leading-relaxed">
+                                {groupAnnouncement}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Table of assignments */}
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs">
@@ -1517,7 +1561,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                               <th className="py-2.5 px-4">Assigned Role</th>
                               <th className="py-2.5 px-4">Call Time</th>
                               <th className="py-2.5 px-4">Status</th>
-                              <th className="py-2.5 px-4">Notes</th>
+                              <th className="py-2.5 px-4">Announcement & Notes</th>
                               <th className="py-2.5 px-4 text-right">Actions</th>
                             </tr>
                           </thead>
@@ -1591,11 +1635,34 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                                       <option value="declined">Declined</option>
                                     </select>
                                   </td>
-                                  <td className="py-3 px-4 text-[11px] text-slate-500 dark:text-slate-400 max-w-xs truncate">
-                                    {assignment.notes || '—'}
+                                  <td className="py-3 px-4 text-[11px] max-w-xs space-y-1">
+                                    {assignment.announcement ? (
+                                      <div className="p-1.5 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-900/60 rounded-lg text-amber-900 dark:text-amber-200">
+                                        <span className="font-bold flex items-center gap-1 text-[10px] text-amber-800 dark:text-amber-400">
+                                          <Megaphone className="w-3 h-3 shrink-0" />
+                                          Announcement:
+                                        </span>
+                                        <p className="line-clamp-2 mt-0.5 leading-snug">{assignment.announcement}</p>
+                                      </div>
+                                    ) : null}
+                                    <div className="text-slate-500 dark:text-slate-400 truncate">
+                                      {assignment.notes || (!assignment.announcement ? '—' : '')}
+                                    </div>
                                   </td>
                                   <td className="py-3 px-4 text-right whitespace-nowrap">
                                     <div className="flex items-center justify-end gap-1.5">
+                                      {canManageServices && (
+                                        <button
+                                          onClick={() => {
+                                            setEditingAnnouncementAssignment(assignment);
+                                            setAssignmentAnnouncementText(assignment.announcement || '');
+                                          }}
+                                          title="Set or edit duty announcement"
+                                          className="p-1 text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 transition cursor-pointer"
+                                        >
+                                          <Megaphone className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
                                       {waPhone && (
                                         <a
                                           href={waLink}
@@ -1763,6 +1830,73 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-md cursor-pointer"
               >
                 Delete Service
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Duty Announcement Modal */}
+      {editingAnnouncementAssignment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="relative w-full max-w-lg bg-white dark:bg-[#0e1726] rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <span className="p-2 bg-amber-100 dark:bg-amber-950/80 rounded-xl text-amber-800 dark:text-amber-300">
+                  <Megaphone className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">Duty Roster Announcement</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {editingAnnouncementAssignment.member_name} • {editingAnnouncementAssignment.role_title} ({editingAnnouncementAssignment.date})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setEditingAnnouncementAssignment(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                Service Announcement & Ministerial Directives
+              </label>
+              <textarea
+                rows={4}
+                value={assignmentAnnouncementText}
+                onChange={(e) => setAssignmentAnnouncementText(e.target.value)}
+                placeholder="e.g. 1. Communion preparatory prayers at 08:00 AM. 2. Special pastoral notice regarding visitor reception..."
+                className="w-full px-3.5 py-2.5 border border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-medium focus:bg-white dark:focus:bg-slate-950 focus:outline-emerald-600 resize-none shadow-2xs"
+              />
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                This notice will appear on the service duty roster table, WhatsApp broadcasts, and the volunteer&apos;s digital duty slip.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setEditingAnnouncementAssignment(null)}
+                className="px-4 py-2 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-600 dark:text-slate-400 font-bold hover:bg-slate-50 dark:hover:bg-slate-900 transition text-xs cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  updateRosterAssignment(editingAnnouncementAssignment.id, {
+                    announcement: assignmentAnnouncementText.trim() || undefined,
+                  });
+                  success('Announcement Updated', `Service announcement saved for ${editingAnnouncementAssignment.member_name}.`);
+                  setEditingAnnouncementAssignment(null);
+                }}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Save Announcement</span>
               </button>
             </div>
           </div>

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { X, Check, Users, MessageCircle, Mic, Music, Shield, Radio, Calendar, CheckSquare, Clock } from 'lucide-react';
+import { X, Check, Users, MessageCircle, Mic, Music, Shield, Radio, Calendar, CheckSquare, Clock, Megaphone } from 'lucide-react';
 import { ChurchService, Member, RosterAssignment } from '../../types/database.types';
 import { cleanGhanaPhone } from '../../lib/currencyUtils';
 import { useToast } from '../../contexts/ToastContext';
@@ -75,12 +75,20 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
   const existingSound = assignmentsForDate.find(
     (a) => a.role_title.toLowerCase().includes('sound') || a.role_title.toLowerCase().includes('media') || a.role_title.toLowerCase().includes('livestream')
   )?.member_name;
+  const existingAnnouncementsSteward = assignmentsForDate.find(
+    (a) => a.role_title.toLowerCase().includes('announcement') || a.role_title.toLowerCase().includes('notice') || a.role_title.toLowerCase().includes('secretariat')
+  )?.member_name;
+  const existingAnnouncementText = assignmentsForDate.find((a) => a.announcement)?.announcement || service.announcements || '';
 
   const [preacher, setPreacher] = useState(existingPreacher || service.preacher || 'Prophet Elisha K. Richard');
   const [serviceLeader, setServiceLeader] = useState(existingModerator || service.service_leader || 'Pastor Emmanuel Osei');
   const [worshipLeader, setWorshipLeader] = useState(existingWorship || service.worship_leader || 'Sister Abena Serwaa');
   const [headUsher, setHeadUsher] = useState(existingUsher || service.head_usher || 'Kwame Mensah');
   const [soundMedia, setSoundMedia] = useState(existingSound || service.sound_media || 'Benjamin Antwi');
+  const [announcementsLeader, setAnnouncementsLeader] = useState(
+    existingAnnouncementsSteward || service.announcements_minister || 'Clara Gaewornu'
+  );
+  const [announcementText, setAnnouncementText] = useState(existingAnnouncementText);
   const [syncToMemberPortal, setSyncToMemberPortal] = useState(true);
 
   // Synchronize field defaults if existing assignments are loaded for the target date
@@ -90,7 +98,9 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
     if (existingWorship) setWorshipLeader(existingWorship);
     if (existingUsher) setHeadUsher(existingUsher);
     if (existingSound) setSoundMedia(existingSound);
-  }, [targetDate, existingPreacher, existingModerator, existingWorship, existingUsher, existingSound]);
+    if (existingAnnouncementsSteward) setAnnouncementsLeader(existingAnnouncementsSteward);
+    if (existingAnnouncementText) setAnnouncementText(existingAnnouncementText);
+  }, [targetDate, existingPreacher, existingModerator, existingWorship, existingUsher, existingSound, existingAnnouncementsSteward, existingAnnouncementText]);
 
   // Find matching member from string with robust title stripping and ID fallback
   const findMemberByName = (nameStr: string): Member | undefined => {
@@ -132,6 +142,8 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
       worship_leader: worshipLeader.trim(),
       head_usher: headUsher.trim(),
       sound_media: soundMedia.trim(),
+      announcements_minister: announcementsLeader.trim(),
+      announcements: announcementText.trim(),
     };
 
     const newAssignments: Omit<RosterAssignment, 'id' | 'created_at'>[] = [];
@@ -151,6 +163,13 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
           department: 'ushers_protocol' as const,
           report_time: computePriorTime(service.start_time, 30),
           notes: 'Coordinate liturgy order and announcements with the secretariat.',
+        },
+        {
+          name: announcementsLeader.trim(),
+          role_title: 'Church Announcements & Secretariat Notices',
+          department: 'ushers_protocol' as const,
+          report_time: computePriorTime(service.start_time, 30),
+          notes: 'Deliver church announcements, visitor welcome notices, and weekly ministry reminders.',
         },
         {
           name: worshipLeader.trim(),
@@ -190,6 +209,7 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
           report_time: cfg.report_time,
           status: 'confirmed',
           notes: cfg.notes,
+          announcement: announcementText.trim() || undefined,
         });
       });
     }
@@ -536,6 +556,86 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
                 </div>
               ) : null;
             })()}
+          </div>
+
+          {/* Church Announcements & Notices Steward */}
+          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="font-bold text-slate-800 flex items-center gap-1.5">
+                <Megaphone className="w-4 h-4 text-amber-600" />
+                Church Announcements & Secretariat Steward
+              </label>
+              <a
+                href={createWhatsAppLink(announcementsLeader, 'Announcements Steward')}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-[11px] text-emerald-700 hover:text-emerald-800 font-semibold"
+                title="Send WhatsApp notification"
+              >
+                <MessageCircle className="w-3.5 h-3.5" />
+                <span>Notify</span>
+              </a>
+            </div>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <input
+                type="text"
+                list="gwcc-members-datalist"
+                value={announcementsLeader}
+                onChange={(e) => setAnnouncementsLeader(e.target.value)}
+                placeholder="e.g. Clara Gaewornu or Secretariat Steward"
+                className="flex-1 px-3 py-1.5 border border-slate-300 rounded-lg bg-white text-xs font-semibold text-slate-900"
+              />
+              <select
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) setAnnouncementsLeader(e.target.value);
+                }}
+                className="px-2 py-1.5 border border-slate-300 rounded-lg bg-white text-[11px] font-medium text-slate-700 sm:w-44"
+              >
+                <option value="">Choose Member...</option>
+                {members.map((m) => (
+                  <option key={m.id} value={`${m.first_name} ${m.last_name}`}>
+                    {m.first_name} {m.last_name} ({m.member_id})
+                  </option>
+                ))}
+              </select>
+            </div>
+            {(() => {
+              const matched = findMemberByName(announcementsLeader);
+              return matched ? (
+                <div className="flex items-center gap-1.5 text-[11px] text-emerald-800 bg-emerald-50/90 px-2 py-1 rounded-md border border-emerald-200">
+                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>Linked to Member: <strong>{matched.first_name} {matched.last_name}</strong> ({matched.member_id}) • Will show on their Member Portal</span>
+                </div>
+              ) : announcementsLeader.trim() ? (
+                <div className="text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
+                  Announcements Steward: <strong>{announcementsLeader}</strong>
+                </div>
+              ) : null;
+            })()}
+          </div>
+
+          {/* Service Announcements & Ministerial Notices Field */}
+          <div className="p-3.5 bg-amber-50/60 rounded-xl border border-amber-200/80 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="font-bold text-amber-950 flex items-center gap-1.5">
+                <Megaphone className="w-4 h-4 text-amber-700" />
+                Service Announcements & Ministerial Notices
+              </label>
+              <span className="text-[10px] text-amber-800 font-semibold bg-amber-100/80 px-2 py-0.5 rounded-full border border-amber-200">
+                Shared to all duty stewards & member portals
+              </span>
+            </div>
+            <textarea
+              rows={3}
+              value={announcementText}
+              onChange={(e) => setAnnouncementText(e.target.value)}
+              placeholder="e.g. 1. Upcoming Friday All-Night Vigil (10 PM). 2. Foundation School graduation next Sunday. 3. New converts and first-time visitors reception in Galilee Hall immediately after benediction."
+              className="w-full px-3 py-2 border border-amber-200 rounded-lg bg-white text-xs font-medium text-slate-900 focus:outline-emerald-600 resize-none shadow-2xs"
+            />
+            <p className="text-[11px] text-amber-800 leading-relaxed">
+              These notices will be published alongside duty schedules and delivered directly to stewards on duty for this service.
+            </p>
           </div>
 
           {/* Sync to Member Portal Checkbox */}

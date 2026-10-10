@@ -877,6 +877,7 @@ CREATE TABLE IF NOT EXISTS public.roster_assignments (
   report_time VARCHAR(30) NOT NULL DEFAULT '08:00',
   status VARCHAR(30) NOT NULL DEFAULT 'pending',
   notes TEXT,
+  announcement TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -915,6 +916,23 @@ ALTER TABLE public.services ADD COLUMN IF NOT EXISTS service_leader VARCHAR(150)
 ALTER TABLE public.services ADD COLUMN IF NOT EXISTS preacher VARCHAR(150);
 ALTER TABLE public.services ADD COLUMN IF NOT EXISTS worship_leader VARCHAR(150);
 ALTER TABLE public.services ADD COLUMN IF NOT EXISTS expected_attendance INTEGER DEFAULT 200;
+ALTER TABLE public.services ADD COLUMN IF NOT EXISTS announcements_minister VARCHAR(150);
+ALTER TABLE public.services ADD COLUMN IF NOT EXISTS announcements TEXT;
+
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS service_id TEXT;
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS service_name VARCHAR(150) DEFAULT 'Church Service';
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS date DATE DEFAULT CURRENT_DATE;
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS member_id TEXT;
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS member_name VARCHAR(150) DEFAULT 'Member';
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS member_phone VARCHAR(50);
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS department VARCHAR(80) DEFAULT 'ushers_protocol';
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS role_title VARCHAR(150) DEFAULT 'Volunteer';
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS report_time VARCHAR(30) DEFAULT '08:00';
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'pending';
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS announcement TEXT;
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS theme VARCHAR(250);
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS theme_scripture VARCHAR(200);
@@ -1692,9 +1710,13 @@ CREATE TABLE IF NOT EXISTS public.roster_assignments (
   report_time VARCHAR(30) NOT NULL DEFAULT '08:00',
   status VARCHAR(30) NOT NULL DEFAULT 'pending',
   notes TEXT,
+  announcement TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS announcement TEXT;
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS notes TEXT;
 
 -- 3. Grant full API permissions on schema public to anon and authenticated roles
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
@@ -1710,6 +1732,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO anon, authent
 DO $$
 DECLARE
   t text;
+  pol RECORD;
   tables text[] := ARRAY[
     'settings', 'profiles', 'ministries', 'small_groups', 'members',
     'visitors', 'services', 'attendance', 'headcounts', 'giving',
@@ -1721,12 +1744,11 @@ BEGIN
   FOREACH t IN ARRAY tables LOOP
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = t) THEN
       EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', t);
-      EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_all_%s" ON public.%I;', t, t);
-      EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_select_%s" ON public.%I;', t, t);
-      EXECUTE format('DROP POLICY IF EXISTS "gwcc_policy_write_%s" ON public.%I;', t, t);
-      EXECUTE format('DROP POLICY IF EXISTS "Allow all for anon" ON public.%I;', t);
-      EXECUTE format('DROP POLICY IF EXISTS "Enable read access for all users" ON public.%I;', t);
-      EXECUTE format('DROP POLICY IF EXISTS "Enable insert for all users" ON public.%I;', t);
+      FOR pol IN
+        SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = t
+      LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I;', pol.policyname, t);
+      END LOOP;
       EXECUTE format('CREATE POLICY "gwcc_policy_all_%s" ON public.%I FOR ALL TO public USING (true) WITH CHECK (true);', t, t);
     END IF;
   END LOOP;
@@ -1820,12 +1842,13 @@ CREATE POLICY "gwcc_policy_all_welfare_claims" ON public.welfare_claims FOR ALL 
  * "permission denied for table roster_assignments" occurs.
  */
 export const SQL_FIX_ROSTER_SCHEMA = `-- ==============================================================================
--- GREATER WORKS CITY CHURCH (GWCC) - ROSTER ASSIGNMENTS PERMISSION REPAIR SCRIPT
+-- GREATER WORKS CITY CHURCH (GWCC) - ROSTER ASSIGNMENTS PERMISSION & RLS REPAIR SCRIPT
 -- Paste and Run in Supabase SQL Editor: https://supabase.com/dashboard/project/_/sql/new
--- Resolves: "permission denied for table roster_assignments"
+-- Resolves: "new row violates row-level security policy for table roster_assignments"
+--       and "permission denied for table roster_assignments"
 -- ==============================================================================
 
--- 1. Ensure table exists with all standard columns
+-- 1. Ensure table exists with all standard columns including announcement
 CREATE TABLE IF NOT EXISTS public.roster_assignments (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   service_id TEXT,
@@ -1839,9 +1862,14 @@ CREATE TABLE IF NOT EXISTS public.roster_assignments (
   report_time VARCHAR(30) NOT NULL DEFAULT '08:00',
   status VARCHAR(30) NOT NULL DEFAULT 'pending',
   notes TEXT,
+  announcement TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Ensure announcement and notes columns exist if table was created previously
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS announcement TEXT;
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS notes TEXT;
 
 -- 2. Grant table and schema privileges to anon and authenticated roles
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
@@ -1851,12 +1879,33 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authentic
 -- 3. Configure Row-Level Security
 ALTER TABLE public.roster_assignments ENABLE ROW LEVEL SECURITY;
 
+-- 3.1 Drop all previous conflicting or restrictive policies
 DROP POLICY IF EXISTS "gwcc_policy_all_roster_assignments" ON public.roster_assignments;
 DROP POLICY IF EXISTS "roster_assignments_manager_all" ON public.roster_assignments;
 DROP POLICY IF EXISTS "roster_assignments_member_read" ON public.roster_assignments;
 DROP POLICY IF EXISTS "roster_assignments_public_all" ON public.roster_assignments;
 DROP POLICY IF EXISTS "Allow all for anon" ON public.roster_assignments;
+DROP POLICY IF EXISTS "roster_assignments_select_authorized" ON public.roster_assignments;
+DROP POLICY IF EXISTS "roster_assignments_insert_authorized" ON public.roster_assignments;
+DROP POLICY IF EXISTS "roster_assignments_update_authorized" ON public.roster_assignments;
+DROP POLICY IF EXISTS "roster_assignments_delete_authorized" ON public.roster_assignments;
+DROP POLICY IF EXISTS "roster_assignments_anon_select" ON public.roster_assignments;
+DROP POLICY IF EXISTS "roster_assignments_anon_all" ON public.roster_assignments;
 
+DO $$
+DECLARE
+  pol RECORD;
+BEGIN
+  FOR pol IN
+    SELECT policyname
+    FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'roster_assignments'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.roster_assignments;', pol.policyname);
+  END LOOP;
+END $$;
+
+-- 3.2 Create unified open church management policy
 CREATE POLICY "gwcc_policy_all_roster_assignments"
   ON public.roster_assignments
   FOR ALL

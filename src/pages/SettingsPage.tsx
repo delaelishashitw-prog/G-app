@@ -68,6 +68,8 @@ export const SettingsPage: React.FC = () => {
     disconnectSupabase,
     pushToSupabase,
     pullFromSupabase,
+    clearSupabaseError,
+    retryRosterSync,
     members,
     visitors,
     attendance,
@@ -548,6 +550,20 @@ export const SettingsPage: React.FC = () => {
     setCopiedRosterSql(true);
     toastSuccess('Roster Permissions Fix Copied', 'Paste and run in your Supabase SQL Editor to grant permissions on roster_assignments.');
     setTimeout(() => setCopiedRosterSql(false), 2500);
+  };
+
+  const [isRetryingRosterSync, setIsRetryingRosterSync] = useState(false);
+
+  const handleRetryRosterSync = async () => {
+    setIsRetryingRosterSync(true);
+    try {
+      await retryRosterSync();
+      toastSuccess('Roster Sync Retried', 'Attempted service roster cloud sync with Supabase.');
+    } catch (err: any) {
+      toastError('Roster Sync Failed', err?.message || 'Could not sync duty roster.');
+    } finally {
+      setIsRetryingRosterSync(false);
+    }
   };
 
   const downloadSqlScript = () => {
@@ -1748,13 +1764,133 @@ export const SettingsPage: React.FC = () => {
 
             {/* Error Message if supabaseError */}
             {supabaseError && !testResult && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-900 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-bold">Database Notice</p>
-                  <p className="text-[11px]">{supabaseError}</p>
+              supabaseError.includes('roster_assignments') ? (
+                <div className="p-4 bg-amber-50/95 border-2 border-amber-400 rounded-2xl text-xs space-y-3.5 animate-in fade-in shadow-xs">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-amber-200 text-amber-950 flex items-center justify-center shrink-0 mt-0.5">
+                        <Shield className="w-4.5 h-4.5 text-amber-900" />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-bold text-amber-950 text-sm">
+                            Database Notice: Service Roster Cloud Sync
+                          </h4>
+                          <span className="px-2 py-0.5 rounded text-[10px] bg-amber-200 text-amber-900 font-mono font-semibold">
+                            RLS Policy Action Required
+                          </span>
+                        </div>
+                        <p className="text-amber-900/90 leading-relaxed text-[11px]">
+                          Your local service duty roster changes and announcements are safely saved on this device. However, background cloud sync to Supabase was restricted because PostgreSQL Row-Level Security (RLS) on table <code className="bg-amber-100 px-1 py-0.5 rounded font-mono font-bold text-amber-950">roster_assignments</code> requires granting permissions to the church API role.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={clearSupabaseError}
+                      className="text-amber-700 hover:text-amber-950 text-[11px] font-semibold px-2 py-1 rounded-lg hover:bg-amber-100/80 transition shrink-0 cursor-pointer"
+                      title="Dismiss this notice"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+
+                  <div className="p-2.5 bg-amber-100/70 rounded-xl border border-amber-200 text-[11px] text-amber-950 space-y-1">
+                    <p className="font-semibold flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                      30-Second Fix:
+                    </p>
+                    <ol className="list-decimal list-inside space-y-0.5 text-amber-900/95 text-[11px]">
+                      <li>Click <strong>"Copy Roster Permissions Fix"</strong> below.</li>
+                      <li>Click <strong>"Open Supabase SQL Editor"</strong>, paste into the query window, and click <strong>Run</strong>.</li>
+                      <li>Click <strong>"Retry Roster Sync"</strong> — cloud sync will immediately complete!</li>
+                    </ol>
+                  </div>
+
+                  {/* Toggle SQL script preview */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-amber-950">Repair SQL Script Preview:</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowRosterSql(!showRosterSql)}
+                        className="text-[10px] text-amber-800 hover:text-amber-950 underline font-semibold cursor-pointer"
+                      >
+                        {showRosterSql ? 'Collapse preview' : 'View full script'}
+                      </button>
+                    </div>
+                    <pre className="p-3 bg-slate-950 text-emerald-400 font-mono text-[10px] rounded-xl overflow-x-auto border border-slate-800 max-h-48 leading-relaxed">
+                      {showRosterSql ? SQL_FIX_ROSTER_SCHEMA : `-- Fix Roster Assignments Permissions & RLS in Supabase
+GRANT ALL ON TABLE public.roster_assignments TO anon, authenticated, service_role;
+ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS announcement TEXT;
+ALTER TABLE public.roster_assignments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "gwcc_policy_all_roster_assignments" ON public.roster_assignments;
+CREATE POLICY "gwcc_policy_all_roster_assignments" ON public.roster_assignments FOR ALL TO public USING (true) WITH CHECK (true);`}
+                    </pre>
+                  </div>
+
+                  {/* Action buttons */}
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={copyRosterSqlToClipboard}
+                      className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                    >
+                      {copiedRosterSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedRosterSql ? 'Roster Fix Copied!' : 'Copy Roster Permissions Fix'}</span>
+                    </button>
+
+                    <a
+                      href={sqlEditorUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                    >
+                      <span>Open Supabase SQL Editor</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+
+                    <button
+                      type="button"
+                      onClick={handleRetryRosterSync}
+                      disabled={isRetryingRosterSync}
+                      className="px-4 py-2 bg-white hover:bg-slate-50 text-emerald-900 border border-emerald-300 font-bold rounded-xl text-xs flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
+                    >
+                      {isRetryingRosterSync ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5 text-emerald-700" />
+                      )}
+                      <span>{isRetryingRosterSync ? 'Syncing...' : 'Retry Roster Sync'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={clearSupabaseError}
+                      className="px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-semibold rounded-xl text-xs transition ml-auto cursor-pointer"
+                    >
+                      Dismiss Notice
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-900 flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold">Database Notice</p>
+                      <p className="text-[11px]">{supabaseError}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={clearSupabaseError}
+                    className="text-red-700 hover:text-red-950 text-[11px] font-semibold px-2 py-1 rounded-lg hover:bg-red-100 transition shrink-0 cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )
             )}
 
             {/* Cloud Sync & Table Tools */}

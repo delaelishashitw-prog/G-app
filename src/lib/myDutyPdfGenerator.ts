@@ -305,7 +305,12 @@ export function generateMyDutyRosterPdf(options: GenerateDutyPdfOptions): jsPDF 
           : duty.status === 'declined'
           ? 'Declined'
           : 'Scheduled';
-      const notes = duty.notes || 'Arrive 20 mins prior for ministerial devotion and sanctuary briefing.';
+      const notesParts = [];
+      if (duty.announcement) {
+        notesParts.push(`📢 Notice: ${duty.announcement}`);
+      }
+      notesParts.push(duty.notes || 'Arrive 20 mins prior for ministerial devotion and sanctuary briefing.');
+      const notes = notesParts.join('\n');
 
       return [
         (idx + 1).toString(),

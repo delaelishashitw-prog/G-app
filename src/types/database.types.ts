@@ -196,6 +196,8 @@ export interface ChurchService {
   worship_leader?: string;
   head_usher?: string;
   sound_media?: string;
+  announcements_minister?: string;
+  announcements?: string;
   expected_attendance?: number;
   order_of_service?: ServiceProgramItem[];
   description?: string;
@@ -661,6 +663,7 @@ export interface RosterAssignment {
   report_time: string;
   status: RosterAssignmentStatus;
   notes?: string;
+  announcement?: string;
   created_at: string;
 }
 

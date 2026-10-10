@@ -15,6 +15,11 @@ const DEPARTMENT_ROSTER_RLS_MIGRATION = readFileSync(
   'utf8'
 );
 
+const ROSTER_RLS_REPAIR_MIGRATION = readFileSync(
+  new URL('../../supabase/migrations/20261010000003_fix_roster_assignments_rls.sql', import.meta.url),
+  'utf8'
+);
+
 test('sanitizes welfare contribution and claim records for Supabase persistence', () => {
   const contribution = sanitizeRecordForSupabase('welfare_contributions', {
     id: 'wlf-123',
@@ -77,11 +82,13 @@ test('SQL schema scripts include full welfare and roster tables and RLS permissi
   assert.ok(SQL_FIX_WELFARE_SCHEMA.includes('CREATE POLICY "gwcc_policy_all_welfare_claims"'));
 
   assert.ok(SQL_FIX_ROSTER_SCHEMA.includes('permission denied for table roster_assignments'));
+  assert.ok(SQL_FIX_ROSTER_SCHEMA.includes('violates row-level security policy for table roster_assignments'));
+  assert.ok(SQL_FIX_ROSTER_SCHEMA.includes('announcement TEXT'));
   assert.ok(SQL_FIX_ROSTER_SCHEMA.includes('GRANT ALL ON TABLE public.roster_assignments TO anon, authenticated, service_role;'));
   assert.ok(SQL_FIX_ROSTER_SCHEMA.includes('CREATE POLICY "gwcc_policy_all_roster_assignments"'));
 });
 
-test('sanitizes roster assignments for Supabase persistence', () => {
+test('sanitizes roster assignments for Supabase persistence including announcement', () => {
   const assignment = sanitizeRecordForSupabase('roster_assignments', {
     id: 'duty-123',
     service_id: '',
@@ -93,6 +100,7 @@ test('sanitizes roster assignments for Supabase persistence', () => {
     role_title: 'Lead Singer',
     report_time: '08:30',
     status: 'confirmed',
+    announcement: '  Special choir rehearsal at 7:00 AM  ',
   });
 
   assert.equal(assignment.id, 'duty-123');
@@ -102,6 +110,15 @@ test('sanitizes roster assignments for Supabase persistence', () => {
   assert.equal(assignment.date, '2026-10-11');
   assert.equal(assignment.role_title, 'Lead Singer');
   assert.equal(assignment.status, 'confirmed');
+  assert.equal(assignment.announcement, 'Special choir rehearsal at 7:00 AM');
+});
+
+test('migration 20261010000003 provides complete RLS repair and announcement field for roster_assignments', () => {
+  assert.ok(ROSTER_RLS_REPAIR_MIGRATION.includes('CREATE TABLE IF NOT EXISTS public.roster_assignments'));
+  assert.ok(ROSTER_RLS_REPAIR_MIGRATION.includes('ADD COLUMN IF NOT EXISTS announcement TEXT'));
+  assert.ok(ROSTER_RLS_REPAIR_MIGRATION.includes('GRANT ALL ON TABLE public.roster_assignments TO anon, authenticated, service_role;'));
+  assert.ok(ROSTER_RLS_REPAIR_MIGRATION.includes('CREATE POLICY "gwcc_policy_all_roster_assignments"'));
+  assert.ok(ROSTER_RLS_REPAIR_MIGRATION.includes('ALTER PUBLICATION supabase_realtime ADD TABLE public.roster_assignments'));
 });
 
 test('roster migration limits member reads and staff writes', () => {

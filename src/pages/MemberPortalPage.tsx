@@ -44,6 +44,7 @@ import {
   RotateCcw,
   HelpCircle,
   DownloadCloud,
+  Megaphone,
 } from 'lucide-react';
 import { useAuth, isElishaRichard } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
@@ -675,7 +676,8 @@ export const MemberPortalPage: React.FC = () => {
           role_title: string,
           department: RosterAssignment['department'],
           report_time: string,
-          notes: string
+          notes: string,
+          announcement?: string
         ) => {
           if (!fieldVal || !fieldVal.trim()) return;
           if (isMemberAssigned(undefined, fieldVal)) {
@@ -696,6 +698,7 @@ export const MemberPortalPage: React.FC = () => {
                 report_time,
                 status: 'confirmed',
                 notes,
+                announcement: announcement || s.announcements || undefined,
                 created_at: new Date().toISOString(),
               });
             }
@@ -707,14 +710,24 @@ export const MemberPortalPage: React.FC = () => {
           'Preacher / Exhorter of the Word',
           'intercessors',
           s.start_time ? `30 mins prior (${s.start_time})` : '08:00 AM',
-          'Preaching and ministration of the Word. Pre-service prayer 30 mins prior.'
+          'Preaching and ministration of the Word. Pre-service prayer 30 mins prior.',
+          s.announcements
         );
         checkAndAdd(
           s.service_leader,
           'Service Moderator / Leader (MC)',
           'ushers_protocol',
           s.start_time ? `30 mins prior (${s.start_time})` : '08:00 AM',
-          'Coordinate order of service liturgy and church announcements.'
+          'Coordinate order of service liturgy and church announcements.',
+          s.announcements
+        );
+        checkAndAdd(
+          s.announcements_minister,
+          'Church Announcements & Secretariat Notices',
+          'ushers_protocol',
+          s.start_time ? `30 mins prior (${s.start_time})` : '08:00 AM',
+          'Deliver church announcements, visitor welcome notices, and weekly ministry reminders.',
+          s.announcements
         );
         checkAndAdd(
           s.worship_leader,
@@ -2530,6 +2543,17 @@ export const MemberPortalPage: React.FC = () => {
                         </p>
                       </div>
                     </div>
+
+                    {/* Service Announcements & Ministerial Notices */}
+                    {assignment.announcement && (
+                      <div className="p-3.5 bg-amber-50/90 rounded-2xl border border-amber-200 text-xs space-y-1">
+                        <span className="text-[10px] uppercase font-bold text-amber-800 flex items-center gap-1.5">
+                          <Megaphone className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                          <span>Service Announcement & Ministerial Notices</span>
+                        </span>
+                        <p className="text-amber-950 font-medium leading-relaxed">{assignment.announcement}</p>
+                      </div>
+                    )}
 
                     {/* Footer Actions */}
                     <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">

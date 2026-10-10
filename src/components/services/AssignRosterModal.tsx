@@ -11,6 +11,7 @@ import {
   Search,
   Tag,
   Phone,
+  Megaphone,
 } from 'lucide-react';
 import {
   ChurchService,
@@ -130,6 +131,7 @@ export const AssignRosterModal: React.FC<AssignRosterModalProps> = ({
   const [reportTime, setReportTime] = useState('07:30 AM');
   const [status, setStatus] = useState<RosterAssignmentStatus>('confirmed');
   const [notes, setNotes] = useState('');
+  const [announcement, setAnnouncement] = useState('');
 
   React.useEffect(() => {
     if (initialServiceId) {
@@ -222,6 +224,7 @@ export const AssignRosterModal: React.FC<AssignRosterModalProps> = ({
       report_time: reportTime,
       status,
       notes: notes.trim() || undefined,
+      announcement: announcement.trim() || undefined,
     });
 
     toastSuccess(
@@ -439,6 +442,29 @@ export const AssignRosterModal: React.FC<AssignRosterModalProps> = ({
               placeholder="e.g. Arrive 30 mins prior for altar prayer; coordinate with head of sound booth..."
               className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-slate-900 font-medium focus:outline-emerald-600 resize-none"
             />
+          </div>
+
+          {/* Service Announcements & Ministerial Notices Field */}
+          <div className="p-3.5 bg-amber-50/70 border border-amber-200/90 rounded-2xl space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="block text-amber-950 font-bold flex items-center gap-1.5 text-xs">
+                <Megaphone className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                <span>Service Announcements & Ministerial Notices (Optional)</span>
+              </label>
+              <span className="text-[10px] text-amber-800 font-semibold bg-amber-100 px-2 py-0.5 rounded-full border border-amber-200">
+                Shared to Roster & Slip
+              </span>
+            </div>
+            <textarea
+              rows={2}
+              value={announcement}
+              onChange={(e) => setAnnouncement(e.target.value)}
+              placeholder="e.g. 1. Upcoming Friday All-Night Vigil (10 PM). 2. Communion ministers brief at 08:00 AM in the vestry."
+              className="w-full px-3 py-2 border border-amber-200 rounded-xl bg-white text-slate-900 font-medium focus:outline-emerald-600 resize-none text-xs shadow-2xs"
+            />
+            <p className="text-[11px] text-amber-800 leading-relaxed">
+              Notices entered here are published directly on this steward&apos;s schedule, ministerial notices board, and printable duty slips.
+            </p>
           </div>
 
           {/* Footer Buttons */}

@@ -70,10 +70,28 @@ export const BroadcastRosterModal: React.FC<BroadcastRosterModalProps> = ({
       const items = dateAssignments.filter((a) => a.department === dept);
       lines.push(`🏛️ *${dept.toUpperCase().replace('_', ' ')}:*`);
       items.forEach((item) => {
-        lines.push(`• *${item.member_name}* — ${item.role_title} (Call Time: ${item.report_time}) [${item.status.toUpperCase()}]`);
+        let entry = `• *${item.member_name}* — ${item.role_title} (Call Time: ${item.report_time}) [${item.status.toUpperCase()}]`;
+        if (item.announcement) {
+          entry += `\n  📢 *Notice:* ${item.announcement}`;
+        }
+        lines.push(entry);
       });
       lines.push('');
     });
+
+    // Check for distinct announcements across assignments
+    const distinctAnnouncements = Array.from(
+      new Set(dateAssignments.map((a) => a.announcement).filter(Boolean))
+    ) as string[];
+
+    if (distinctAnnouncements.length > 0) {
+      lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      lines.push(`📢 *OFFICIAL SERVICE ANNOUNCEMENTS & NOTICES:*`);
+      distinctAnnouncements.forEach((ann) => {
+        lines.push(`• ${ann}`);
+      });
+      lines.push('');
+    }
 
     lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
     lines.push(`⚠️ *Reminder:* Pre-service prayer and setup begins promptly. Please be in place at your designated call time.`);

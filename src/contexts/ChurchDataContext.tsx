@@ -389,6 +389,8 @@ interface ChurchDataContextType {
   disconnectSupabase: () => void;
   pushToSupabase: (onProgress?: (step: string, percent: number) => void) => Promise<{ success: boolean; summary: Record<string, number>; errors: string[] }>;
   pullFromSupabase: () => Promise<{ success: boolean; errors: string[] }>;
+  clearSupabaseError: () => void;
+  retryRosterSync: () => Promise<void>;
 
   // Refresh functionality
   isRefreshing: boolean;
@@ -718,6 +720,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     results.forEach(({ id, assignment, result }) => {
       if (!result.success) {
         errors.push(`${id}: ${result.error || 'Unknown roster sync error.'}`);
+        // Prune from pending queue so automatic loop doesn't thrash; user can retry via button
+        pendingRosterSyncRef.current.delete(id);
         return;
       }
       if (pendingRosterSyncRef.current.get(id) === assignment) {
@@ -729,7 +733,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     if (errors.length > 0) {
       const message = `Service roster cloud sync failed: ${errors.join('; ')}`;
-      console.error(message);
+      console.warn(message);
       setSupabaseStatus('error');
       setSupabaseError(message);
       return;
@@ -749,6 +753,21 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       void flushPendingRosterSync();
     }
   }, [currentUser.role]);
+
+  const clearSupabaseError = useCallback(() => {
+    setSupabaseError(null);
+    if (supabaseStatus === 'error') {
+      setSupabaseStatus(isSupabaseConfigured() ? 'connected' : 'disconnected');
+    }
+  }, [supabaseStatus]);
+
+  const retryRosterSync = useCallback(async () => {
+    rosterAssignments.forEach((item) => {
+      pendingRosterSyncRef.current.set(item.id, item);
+    });
+    setSupabaseError(null);
+    await flushPendingRosterSync();
+  }, [rosterAssignments, flushPendingRosterSync]);
 
   useEffect(() => {
     if (currentUser.role === 'member') {
@@ -1957,6 +1976,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       disconnectSupabase,
       pushToSupabase,
       pullFromSupabase,
+      clearSupabaseError,
+      retryRosterSync,
       isRefreshing,
       lastRefreshedAt,
       refreshData,
@@ -1995,6 +2016,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       supabaseError,
       lastSyncTime,
       supabaseConfig,
+      clearSupabaseError,
+      retryRosterSync,
       isRefreshing,
       lastRefreshedAt,
       refreshData,

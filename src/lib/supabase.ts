@@ -484,6 +484,7 @@ export function sanitizeRecordForSupabase(table: string, record: any): any {
         report_time: record.report_time || '08:00',
         status: record.status || 'pending',
         notes: record.notes || null,
+        announcement: record.announcement ? String(record.announcement).trim() : null,
         created_at: record.created_at || new Date().toISOString(),
         updated_at: record.updated_at || new Date().toISOString(),
       };
@@ -975,6 +976,7 @@ export async function pushAllDataToSupabase(
           report_time: assignment.report_time || '08:00',
           status: assignment.status || 'pending',
           notes: assignment.notes || null,
+          announcement: assignment.announcement || null,
           created_at: (assignment as any).created_at || now,
           updated_at: (assignment as any).updated_at || now,
         }));
