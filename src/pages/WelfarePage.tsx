@@ -411,9 +411,9 @@ export const WelfarePage: React.FC = () => {
             <span className="text-emerald-700 font-semibold">{uniqueContributorsCount} Active Contributors</span>
             <span aria-hidden="true">·</span>
             {isSupabaseConfigured ? (
-              <span className={`inline-flex items-center gap-1 font-medium ${supabaseStatus === 'connected' ? 'text-emerald-700' : supabaseStatus === 'connecting' ? 'text-amber-600' : 'text-slate-500'}`}>
+              <span className={`inline-flex items-center gap-1 font-medium ${supabaseStatus === 'connected' ? 'text-emerald-700' : supabaseStatus === 'syncing' ? 'text-amber-600' : 'text-slate-500'}`}>
                 <Database className="w-3 h-3" />
-                Supabase {supabaseStatus === 'connected' ? 'Synced (welfare_contributions, welfare_claims)' : 'Connecting...'}
+                Supabase {supabaseStatus === 'connected' ? 'Synced (welfare_contributions, welfare_claims)' : supabaseStatus === 'syncing' ? 'Syncing...' : 'Offline'}
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 text-slate-500 font-medium">

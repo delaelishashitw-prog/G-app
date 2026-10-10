@@ -226,35 +226,38 @@ export const MinistriesPage: React.FC = () => {
   const totalVolunteers = useMemo(() => {
     const uniqueIds = new Set(
       members
-        .filter((m) => !m.is_archived && m.ministry_id)
+        .filter((m) => !m.is_archived && (m.ministry_id || (m.ministry_name && m.ministry_name.trim() !== '')))
         .map((m) => m.id)
     );
-    return Math.max(uniqueIds.size, 178);
+    return uniqueIds.size;
   }, [members]);
 
   const activeMembersTotal = useMemo(() => {
-    return members.filter((m) => !m.is_archived && m.status === 'active').length || 232;
+    return members.filter((m) => !m.is_archived && m.status === 'active').length;
   }, [members]);
 
   const volunteerEngagementRate = useMemo(() => {
-    return Math.min(100, Math.round((totalVolunteers / (activeMembersTotal || 1)) * 100));
+    if (!activeMembersTotal) return 0;
+    return Math.min(100, Math.round((totalVolunteers / activeMembersTotal) * 100));
   }, [totalVolunteers, activeMembersTotal]);
 
   const largestMinistry = useMemo(() => {
     if (ministries.length === 0) return null;
     let maxMin = ministries[0];
-    let maxCount = -1;
+    let maxCount = 0;
     ministries.forEach((min) => {
-      const c = members.filter(
-        (m) => !m.is_archived && (m.ministry_id === min.id || m.ministry_name === min.name)
+      const count = members.filter(
+        (m) =>
+          !m.is_archived &&
+          (m.ministry_id === min.id ||
+            (m.ministry_name && min.name && m.ministry_name.toLowerCase() === min.name.toLowerCase()))
       ).length;
-      const count = Math.max(c, min.member_count || 0);
       if (count > maxCount) {
         maxCount = count;
         maxMin = min;
       }
     });
-    return { name: maxMin.name, count: maxCount };
+    return maxCount > 0 ? { name: maxMin.name, count: maxCount } : null;
   }, [ministries, members]);
 
   // Available members eligible for assignment (not already in this ministry)
@@ -561,10 +564,10 @@ export const MinistriesPage: React.FC = () => {
             </div>
           </div>
           <div className="text-base font-bold text-slate-900 truncate">
-            {largestMinistry?.name.split('(')[0] || 'Women of Grace'}
+            {largestMinistry ? largestMinistry.name.split('(')[0].trim() : 'None Assigned'}
           </div>
           <p className="text-[11px] text-purple-700 font-semibold mt-1">
-            {largestMinistry?.count || 76} active members
+            {largestMinistry ? `${largestMinistry.count} enrolled volunteers` : 'No volunteers registered'}
           </p>
         </div>
       </div>
@@ -657,7 +660,7 @@ export const MinistriesPage: React.FC = () => {
                 !m.is_archived &&
                 (m.ministry_id === min.id || (m.ministry_name && min.name && m.ministry_name.toLowerCase() === min.name.toLowerCase()))
             );
-            const volunteerCount = Math.max(assignedMembers.length, min.member_count || 0);
+            const volunteerCount = assignedMembers.length;
             const isSelected = selectedMinistry?.id === min.id;
 
             return (
@@ -773,7 +776,7 @@ export const MinistriesPage: React.FC = () => {
                       !m.is_archived &&
                       (m.ministry_id === min.id || (m.ministry_name && min.name && m.ministry_name.toLowerCase() === min.name.toLowerCase()))
                   ).length;
-                  const count = Math.max(assignedCount, min.member_count || 0);
+                  const count = assignedCount;
                   const isSelected = selectedMinistry?.id === min.id;
 
                   return (
