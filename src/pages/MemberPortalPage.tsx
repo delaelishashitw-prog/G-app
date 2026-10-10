@@ -954,16 +954,6 @@ export const MemberPortalPage: React.FC = () => {
     }
   };
 
-  // Demo autofill helper (fills inputs with sample credentials for transparent testing)
-  const handleSelectDemoMember = (memberToTest: Member) => {
-    const phoneDigits = (memberToTest.phone || '').replace(/[^0-9]/g, '');
-    const defaultPin = phoneDigits.slice(-4) || '1234';
-    setIdentifier(memberToTest.member_id);
-    setPin(defaultPin);
-    setLoginError(null);
-    toastInfo('Demo Credentials Populated', `Member ID: ${memberToTest.member_id} | Default PIN: ${defaultPin}. Click "Sign In to Member Portal" below.`);
-  };
-
   // Submit Online Tithe/Offering
   const handleRecordGiving = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1270,47 +1260,6 @@ export const MemberPortalPage: React.FC = () => {
               <span>{isSigningIn ? 'Verifying Member...' : 'Sign In to Member Portal'}</span>
             </button>
           </form>
-
-          {/* Quick Member Accounts for Testing */}
-          <div className="mt-6 pt-5 border-t border-slate-700/80">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                Demo Accounts (Click to Fill ID & PIN)
-              </p>
-              <span className="text-[10px] text-slate-500">Includes default PIN</span>
-            </div>
-            <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-              {members.slice(0, 6).map((m) => {
-                const phoneDigits = (m.phone || '').replace(/[^0-9]/g, '');
-                const defaultPin = phoneDigits.slice(-4) || '1234';
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => handleSelectDemoMember(m)}
-                    className="w-full p-2.5 rounded-xl bg-slate-900/60 hover:bg-slate-700/60 border border-slate-700/50 flex items-center justify-between text-left text-xs transition group"
-                  >
-                    <div className="flex items-center gap-2 truncate">
-                      <div className="w-7 h-7 rounded-full bg-emerald-900/80 border border-emerald-500/40 text-emerald-300 flex items-center justify-center font-bold text-[11px] shrink-0">
-                        {m.first_name[0]}
-                      </div>
-                      <div className="truncate">
-                        <p className="font-bold text-slate-200 truncate">
-                          {m.first_name} {m.last_name}
-                        </p>
-                        <p className="text-[10px] text-slate-400 font-mono">
-                          ID: <span className="text-emerald-400">{m.member_id}</span> • PIN: <span className="text-amber-400">{defaultPin}</span>
-                        </p>
-                      </div>
-                    </div>
-                    <span className="text-[10px] text-emerald-400 font-semibold group-hover:underline shrink-0">
-                      Use & Test
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
 
           {/* Footer Navigation */}
           <div className="mt-6 pt-4 border-t border-slate-700/80 text-center text-xs">

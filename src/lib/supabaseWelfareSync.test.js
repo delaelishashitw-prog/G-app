@@ -10,6 +10,11 @@ const ROSTER_MIGRATION = readFileSync(
   'utf8'
 );
 
+const DEPARTMENT_ROSTER_RLS_MIGRATION = readFileSync(
+  new URL('../../supabase/migrations/20261010000002_roster_assignments_department_role_rls.sql', import.meta.url),
+  'utf8'
+);
+
 test('sanitizes welfare contribution and claim records for Supabase persistence', () => {
   const contribution = sanitizeRecordForSupabase('welfare_contributions', {
     id: 'wlf-123',
@@ -109,6 +114,20 @@ test('roster migration limits member reads and staff writes', () => {
   assert.ok(ROSTER_MIGRATION.includes('auth.users AS auth_user'));
   assert.ok(ROSTER_MIGRATION.includes('auth_user.email_confirmed_at IS NOT NULL'));
   assert.ok(ROSTER_MIGRATION.includes('ALTER PUBLICATION supabase_realtime ADD TABLE public.roster_assignments'));
+});
+
+test('migration 20261010000002 defines department and role RLS policies on roster_assignments', () => {
+  assert.ok(DEPARTMENT_ROSTER_RLS_MIGRATION.includes('idx_roster_assignments_department'));
+  assert.ok(DEPARTMENT_ROSTER_RLS_MIGRATION.includes('public.get_current_user_role()'));
+  assert.ok(DEPARTMENT_ROSTER_RLS_MIGRATION.includes('public.get_current_user_department()'));
+  assert.ok(DEPARTMENT_ROSTER_RLS_MIGRATION.includes('public.is_global_roster_admin()'));
+  assert.ok(DEPARTMENT_ROSTER_RLS_MIGRATION.includes('public.can_manage_roster_department(dept_name VARCHAR)'));
+  assert.ok(DEPARTMENT_ROSTER_RLS_MIGRATION.includes('public.can_read_department_roster(dept_name VARCHAR, assignment_member_id TEXT)'));
+  assert.ok(DEPARTMENT_ROSTER_RLS_MIGRATION.includes('CREATE POLICY roster_assignments_select_authorized'));
+  assert.ok(DEPARTMENT_ROSTER_RLS_MIGRATION.includes('CREATE POLICY roster_assignments_insert_authorized'));
+  assert.ok(DEPARTMENT_ROSTER_RLS_MIGRATION.includes('CREATE POLICY roster_assignments_update_authorized'));
+  assert.ok(DEPARTMENT_ROSTER_RLS_MIGRATION.includes('CREATE POLICY roster_assignments_delete_authorized'));
+  assert.ok(DEPARTMENT_ROSTER_RLS_MIGRATION.includes('CREATE POLICY roster_assignments_anon_select'));
 });
 
 test('Elisha Richard has super_admin role and unrestricted permissions', async () => {
