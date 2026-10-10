@@ -9,7 +9,7 @@ import {
   ArrowRight,
   Database,
   CheckCircle2,
-  Sparkles,
+  ShieldCheck,
   Users,
   Church,
   Calendar,
@@ -39,8 +39,6 @@ export const LoginPage: React.FC = () => {
     login,
     register,
     resetPassword,
-    quickLoginAs,
-    availableUsers,
     isAuthenticated,
     currentUser,
     logout,
@@ -70,7 +68,7 @@ export const LoginPage: React.FC = () => {
   const [regEmail, setRegEmail] = useState('');
   const [regPhone, setRegPhone] = useState('');
   const [regDepartment, setRegDepartment] = useState('Administration');
-  const [regRole, setRegRole] = useState<UserRole>('administrator');
+  const [regRole, setRegRole] = useState<UserRole>('ministry_leader');
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
   const [regShowPassword, setRegShowPassword] = useState(false);
@@ -122,8 +120,11 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    if ((regRole as string) === 'super_admin') {
-      setErrorMessage('Super Administrator accounts cannot be created via self-registration.');
+    const restrictedRoles: UserRole[] = ['super_admin', 'administrator', 'senior_pastor', 'pastor', 'finance_officer'];
+    if (restrictedRoles.includes(regRole)) {
+      setErrorMessage(
+        'For security reasons, Administrative, Pastoral, and Treasury roles cannot be self-provisioned. Please contact the Church Administrator or select a Ministry Leader or Assistant role to request access.'
+      );
       return;
     }
 
@@ -226,7 +227,7 @@ export const LoginPage: React.FC = () => {
             <p className="text-sm font-bold text-white flex items-center gap-1.5">
               <span>{settings.location}</span>
             </p>
-            <p className="text-[11px] text-emerald-200/70 font-mono">Location: City, Country</p>
+            <p className="text-[11px] text-emerald-200/70">Greater Accra Region, Ghana</p>
           </div>
 
           <div className="space-y-1">
@@ -471,7 +472,7 @@ export const LoginPage: React.FC = () => {
                       onClick={() => {
                         clearSupabaseCredentials();
                         setErrorMessage(null);
-                        setInfoMessage('Stored cloud keys cleared! You are now in offline local mode. You can sign in below with your staff account or use the Quick Staff Sign-In buttons.');
+                        setInfoMessage('Stored cloud keys cleared! You are now in offline local mode. You can sign in below with your registered staff email and password.');
                       }}
                       className="px-3 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-lg text-[11px] font-bold shadow-xs transition flex items-center gap-1.5 cursor-pointer"
                     >
@@ -532,7 +533,7 @@ export const LoginPage: React.FC = () => {
                       required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Enter password (default: Gwcc@2026)"
+                      placeholder="Enter your staff password"
                       className="w-full pl-9 pr-10 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-900 placeholder:text-slate-400 focus:outline-emerald-800 focus:ring-2 focus:ring-emerald-800/20 focus:border-emerald-800 transition shadow-2xs"
                     />
                     <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -562,7 +563,7 @@ export const LoginPage: React.FC = () => {
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="w-full py-3 bg-[#064e3b] hover:bg-[#047857] text-white rounded-xl font-bold text-xs shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="w-full py-3 bg-[#064e3b] hover:bg-[#047857] text-white rounded-xl font-bold text-xs shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
                 >
                   {isLoading ? (
                     <span className="flex items-center gap-2">
@@ -578,38 +579,38 @@ export const LoginPage: React.FC = () => {
                 </button>
               </form>
 
-              {/* Quick Staff Sign-In Panel */}
-              <div className="pt-3 border-t border-slate-200">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-emerald-800" />
-                    <span>Quick Staff Sign-In (Instant Access)</span>
-                  </span>
-                  <span className="text-[10px] text-slate-600 font-medium">1-Click Login</span>
+              {/* Security & Access Protection Notice */}
+              <div className="pt-4 border-t border-slate-200 space-y-3">
+                <div className="p-3.5 bg-slate-50 border border-slate-200/90 rounded-2xl flex items-start gap-3 text-slate-600">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-100/80 text-emerald-800 flex items-center justify-center shrink-0 mt-0.5">
+                    <ShieldCheck className="w-4 h-4 text-emerald-800" />
+                  </div>
+                  <div className="space-y-1 flex-1">
+                    <p className="text-xs font-bold text-slate-800 flex items-center justify-between">
+                      <span>Authorized Church Personnel Only</span>
+                      <span className="text-[10px] font-medium text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        Protected System
+                      </span>
+                    </p>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Access to this management console is strictly restricted to authorized Greater Works City Church staff and appointed ministry heads. All authentication events are encrypted and audited.
+                    </p>
+                  </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {availableUsers.slice(0, 4).map((u) => (
-                    <button
-                      key={u.id}
-                      type="button"
-                      onClick={() => {
-                        quickLoginAs(u);
-                        toastSuccess('Quick Sign-In Successful', `Welcome, ${u.first_name} ${u.last_name}!`);
-                        navigate(from, { replace: true });
-                      }}
-                      className="p-2.5 rounded-xl border border-slate-200 hover:border-emerald-700 bg-white hover:bg-emerald-50/50 text-left transition flex items-center justify-between group shadow-2xs cursor-pointer"
-                    >
-                      <div className="truncate pr-2">
-                        <p className="font-bold text-slate-900 group-hover:text-emerald-950 text-xs truncate">
-                          {u.first_name || ''} {u.last_name || ''}
-                        </p>
-                        <p className="text-[10px] text-slate-600 capitalize truncate">
-                          {u.role ? String(u.role).replace('_', ' ') : 'Staff'} • {u.department || 'Staff'}
-                        </p>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-emerald-800 shrink-0 transition" />
-                    </button>
-                  ))}
+
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="p-2 rounded-xl bg-white border border-slate-200/70 shadow-2xs">
+                    <p className="text-[10px] font-bold text-slate-700">Role-Based Access</p>
+                    <p className="text-[9px] text-slate-500 font-medium">8 Staff Tiers</p>
+                  </div>
+                  <div className="p-2 rounded-xl bg-white border border-slate-200/70 shadow-2xs">
+                    <p className="text-[10px] font-bold text-slate-700">Encrypted Transport</p>
+                    <p className="text-[9px] text-slate-500 font-medium">256-Bit SSL/TLS</p>
+                  </div>
+                  <div className="p-2 rounded-xl bg-white border border-slate-200/70 shadow-2xs">
+                    <p className="text-[10px] font-bold text-slate-700">Session Guard</p>
+                    <p className="text-[9px] text-slate-500 font-medium">Isolated Token</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -693,19 +694,19 @@ export const LoginPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Assigned Role</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Requested Role</label>
                   <select
                     value={regRole}
                     onChange={(e) => setRegRole(e.target.value as UserRole)}
                     className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium text-slate-900 focus:outline-emerald-800 focus:border-emerald-800"
                   >
-                    <option value="administrator">Administrator</option>
-                    <option value="pastor">Pastor / Pastoral Worker</option>
-                    <option value="finance_officer">Finance Officer</option>
-                    <option value="ministry_leader">Ministry Leader</option>
-                    <option value="attendance_officer">Attendance Officer</option>
-                    <option value="data_entry">Data Entry Clerk</option>
+                    <option value="ministry_leader">Ministry Leader / Department Coordinator</option>
+                    <option value="attendance_officer">Attendance & Protocol Officer</option>
+                    <option value="data_entry">Data Entry Assistant</option>
                   </select>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Administrative, Pastoral, and Treasury roles are provisioned directly by church leadership.
+                  </p>
                 </div>
               </div>
 
@@ -853,17 +854,17 @@ export const LoginPage: React.FC = () => {
               <p>
                 In production, credentials authenticate directly against your church <strong>Supabase Auth</strong> cluster or are managed by your church IT & Administration desk.
               </p>
-              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
-                <p className="text-[11px] font-bold text-slate-700">Initial System Default Password:</p>
-                <p className="font-mono text-emerald-800 font-bold bg-white px-2 py-1 rounded border border-slate-200 w-fit">
-                  Gwcc@2026
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+                <p className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-800" />
+                  <span>Credential Security Policy</span>
                 </p>
-                <p className="text-[10px] text-slate-500">
-                  New staff profiles are provisioned with this default password unless customized by an administrator.
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  For your assembly's data protection, password resets require either a verified reset link dispatched to your official staff inbox or identity verification by the Church IT Administrator.
                 </p>
               </div>
               <p className="text-xs text-slate-600 leading-relaxed">
-                If you have forgotten your password, enter your staff email in the <strong>Password Help</strong> tab to request a secure reset link, or contact the church administration office.
+                If you have forgotten your password, enter your registered staff email in the <strong>Password Help</strong> tab to request a secure reset link, or contact the church administration office directly.
               </p>
             </div>
 
