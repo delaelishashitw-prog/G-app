@@ -28,9 +28,18 @@ import {
   Calendar,
   RotateCcw,
   Send,
+  Share2,
+  Tv,
+  Check,
+  Copy,
+  Radio,
+  Play,
+  ArrowRight,
+  UserPlus,
+  MessageSquare,
+  Flame,
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { motion, AnimatePresence } from 'motion/react';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -50,6 +59,18 @@ import { OrderOfServiceEditorModal } from '../components/services/OrderOfService
 import { DutyRosterModal } from '../components/services/DutyRosterModal';
 import { AssignRosterModal } from '../components/services/AssignRosterModal';
 import { PrintRosterModal } from '../components/services/PrintRosterModal';
+import { LiveStageRunnerModal } from '../components/services/LiveStageRunnerModal';
+import { ShareScheduleModal } from '../components/services/ShareScheduleModal';
+import { BroadcastRosterModal } from '../components/services/BroadcastRosterModal';
+
+const DAYS_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function parseTimeToMinutes(timeStr?: string): number {
+  if (!timeStr) return 0;
+  const match = timeStr.match(/(\d{1,2}):(\d{2})/);
+  if (!match) return 0;
+  return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+}
 
 export const ServicesPage: React.FC = () => {
   const {
@@ -76,7 +97,7 @@ export const ServicesPage: React.FC = () => {
   // Role check: Only authorized staff can create/edit/delete services
   const canManageServices = canAccess('services') && currentRole !== 'member';
 
-  // URL Query Parameters Handling (support ?tab=roster | timeline | bulletins | cards and ?action=new)
+  // URL Query Parameters Handling
   const tabParam = searchParams.get('tab');
   const actionParam = searchParams.get('action');
 
@@ -91,12 +112,11 @@ export const ServicesPage: React.FC = () => {
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
 
-  // Roster filters & modals
+  // Roster filters
   const [rosterServiceFilter, setRosterServiceFilter] = useState<string>('ALL');
   const [rosterDeptFilter, setRosterDeptFilter] = useState<string>('ALL');
   const [rosterDateFilter, setRosterDateFilter] = useState<string>('ALL');
-  const [isAssignRosterOpen, setIsAssignRosterOpen] = useState(false);
-  const [isPrintMasterRosterOpen, setIsPrintMasterRosterOpen] = useState(false);
+  const [rosterStatusFilter, setRosterStatusFilter] = useState<string>('ALL');
 
   // Modals state
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
@@ -105,6 +125,13 @@ export const ServicesPage: React.FC = () => {
   const [orderEditorService, setOrderEditorService] = useState<ChurchService | null>(null);
   const [rosterService, setRosterService] = useState<ChurchService | null>(null);
   const [deleteConfirmService, setDeleteConfirmService] = useState<ChurchService | null>(null);
+  const [isAssignRosterOpen, setIsAssignRosterOpen] = useState(false);
+  const [isPrintMasterRosterOpen, setIsPrintMasterRosterOpen] = useState(false);
+
+  // New Enhancements Modals
+  const [liveRunnerService, setLiveRunnerService] = useState<ChurchService | null>(null);
+  const [isShareScheduleOpen, setIsShareScheduleOpen] = useState(false);
+  const [isBroadcastRosterOpen, setIsBroadcastRosterOpen] = useState(false);
 
   // Sync state if URL search query changes
   useEffect(() => {
@@ -121,7 +148,6 @@ export const ServicesPage: React.FC = () => {
       } else {
         warning('Permission Required', 'You do not have administrative permissions to create church services.');
       }
-      // Remove action param to avoid re-triggering
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -209,6 +235,92 @@ export const ServicesPage: React.FC = () => {
     maximumFractionDigits: 2,
   })}`;
 
+  // Next Upcoming or Live Service Detection
+  const upcomingServiceInfo = useMemo(() => {
+    if (activeServices.length === 0) return null;
+
+    const now = new Date();
+    const currentDayIdx = now.getDay();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+    let closestService: ChurchService | null = null;
+    let minDiffMinutes = Infinity;
+    let isLive = false;
+
+    activeServices.forEach((svc) => {
+      const rawDay = (svc.day_of_week || 'Sunday').trim().toLowerCase();
+      const svcDayIdx = DAYS_ORDER.findIndex((d) => d.toLowerCase() === rawDay);
+      if (svcDayIdx === -1) return;
+
+      const startMin = parseTimeToMinutes(svc.start_time);
+      let endMin = parseTimeToMinutes(svc.end_time);
+      if (endMin <= startMin) endMin = startMin + 150; // default 2.5 hours
+
+      const dayDiff = svcDayIdx - currentDayIdx;
+
+      if (dayDiff === 0) {
+        if (currentMinutes >= startMin && currentMinutes < endMin) {
+          closestService = svc;
+          isLive = true;
+          minDiffMinutes = -1;
+          return;
+        } else if (currentMinutes < startMin) {
+          const diff = startMin - currentMinutes;
+          if (diff < minDiffMinutes && !isLive) {
+            minDiffMinutes = diff;
+            closestService = svc;
+          }
+        } else {
+          const diff = 7 * 24 * 60 + (startMin - currentMinutes);
+          if (diff < minDiffMinutes && !isLive) {
+            minDiffMinutes = diff;
+            closestService = svc;
+          }
+        }
+      } else {
+        let diffDays = dayDiff;
+        if (diffDays < 0) diffDays += 7;
+        const diff = diffDays * 24 * 60 + (startMin - currentMinutes);
+        if (diff < minDiffMinutes && !isLive) {
+          minDiffMinutes = diff;
+          closestService = svc;
+        }
+      }
+    });
+
+    if (!closestService) {
+      closestService = activeServices[0];
+    }
+
+    let countdownText = '';
+    if (isLive) {
+      countdownText = 'Live In Session Now';
+    } else if (minDiffMinutes < 24 * 60) {
+      const hours = Math.floor(minDiffMinutes / 60);
+      const mins = minDiffMinutes % 60;
+      if (hours === 0) {
+        countdownText = `Starting in ${mins} minutes`;
+      } else {
+        countdownText = `Starting in ${hours}h ${mins > 0 ? `${mins}m` : ''}`;
+      }
+    } else {
+      const days = Math.floor(minDiffMinutes / (24 * 60));
+      const hours = Math.floor((minDiffMinutes % (24 * 60)) / 60);
+      countdownText = `In ${days} day${days > 1 ? 's' : ''} ${hours > 0 ? `${hours}h` : ''}`;
+    }
+
+    return {
+      service: closestService,
+      isLive,
+      countdownText,
+    };
+  }, [activeServices]);
+
+  // Today's day name in lowercase
+  const todayDayName = useMemo(() => {
+    return DAYS_ORDER[new Date().getDay()].toLowerCase();
+  }, []);
+
   // Filtered services
   const filteredServices = useMemo(() => {
     return services.filter((s) => {
@@ -231,9 +343,6 @@ export const ServicesPage: React.FC = () => {
     });
   }, [services, searchTerm, typeFilter, statusFilter]);
 
-  // Chronological day order for weekly timeline
-  const DAYS_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
   const servicesByDay = useMemo(() => {
     const grouped: Record<string, ChurchService[]> = {};
     DAYS_ORDER.forEach((day) => {
@@ -246,7 +355,6 @@ export const ServicesPage: React.FC = () => {
       grouped[matchedDay].push(s);
     });
 
-    // Chronologically sort each day's services by start_time
     DAYS_ORDER.forEach((day) => {
       grouped[day].sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
     });
@@ -310,6 +418,31 @@ export const ServicesPage: React.FC = () => {
     }
   };
 
+  const handleCopyServiceInvite = (svc: ChurchService) => {
+    const text = `🕊️ *INVITATION: ${svc.name.toUpperCase()}*
+🗓️ Every *${svc.day_of_week}* (${svc.start_time} - ${svc.end_time} GMT)
+🏛️ Venue: ${svc.venue || 'Greater Works City Church, Main Sanctuary, Joma, Accra'}
+🎙️ Ministering: ${svc.preacher || 'Prophet Elisha K. Richard'}
+${svc.description ? `\n_${svc.description}_\n` : ''}
+Come and experience extraordinary worship, prophetic encounters, signs and wonders! All are warmly welcome.`;
+    navigator.clipboard.writeText(text);
+    success('Invitation Copied', `WhatsApp invite for "${svc.name}" copied.`);
+  };
+
+  const handleGoToAttendance = (serviceId: string) => {
+    navigate(`/attendance?serviceId=${serviceId}`);
+  };
+
+  const handleGoToFinance = (serviceId: string) => {
+    navigate(`/finance?serviceId=${serviceId}`);
+  };
+
+  // Duty Roster counts
+  const rosterConfirmedCount = rosterAssignments.filter((a) => a.status === 'confirmed').length;
+  const rosterPendingCount = rosterAssignments.filter((a) => a.status === 'pending').length;
+  const rosterSubstitutedCount = rosterAssignments.filter((a) => a.status === 'substituted').length;
+  const rosterDeclinedCount = rosterAssignments.filter((a) => a.status === 'declined').length;
+
   return (
     <div className="space-y-6">
       {/* Top Header */}
@@ -330,6 +463,15 @@ export const ServicesPage: React.FC = () => {
 
         {/* Top Action Buttons */}
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setIsShareScheduleOpen(true)}
+            className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 transition shadow-xs cursor-pointer active:scale-95"
+            title="Share on WhatsApp or Export .ics calendar"
+          >
+            <Share2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span>Share & Export Schedule</span>
+          </button>
+
           {canManageServices && (
             <button
               onClick={() => {
@@ -344,6 +486,117 @@ export const ServicesPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* ============================================================ */}
+      {/* FEATURE 1: NEXT UPCOMING / LIVE SERVICE SPOTLIGHT BANNER     */}
+      {/* ============================================================ */}
+      {upcomingServiceInfo && (
+        <div
+          className={`relative p-5 sm:p-6 rounded-3xl border shadow-sm overflow-hidden transition-all ${
+            upcomingServiceInfo.isLive
+              ? 'bg-gradient-to-r from-emerald-950 via-slate-900 to-emerald-950 text-white border-emerald-500/80 shadow-emerald-950/20 ring-1 ring-emerald-500'
+              : 'bg-gradient-to-r from-emerald-900 via-[#064e3b] to-slate-900 text-white border-emerald-700/60 shadow-md'
+          }`}
+        >
+          {/* Subtle decorative background glow */}
+          <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20"></div>
+
+          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span
+                  className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-xs ${
+                    upcomingServiceInfo.isLive
+                      ? 'bg-rose-600 text-white animate-pulse'
+                      : 'bg-emerald-500/30 text-emerald-200 border border-emerald-400/40'
+                  }`}
+                >
+                  {upcomingServiceInfo.isLive ? (
+                    <>
+                      <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
+                      <span>LIVE SERVICE IN SESSION</span>
+                    </>
+                  ) : (
+                    <>
+                      <Clock className="w-3 h-3 text-emerald-300" />
+                      <span>NEXT SCHEDULED SERVICE</span>
+                    </>
+                  )}
+                </span>
+
+                <span className="text-xs font-mono font-bold text-emerald-200 bg-white/10 px-2.5 py-0.5 rounded-full">
+                  {upcomingServiceInfo.countdownText}
+                </span>
+
+                <span className="text-xs text-white/70">
+                  Every {upcomingServiceInfo.service.day_of_week} ({upcomingServiceInfo.service.start_time} - {upcomingServiceInfo.service.end_time} GMT)
+                </span>
+              </div>
+
+              <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                {upcomingServiceInfo.service.name}
+              </h2>
+
+              <div className="flex items-center gap-4 text-xs text-emerald-100/90 flex-wrap pt-0.5">
+                <span className="flex items-center gap-1">
+                  <MapPin className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                  <strong>Venue:</strong> {upcomingServiceInfo.service.venue || 'Main Sanctuary, Joma'}
+                </span>
+                <span className="flex items-center gap-1">
+                  <Mic className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                  <strong>Preacher:</strong> {upcomingServiceInfo.service.preacher || 'Prophet Elisha K. Richard'}
+                </span>
+                <span className="flex items-center gap-1">
+                  <Users className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                  <strong>Expected:</strong> {upcomingServiceInfo.service.expected_attendance || 200} worshippers
+                </span>
+              </div>
+            </div>
+
+            {/* Quick Actions for this Live / Next Service */}
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
+              <button
+                onClick={() => setLiveRunnerService(upcomingServiceInfo.service)}
+                className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs flex items-center gap-2 transition shadow-lg cursor-pointer active:scale-95"
+                title="Open Live Stage Runner / Presentation Timer"
+              >
+                <Tv className="w-4 h-4 fill-slate-950" />
+                <span>Live Stage Runner</span>
+              </button>
+
+              <button
+                onClick={() => handleGoToAttendance(upcomingServiceInfo.service.id)}
+                className="px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer backdrop-blur-xs"
+                title="Record attendance check-ins"
+              >
+                <UserCheck className="w-3.5 h-3.5 text-emerald-300" />
+                <span>Take Attendance</span>
+              </button>
+
+              <button
+                onClick={() => setBulletinService(upcomingServiceInfo.service)}
+                className="px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer backdrop-blur-xs"
+                title="Print service bulletin"
+              >
+                <FileText className="w-3.5 h-3.5 text-emerald-300" />
+                <span>Bulletin</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setRosterServiceFilter(upcomingServiceInfo.service.id);
+                  handleTabChange('roster');
+                }}
+                className="px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer backdrop-blur-xs"
+                title="View roster for this service"
+              >
+                <Users className="w-3.5 h-3.5 text-emerald-300" />
+                <span>Duty Roster</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* KPI Overview Summary Banner */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -641,58 +894,99 @@ export const ServicesPage: React.FC = () => {
                   </div>
 
                   {/* Actions Bar */}
-                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <button
-                        onClick={() => setBulletinService(svc)}
-                        className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 hover:border-emerald-300 dark:hover:border-emerald-700 text-slate-700 dark:text-slate-300 hover:text-emerald-900 dark:hover:text-emerald-300 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
-                        title="View printable bulletin & program"
-                      >
-                        <FileText className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400" />
-                        <span>Bulletin</span>
-                      </button>
-
-                      <button
-                        onClick={() => setOrderEditorService(svc)}
-                        className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 hover:bg-purple-50 dark:hover:bg-purple-950/50 hover:border-purple-300 dark:hover:border-purple-700 text-slate-700 dark:text-slate-300 hover:text-purple-900 dark:hover:text-purple-300 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
-                        title="Plan and edit Order of Service"
-                      >
-                        <ListOrdered className="w-3.5 h-3.5 text-purple-700 dark:text-purple-400" />
-                        <span>Liturgy ({programItemsCount})</span>
-                      </button>
-
-                      <button
-                        onClick={() => setRosterService(svc)}
-                        className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 hover:bg-blue-50 dark:hover:bg-blue-950/50 hover:border-blue-300 dark:hover:border-blue-700 text-slate-700 dark:text-slate-300 hover:text-blue-900 dark:hover:text-blue-300 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
-                        title="Manage duty roster and ministers"
-                      >
-                        <Users className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
-                        <span>Roster</span>
-                      </button>
-                    </div>
-
-                    {canManageServices && (
-                      <div className="flex items-center gap-1">
+                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                    {/* Primary Tool Buttons */}
+                    <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <button
-                          onClick={() => {
-                            setEditingService(svc);
-                            setIsFormModalOpen(true);
-                          }}
-                          className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition cursor-pointer"
-                          title="Edit service details"
+                          onClick={() => setLiveRunnerService(svc)}
+                          className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                          title="Open Live Stage Liturgy Runner & Timer"
                         >
-                          <Edit2 className="w-3.5 h-3.5" />
+                          <Tv className="w-3.5 h-3.5" />
+                          <span>Stage Runner</span>
                         </button>
 
                         <button
-                          onClick={() => setDeleteConfirmService(svc)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition cursor-pointer"
-                          title="Delete service"
+                          onClick={() => setBulletinService(svc)}
+                          className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 hover:border-emerald-300 dark:hover:border-emerald-700 text-slate-700 dark:text-slate-300 hover:text-emerald-900 dark:hover:text-emerald-300 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+                          title="View printable bulletin & program"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <FileText className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400" />
+                          <span>Bulletin</span>
+                        </button>
+
+                        <button
+                          onClick={() => setOrderEditorService(svc)}
+                          className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 hover:bg-purple-50 dark:hover:bg-purple-950/50 hover:border-purple-300 dark:hover:border-purple-700 text-slate-700 dark:text-slate-300 hover:text-purple-900 dark:hover:text-purple-300 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+                          title="Plan and edit Order of Service"
+                        >
+                          <ListOrdered className="w-3.5 h-3.5 text-purple-700 dark:text-purple-400" />
+                          <span>Liturgy ({programItemsCount})</span>
+                        </button>
+
+                        <button
+                          onClick={() => setRosterService(svc)}
+                          className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 hover:bg-blue-50 dark:hover:bg-blue-950/50 hover:border-blue-300 dark:hover:border-blue-700 text-slate-700 dark:text-slate-300 hover:text-blue-900 dark:hover:text-blue-300 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+                          title="Manage duty roster and ministers"
+                        >
+                          <Users className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
+                          <span>Roster</span>
                         </button>
                       </div>
-                    )}
+
+                      {canManageServices && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => {
+                              setEditingService(svc);
+                              setIsFormModalOpen(true);
+                            }}
+                            className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition cursor-pointer"
+                            title="Edit service details"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+
+                          <button
+                            onClick={() => setDeleteConfirmService(svc)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition cursor-pointer"
+                            title="Delete service"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Secondary Quick-Links: Attendance, Finance, Copy Invite */}
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-850 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => handleGoToAttendance(svc.id)}
+                          className="hover:text-emerald-700 dark:hover:text-emerald-400 font-semibold cursor-pointer flex items-center gap-1"
+                        >
+                          <UserCheck className="w-3 h-3 text-emerald-600" />
+                          <span>Check-in</span>
+                        </button>
+                        <button
+                          onClick={() => handleGoToFinance(svc.id)}
+                          className="hover:text-emerald-700 dark:hover:text-emerald-400 font-semibold cursor-pointer flex items-center gap-1"
+                        >
+                          <Coins className="w-3 h-3 text-purple-600" />
+                          <span>Sunday Tally</span>
+                        </button>
+                      </div>
+
+                      <button
+                        onClick={() => handleCopyServiceInvite(svc)}
+                        className="hover:text-slate-800 dark:hover:text-slate-200 font-semibold cursor-pointer flex items-center gap-1"
+                        title="Copy WhatsApp Invitation"
+                      >
+                        <Copy className="w-3 h-3" />
+                        <span>Copy Invite</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -721,15 +1015,29 @@ export const ServicesPage: React.FC = () => {
           <div className="space-y-6">
             {DAYS_ORDER.map((day) => {
               const dayServices = servicesByDay[day] || [];
+              const isToday = day.toLowerCase() === todayDayName;
+
               if (dayServices.length === 0) return null;
 
               return (
-                <div key={day} className="space-y-3">
+                <div
+                  key={day}
+                  className={`space-y-3 p-4 rounded-2xl transition ${
+                    isToday
+                      ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-2 border-emerald-500/40'
+                      : ''
+                  }`}
+                >
                   <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full bg-emerald-700 dark:bg-emerald-500"></span>
+                    <span className={`w-3 h-3 rounded-full ${isToday ? 'bg-emerald-500 ring-4 ring-emerald-300/40 animate-pulse' : 'bg-emerald-700 dark:bg-emerald-500'}`}></span>
                     <h4 className="font-extrabold text-sm text-slate-900 dark:text-white uppercase tracking-wider">
                       {day}s
                     </h4>
+                    {isToday && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-600 text-white">
+                        TODAY
+                      </span>
+                    )}
                     <span className="text-xs text-slate-400 dark:text-slate-500">({dayServices.length} service meetings)</span>
                   </div>
 
@@ -737,7 +1045,7 @@ export const ServicesPage: React.FC = () => {
                     {dayServices.map((svc) => (
                       <div
                         key={svc.id}
-                        className="p-4 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-emerald-300 dark:hover:border-emerald-700 transition space-y-2"
+                        className="p-4 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-emerald-300 dark:hover:border-emerald-700 transition space-y-2.5"
                       >
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-900 dark:text-white text-sm">{svc.name}</span>
@@ -746,17 +1054,29 @@ export const ServicesPage: React.FC = () => {
                           </span>
                         </div>
                         <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2">{svc.description}</p>
+                        
                         <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                          <span className="flex items-center gap-1 truncate max-w-[200px]">
+                          <span className="flex items-center gap-1 truncate max-w-[180px]">
                             <MapPin className="w-3.5 h-3.5 text-slate-400" />
                             {svc.venue || 'Main Sanctuary'}
                           </span>
-                          <button
-                            onClick={() => setBulletinService(svc)}
-                            className="text-emerald-700 dark:text-emerald-400 hover:underline font-semibold cursor-pointer"
-                          >
-                            View Bulletin →
-                          </button>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setLiveRunnerService(svc)}
+                              className="text-emerald-700 dark:text-emerald-400 hover:underline font-bold cursor-pointer flex items-center gap-1"
+                            >
+                              <Tv className="w-3 h-3" />
+                              <span>Stage</span>
+                            </button>
+                            <span className="text-slate-300 dark:text-slate-700">•</span>
+                            <button
+                              onClick={() => setBulletinService(svc)}
+                              className="text-slate-700 dark:text-slate-300 hover:text-emerald-700 font-semibold cursor-pointer"
+                            >
+                              Bulletin →
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -832,22 +1152,32 @@ export const ServicesPage: React.FC = () => {
                   </div>
 
                   {/* Action Buttons */}
-                  <div className="flex items-center justify-between pt-2">
+                  <div className="flex items-center justify-between pt-2 flex-wrap gap-2">
                     <button
-                      onClick={() => setOrderEditorService(svc)}
-                      className="px-3 py-1.5 bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 dark:hover:bg-purple-900/60 border border-purple-200 dark:border-purple-800 text-purple-900 dark:text-purple-300 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                      onClick={() => setLiveRunnerService(svc)}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
                     >
-                      <ListOrdered className="w-3.5 h-3.5" />
-                      <span>Edit Liturgy Plan</span>
+                      <Tv className="w-3.5 h-3.5" />
+                      <span>Stage Runner</span>
                     </button>
 
-                    <button
-                      onClick={() => setBulletinService(svc)}
-                      className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-xs cursor-pointer"
-                    >
-                      <Printer className="w-3.5 h-3.5" />
-                      <span>Print Bulletin</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setOrderEditorService(svc)}
+                        className="px-3 py-1.5 bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 dark:hover:bg-purple-900/60 border border-purple-200 dark:border-purple-800 text-purple-900 dark:text-purple-300 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <ListOrdered className="w-3.5 h-3.5" />
+                        <span>Edit Liturgy</span>
+                      </button>
+
+                      <button
+                        onClick={() => setBulletinService(svc)}
+                        className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-xs cursor-pointer"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>Print</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -918,6 +1248,36 @@ export const ServicesPage: React.FC = () => {
             </div>
           )}
 
+          {/* Roster Summary KPI Chips */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="p-3 bg-white dark:bg-[#0e1726] rounded-xl border border-slate-200 dark:border-slate-800 text-center">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Assigned</span>
+              <span className="text-lg font-black text-slate-900 dark:text-white font-mono">{rosterAssignments.length}</span>
+            </div>
+            <div className="p-3 bg-emerald-50/60 dark:bg-emerald-950/40 rounded-xl border border-emerald-200 dark:border-emerald-800 text-center">
+              <span className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400 block">Confirmed</span>
+              <span className="text-lg font-black text-emerald-800 dark:text-emerald-300 font-mono">{rosterConfirmedCount}</span>
+            </div>
+            <div className="p-3 bg-amber-50/60 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-800 text-center">
+              <span className="text-[10px] uppercase font-bold text-amber-700 dark:text-amber-400 block">Pending</span>
+              <span className="text-lg font-black text-amber-800 dark:text-amber-300 font-mono">{rosterPendingCount}</span>
+            </div>
+            <div className="p-3 bg-purple-50/60 dark:bg-purple-950/40 rounded-xl border border-purple-200 dark:border-purple-800 text-center">
+              <span className="text-[10px] uppercase font-bold text-purple-700 dark:text-purple-400 block">Substituted</span>
+              <span className="text-lg font-black text-purple-800 dark:text-purple-300 font-mono">{rosterSubstitutedCount}</span>
+            </div>
+            <div className="p-3 bg-rose-50/60 dark:bg-rose-950/40 rounded-xl border border-rose-200 dark:border-rose-800 text-center">
+              <span className="text-[10px] uppercase font-bold text-rose-700 dark:text-rose-400 block">Declined</span>
+              <span className="text-lg font-black text-rose-800 dark:text-rose-300 font-mono">{rosterDeclinedCount}</span>
+            </div>
+            <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 text-center">
+              <span className="text-[10px] uppercase font-bold text-slate-500 block">Radar Status</span>
+              <span className={`text-xs font-black uppercase font-mono block mt-1 ${rosterConflicts.length > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                {rosterConflicts.length > 0 ? `${rosterConflicts.length} Alert` : 'Clear'}
+              </span>
+            </div>
+          </div>
+
           {/* Roster Controls & Action Bar */}
           <div className="bg-white dark:bg-[#0e1726] p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div className="flex items-center gap-2 flex-wrap flex-1">
@@ -967,20 +1327,43 @@ export const ServicesPage: React.FC = () => {
                     </option>
                   ))}
               </select>
+
+              {/* Status Filter */}
+              <select
+                value={rosterStatusFilter}
+                onChange={(e) => setRosterStatusFilter(e.target.value)}
+                className="px-3 py-1.5 border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:bg-white dark:focus:bg-slate-850"
+              >
+                <option value="ALL">All Statuses</option>
+                <option value="confirmed">Confirmed Only</option>
+                <option value="pending">Pending Only</option>
+                <option value="substituted">Substituted Only</option>
+                <option value="declined">Declined Only</option>
+              </select>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => setIsBroadcastRosterOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-bold text-xs rounded-xl shadow-xs transition cursor-pointer hover:bg-emerald-100 dark:hover:bg-emerald-900/60"
+                title="Send personal WhatsApp reminders or copy group notice"
+              >
+                <MessageSquare className="w-4 h-4 text-emerald-600" />
+                <span>WhatsApp Broadcast</span>
+              </button>
+
               <button
                 onClick={() => setIsPrintMasterRosterOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs rounded-xl shadow-xs transition"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
               >
                 <Printer className="w-4 h-4 text-slate-500" />
                 <span>Print Master Roster</span>
               </button>
+
               {canManageServices && (
                 <button
                   onClick={() => setIsAssignRosterOpen(true)}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs transition"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Assign Volunteer</span>
@@ -1000,7 +1383,7 @@ export const ServicesPage: React.FC = () => {
               {canManageServices && (
                 <button
                   onClick={() => setIsAssignRosterOpen(true)}
-                  className="mt-4 px-4 py-2 bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition"
+                  className="mt-4 px-4 py-2 bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
                 >
                   Assign First Volunteer
                 </button>
@@ -1015,12 +1398,13 @@ export const ServicesPage: React.FC = () => {
                   const matchService = rosterServiceFilter === 'ALL' || a.service_id === rosterServiceFilter;
                   const matchDept = rosterDeptFilter === 'ALL' || a.department === rosterDeptFilter;
                   const matchDate = rosterDateFilter === 'ALL' || a.date === rosterDateFilter;
+                  const matchStatus = rosterStatusFilter === 'ALL' || a.status === rosterStatusFilter;
                   const matchSearch =
                     !term ||
                     (a.member_name || '').toLowerCase().includes(term) ||
                     (a.role_title || '').toLowerCase().includes(term) ||
                     (a.notes && a.notes.toLowerCase().includes(term));
-                  return matchService && matchDept && matchDate && matchSearch;
+                  return matchService && matchDept && matchDate && matchStatus && matchSearch;
                 });
 
                 // Group filtered items by date and service
@@ -1035,150 +1419,171 @@ export const ServicesPage: React.FC = () => {
                 if (filtered.length === 0) {
                   return (
                     <div className="p-8 text-center bg-white dark:bg-[#0e1726] rounded-2xl border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 text-xs">
-                      No duty assignments match your selected department or service filter.
+                      No duty assignments match your selected department, status, or service filter.
                     </div>
                   );
                 }
 
-                return Array.from(groups.entries()).map(([groupKey, groupItems]) => (
-                  <div
-                    key={groupKey}
-                    className="bg-white dark:bg-[#0e1726] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden"
-                  >
-                    {/* Group Header */}
-                    <div className="px-5 py-3 bg-[#064e3b] text-white flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2">
-                        <Calendar className="w-4 h-4 text-emerald-200" />
-                        <span className="font-bold tracking-wide">{groupKey}</span>
+                return Array.from(groups.entries()).map(([groupKey, groupItems]) => {
+                  const pendingInGroup = groupItems.filter((i) => i.status === 'pending');
+
+                  return (
+                    <div
+                      key={groupKey}
+                      className="bg-white dark:bg-[#0e1726] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden"
+                    >
+                      {/* Group Header */}
+                      <div className="px-5 py-3 bg-[#064e3b] text-white flex items-center justify-between text-xs flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <Calendar className="w-4 h-4 text-emerald-200" />
+                          <span className="font-bold tracking-wide">{groupKey}</span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {canManageServices && pendingInGroup.length > 0 && (
+                            <button
+                              onClick={() => {
+                                pendingInGroup.forEach((p) =>
+                                  updateRosterAssignment(p.id, { status: 'confirmed' })
+                                );
+                                success('Group Confirmed', `Marked ${pendingInGroup.length} assignments as confirmed.`);
+                              }}
+                              className="px-2.5 py-0.5 bg-emerald-800 hover:bg-emerald-700 text-emerald-100 rounded-full text-[10px] font-bold border border-emerald-600 transition cursor-pointer"
+                            >
+                              Confirm All Pending ({pendingInGroup.length})
+                            </button>
+                          )}
+
+                          <span className="bg-emerald-800/80 px-2.5 py-0.5 rounded-full text-[10px] font-bold text-emerald-100 border border-emerald-600">
+                            {groupItems.length} Assigned Steward{groupItems.length > 1 ? 's' : ''}
+                          </span>
+                        </div>
                       </div>
-                      <span className="bg-emerald-800/80 px-2.5 py-0.5 rounded-full text-[10px] font-bold text-emerald-100 border border-emerald-600">
-                        {groupItems.length} Assigned Steward{groupItems.length > 1 ? 's' : ''}
-                      </span>
-                    </div>
 
-                    {/* Table of assignments */}
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs">
-                        <thead>
-                          <tr className="bg-slate-50 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                            <th className="py-2.5 px-4">Volunteer / Minister</th>
-                            <th className="py-2.5 px-4">Department & Ministry</th>
-                            <th className="py-2.5 px-4">Assigned Role</th>
-                            <th className="py-2.5 px-4">Call Time</th>
-                            <th className="py-2.5 px-4">Status</th>
-                            <th className="py-2.5 px-4">Notes</th>
-                            <th className="py-2.5 px-4 text-right">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
-                          {groupItems.map((assignment) => {
-                            const isConflicted = rosterConflicts.some(
-                              (c) => c.member_id === assignment.member_id && c.date === assignment.date
-                            );
+                      {/* Table of assignments */}
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead>
+                            <tr className="bg-slate-50 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                              <th className="py-2.5 px-4">Volunteer / Minister</th>
+                              <th className="py-2.5 px-4">Department & Ministry</th>
+                              <th className="py-2.5 px-4">Assigned Role</th>
+                              <th className="py-2.5 px-4">Call Time</th>
+                              <th className="py-2.5 px-4">Status</th>
+                              <th className="py-2.5 px-4">Notes</th>
+                              <th className="py-2.5 px-4 text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                            {groupItems.map((assignment) => {
+                              const isConflicted = rosterConflicts.some(
+                                (c) => c.member_id === assignment.member_id && c.date === assignment.date
+                              );
 
-                            const waPhone = cleanGhanaPhone(assignment.member_phone);
-                            const waMessage = `Calvary greetings ${assignment.member_name}! You are scheduled on duty at Greater Works City Church as [${assignment.role_title}] for ${assignment.service_name} on ${assignment.date}. Required call time is ${assignment.report_time}. Pre-service prayer begins promptly. God bless you!`;
-                            const waLink = `https://wa.me/${waPhone}?text=${encodeURIComponent(waMessage)}`;
+                              const waPhone = cleanGhanaPhone(assignment.member_phone);
+                              const waMessage = `Calvary greetings ${assignment.member_name}! You are scheduled on duty at Greater Works City Church as [${assignment.role_title}] for ${assignment.service_name} on ${assignment.date}. Required call time is ${assignment.report_time}. Pre-service prayer begins promptly. God bless you!`;
+                              const waLink = `https://wa.me/${waPhone}?text=${encodeURIComponent(waMessage)}`;
 
-                            return (
-                              <tr
-                                key={assignment.id}
-                                className={`hover:bg-slate-50/70 dark:hover:bg-slate-850/50 transition ${
-                                  isConflicted ? 'bg-rose-50/40 dark:bg-rose-950/20' : ''
-                                }`}
-                              >
-                                <td className="py-3 px-4">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-bold text-slate-900 dark:text-white">
-                                      {assignment.member_name}
-                                    </span>
-                                    {isConflicted && (
-                                      <span
-                                        title="Double-booked on this service date!"
-                                        className="px-1.5 py-0.2 bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-200 border border-rose-200 dark:border-rose-800 rounded text-[9px] font-bold"
-                                      >
-                                        Conflict
+                              return (
+                                <tr
+                                  key={assignment.id}
+                                  className={`hover:bg-slate-50/70 dark:hover:bg-slate-850/50 transition ${
+                                    isConflicted ? 'bg-rose-50/40 dark:bg-rose-950/20' : ''
+                                  }`}
+                                >
+                                  <td className="py-3 px-4">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-bold text-slate-900 dark:text-white">
+                                        {assignment.member_name}
                                       </span>
-                                    )}
-                                  </div>
-                                  <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500">
-                                    {assignment.member_phone || 'No phone'}
-                                  </span>
-                                </td>
-                                <td className="py-3 px-4 font-semibold text-slate-700 dark:text-slate-300 capitalize">
-                                  <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-[11px] border border-slate-200 dark:border-slate-700">
-                                    {assignment.department.replace('_', ' ')}
-                                  </span>
-                                </td>
-                                <td className="py-3 px-4 font-bold text-emerald-950 dark:text-emerald-300">
-                                  {assignment.role_title}
-                                </td>
-                                <td className="py-3 px-4 font-mono font-medium text-slate-700 dark:text-slate-300">
-                                  {assignment.report_time}
-                                </td>
-                                <td className="py-3 px-4">
-                                  <select
-                                    value={assignment.status}
-                                    onChange={(e) =>
-                                      updateRosterAssignment(assignment.id, {
-                                        status: e.target.value as RosterAssignmentStatus,
-                                      })
-                                    }
-                                    className={`text-[11px] font-bold px-2 py-1 rounded-lg border focus:outline-emerald-600 ${
-                                      assignment.status === 'confirmed'
-                                        ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
-                                        : assignment.status === 'pending'
-                                        ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800'
-                                        : assignment.status === 'substituted'
-                                        ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-800'
-                                        : 'bg-rose-50 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800'
-                                    }`}
-                                  >
-                                    <option value="confirmed">Confirmed</option>
-                                    <option value="pending">Pending</option>
-                                    <option value="substituted">Substituted</option>
-                                    <option value="declined">Declined</option>
-                                  </select>
-                                </td>
-                                <td className="py-3 px-4 text-[11px] text-slate-500 dark:text-slate-400 max-w-xs truncate">
-                                  {assignment.notes || '—'}
-                                </td>
-                                <td className="py-3 px-4 text-right whitespace-nowrap">
-                                  <div className="flex items-center justify-end gap-1.5">
-                                    {waPhone && (
-                                      <a
-                                        href={waLink}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        title="Send WhatsApp Duty Reminder"
-                                        className="px-2 py-1 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900 text-emerald-700 dark:text-emerald-300 font-bold rounded-lg text-[10px] transition inline-flex items-center gap-1"
-                                      >
-                                        <Send className="w-2.5 h-2.5" />
-                                        <span>WhatsApp</span>
-                                      </a>
-                                    )}
-                                    {canManageServices && (
-                                      <button
-                                        onClick={() => {
-                                          deleteRosterAssignment(assignment.id);
-                                          info('Removed', `Unassigned ${assignment.member_name}.`);
-                                        }}
-                                        title="Remove from roster"
-                                        className="p-1 text-slate-400 hover:text-rose-600 transition"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    )}
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                                      {isConflicted && (
+                                        <span
+                                          title="Double-booked on this service date!"
+                                          className="px-1.5 py-0.2 bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-200 border border-rose-200 dark:border-rose-800 rounded text-[9px] font-bold"
+                                        >
+                                          Conflict
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500">
+                                      {assignment.member_phone || 'No phone'}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-4 font-semibold text-slate-700 dark:text-slate-300 capitalize">
+                                    <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-[11px] border border-slate-200 dark:border-slate-700">
+                                      {assignment.department.replace('_', ' ')}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-4 font-bold text-emerald-950 dark:text-emerald-300">
+                                    {assignment.role_title}
+                                  </td>
+                                  <td className="py-3 px-4 font-mono font-medium text-slate-700 dark:text-slate-300">
+                                    {assignment.report_time}
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    <select
+                                      value={assignment.status}
+                                      onChange={(e) =>
+                                        updateRosterAssignment(assignment.id, {
+                                          status: e.target.value as RosterAssignmentStatus,
+                                        })
+                                      }
+                                      className={`text-[11px] font-bold px-2 py-1 rounded-lg border focus:outline-emerald-600 ${
+                                        assignment.status === 'confirmed'
+                                          ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                                          : assignment.status === 'pending'
+                                          ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                                          : assignment.status === 'substituted'
+                                          ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-800'
+                                          : 'bg-rose-50 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800'
+                                      }`}
+                                    >
+                                      <option value="confirmed">Confirmed</option>
+                                      <option value="pending">Pending</option>
+                                      <option value="substituted">Substituted</option>
+                                      <option value="declined">Declined</option>
+                                    </select>
+                                  </td>
+                                  <td className="py-3 px-4 text-[11px] text-slate-500 dark:text-slate-400 max-w-xs truncate">
+                                    {assignment.notes || '—'}
+                                  </td>
+                                  <td className="py-3 px-4 text-right whitespace-nowrap">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      {waPhone && (
+                                        <a
+                                          href={waLink}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          title="Send WhatsApp Duty Reminder"
+                                          className="px-2 py-1 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900 text-emerald-700 dark:text-emerald-300 font-bold rounded-lg text-[10px] transition inline-flex items-center gap-1"
+                                        >
+                                          <Send className="w-2.5 h-2.5" />
+                                          <span>WhatsApp</span>
+                                        </a>
+                                      )}
+                                      {canManageServices && (
+                                        <button
+                                          onClick={() => {
+                                            deleteRosterAssignment(assignment.id);
+                                            info('Removed', `Unassigned ${assignment.member_name}.`);
+                                          }}
+                                          title="Remove from roster"
+                                          className="p-1 text-slate-400 hover:text-rose-600 transition cursor-pointer"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
-                  </div>
-                ));
+                  );
+                });
               })()}
             </div>
           )}
@@ -1188,6 +1593,35 @@ export const ServicesPage: React.FC = () => {
       {/* ============================================================ */}
       {/* ALL MODALS                                                   */}
       {/* ============================================================ */}
+
+      {/* Live Stage Liturgy Runner */}
+      {liveRunnerService && (
+        <LiveStageRunnerModal
+          service={liveRunnerService}
+          onClose={() => setLiveRunnerService(null)}
+        />
+      )}
+
+      {/* Share Schedule Modal */}
+      {isShareScheduleOpen && (
+        <ShareScheduleModal
+          services={services}
+          settings={settings}
+          onClose={() => setIsShareScheduleOpen(false)}
+        />
+      )}
+
+      {/* Broadcast WhatsApp Roster Modal */}
+      {isBroadcastRosterOpen && (
+        <BroadcastRosterModal
+          isOpen={isBroadcastRosterOpen}
+          onClose={() => setIsBroadcastRosterOpen(false)}
+          assignments={rosterAssignments}
+          settings={settings}
+          targetDate={rosterDateFilter !== 'ALL' ? rosterDateFilter : undefined}
+          onUpdateStatus={updateRosterAssignment}
+        />
+      )}
 
       {/* Assign Volunteer Modal */}
       {isAssignRosterOpen && (
