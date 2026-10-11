@@ -76,8 +76,8 @@ export const PrintPastoralReportModal: React.FC<PrintPastoralReportModalProps> =
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[94vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto print:bg-transparent print:p-0 print:static print:overflow-visible print:block print:inset-auto print:z-auto">
+      <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[94vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden print:shadow-none print:border-none print:m-0 print:p-0 print:max-w-none print:max-h-none print:w-full print:rounded-none print:overflow-visible print:block">
         {/* Modal Controls (Hidden in Print) */}
         <div className="px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between print:hidden">
           <div className="flex items-center gap-3">
@@ -121,24 +121,36 @@ export const PrintPastoralReportModal: React.FC<PrintPastoralReportModalProps> =
         </div>
 
         {/* Printable Paper Canvas */}
-        <div className="flex-1 overflow-y-auto p-8 text-slate-900 bg-white print:p-0 print:overflow-visible">
+        <div className="flex-1 overflow-y-auto p-8 text-slate-900 bg-white print:p-0 print:overflow-visible print:w-full print:max-w-[195mm] print:mx-auto">
           {/* Header */}
           <div className="border-b-2 border-emerald-900 pb-4 mb-6">
             <div className="flex items-start justify-between">
-              <div>
-                <span className="text-[10px] font-extrabold tracking-widest text-emerald-800 uppercase">
-                  Official Secretariat & Pastoral Care Records
-                </span>
-                <h1 className="text-2xl font-black text-slate-900 tracking-tight uppercase">
-                  {settings.church_name || 'Greater Works City Church'}
-                </h1>
-                <p className="text-xs font-semibold text-slate-600">
-                  {settings.branch_name || 'City of Refuge - Joma Central'} • {settings.location}
-                </p>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  General Overseer: <strong className="text-slate-800">{settings.senior_pastor || 'Prophet Elisha K. Richard'}</strong>
-                  {settings.gps_address ? ` • GPS: ${settings.gps_address}` : ''}
-                </p>
+              <div className="flex items-center gap-3.5">
+                <div className="w-14 h-14 shrink-0 rounded-xl bg-slate-50 border border-slate-200 p-1 flex items-center justify-center overflow-hidden">
+                  <img
+                    src={settings.logo_url || '/assets/logo.png'}
+                    alt="Church Logo"
+                    className="w-full h-full object-contain"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
+                  />
+                </div>
+                <div>
+                  <span className="text-[10px] font-extrabold tracking-widest text-emerald-800 uppercase">
+                    Official Secretariat & Pastoral Care Records
+                  </span>
+                  <h1 className="text-2xl font-black text-slate-900 tracking-tight uppercase">
+                    {settings.church_name || 'Greater Works City Church'}
+                  </h1>
+                  <p className="text-xs font-semibold text-slate-600">
+                    {settings.branch_name || 'City of Refuge - Joma Central'} • {settings.location}
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    General Overseer: <strong className="text-slate-800">{settings.senior_pastor || 'Prophet Elisha K. Richard'}</strong>
+                    {settings.gps_address ? ` • GPS: ${settings.gps_address}` : ''}
+                  </p>
+                </div>
               </div>
 
               <div className="text-right">

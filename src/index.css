@@ -47,14 +47,19 @@
 /* Print Styles for formatted physical & print-to-PDF records */
 @media print {
   @page {
-    margin: 12mm;
-    size: auto;
+    margin: 8mm 10mm;
+    size: A4 portrait;
   }
 
+  html,
   body {
     background-color: #ffffff !important;
     color: #0f172a !important;
-    font-size: 11pt;
+    font-size: 10.5pt;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
   /* Hide app navigation chrome, sidebars, headers, modals, floating action buttons */
@@ -105,5 +110,21 @@
   /* Print watermarks and headers */
   .print-header {
     display: block !important;
+  }
+
+  /* Printable dossier sheets fitting A4 sheets */
+  #printable-member-dossier,
+  .printable-a4-dossier {
+    width: 100% !important;
+    max-width: 195mm !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .avoid-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
 }
