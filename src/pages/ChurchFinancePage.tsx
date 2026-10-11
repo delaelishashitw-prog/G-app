@@ -38,6 +38,8 @@ import {
   Layers,
   Banknote,
   Coins,
+  RotateCcw,
+  Trash2,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -182,6 +184,7 @@ export const ChurchFinancePage: React.FC = () => {
     transferBetweenAccounts,
     addDepartmentBudget,
     updateDepartmentBudget,
+    resetChurchFinanceData,
   } = useChurchData();
 
   const { canAccess, currentUser } = useAuth();
@@ -204,6 +207,8 @@ export const ChurchFinancePage: React.FC = () => {
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showBudgetModal, setShowBudgetModal] = useState(false);
+  const [showStartAfreshModal, setShowStartAfreshModal] = useState(false);
+  const [startAfreshMode, setStartAfreshMode] = useState<'reset_balances' | 'wipe_all'>('reset_balances');
   const [selectedEditBudget, setSelectedEditBudget] = useState<any | null>(null);
   const [selectedVoucherRecord, setSelectedVoucherRecord] = useState<ChurchFinanceRecord | null>(null);
   const [editingFinanceRecord, setEditingFinanceRecord] = useState<ChurchFinanceRecord | null>(null);
@@ -418,7 +423,12 @@ export const ChurchFinancePage: React.FC = () => {
       return;
     }
 
-    const selectedAcc = churchAccounts.find((a) => a.id === formAccountId);
+    if (churchAccounts.length === 0) {
+      error('No Holding Account', 'Please add a church account before recording an expenditure.');
+      return;
+    }
+
+    const selectedAcc = churchAccounts.find((a) => a.id === formAccountId) || churchAccounts[0];
     const accName = selectedAcc ? selectedAcc.name : 'Main Operations Account';
 
     const voucherId = formReferenceNo.trim() || `VOUCH-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
@@ -479,6 +489,11 @@ export const ChurchFinancePage: React.FC = () => {
     const amountNum = parseFloat(incomeAmount);
     if (isNaN(amountNum) || amountNum <= 0) {
       error('Invalid Amount', 'Please provide a valid income amount.');
+      return;
+    }
+
+    if (churchAccounts.length === 0) {
+      error('No Holding Account', 'Please add a church account before recording income.');
       return;
     }
 
@@ -752,6 +767,17 @@ export const ChurchFinancePage: React.FC = () => {
             <Download className="w-4 h-4" />
             <span className="hidden sm:inline">Export</span>
           </button>
+
+          {canAccess('finance') && (
+            <button
+              onClick={() => setShowStartAfreshModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-700 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 text-xs sm:text-sm font-medium border border-slate-200 dark:border-slate-700 hover:border-rose-300 dark:hover:border-rose-800 transition-all cursor-pointer"
+              title="Clear hardcoded records to start afresh with clean financial books"
+            >
+              <RotateCcw className="w-4 h-4 text-rose-500" />
+              <span>Start Afresh</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -944,94 +970,113 @@ export const ChurchFinancePage: React.FC = () => {
       {/* TAB 1: TREASURY & HOLDING ACCOUNTS */}
       {activeTab === 'treasury' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {churchAccounts.map((acc) => {
-              const isBank = acc.account_type === 'bank';
-              const isMoMo = acc.account_type === 'momo';
-              const isPetty = acc.account_type === 'cash_petty';
-
-              return (
-                <div
-                  key={acc.id}
-                  className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs flex flex-col justify-between"
+          {churchAccounts.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border border-slate-200 dark:border-slate-800 text-center">
+              <Landmark className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-600 mb-3" />
+              <h4 className="text-base font-bold text-slate-900 dark:text-white">No Holding Accounts Configured</h4>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto mt-1 mb-4">
+                Add your church's operating bank accounts (e.g. GCB Bank, Ecobank), MTN MoMo Merchant wallets, or petty cash floats to begin tracking balances and recording transactions.
+              </p>
+              {canAccess('finance') && (
+                <button
+                  onClick={() => setShowAddAccountModal(true)}
+                  className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs shadow-xs cursor-pointer inline-flex items-center gap-1.5"
                 >
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <span
-                        className={`p-2 rounded-xl ${
-                          isBank
-                            ? 'bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-400'
-                            : isMoMo
-                            ? 'bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-400'
-                            : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400'
-                        }`}
-                      >
-                        {isBank ? <Building2 className="w-5 h-5" /> : isMoMo ? <CreditCard className="w-5 h-5" /> : <Banknote className="w-5 h-5" />}
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                        {acc.account_type.replace('_', ' ')}
-                      </span>
-                    </div>
+                  <Plus className="w-4 h-4" />
+                  <span>Add Church Account</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {churchAccounts.map((acc) => {
+                const isBank = acc.account_type === 'bank';
+                const isMoMo = acc.account_type === 'momo';
+                const isPetty = acc.account_type === 'cash_petty';
 
-                    <h4 className="font-bold text-slate-900 dark:text-white text-sm line-clamp-1">
-                      {acc.name}
-                    </h4>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
-                      {acc.bank_or_provider}
-                    </p>
-                    {acc.account_number && (
-                      <p className="text-[11px] font-mono text-slate-400 mt-1">
-                        Acct: {acc.account_number}
+                return (
+                  <div
+                    key={acc.id}
+                    className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <span
+                          className={`p-2 rounded-xl ${
+                            isBank
+                              ? 'bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-400'
+                              : isMoMo
+                              ? 'bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-400'
+                              : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400'
+                          }`}
+                        >
+                          {isBank ? <Building2 className="w-5 h-5" /> : isMoMo ? <CreditCard className="w-5 h-5" /> : <Banknote className="w-5 h-5" />}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                          {acc.account_type.replace('_', ' ')}
+                        </span>
+                      </div>
+
+                      <h4 className="font-bold text-slate-900 dark:text-white text-sm line-clamp-1">
+                        {acc.name}
+                      </h4>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
+                        {acc.bank_or_provider}
                       </p>
-                    )}
+                      {acc.account_number && (
+                        <p className="text-[11px] font-mono text-slate-400 mt-1">
+                          Acct: {acc.account_number}
+                        </p>
+                      )}
 
-                    <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
-                      <span className="text-[10px] uppercase font-bold text-slate-400">Current Balance</span>
-                      <div className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-                        GH₵ {acc.current_balance.toFixed(2)}
+                      <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Current Balance</span>
+                        <div className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+                          GH₵ {acc.current_balance.toFixed(2)}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div>
-                    {acc.description && (
-                      <p className="text-[11px] text-slate-500 italic mt-3 line-clamp-2">
-                        {acc.description}
-                      </p>
-                    )}
+                    <div>
+                      {acc.description && (
+                        <p className="text-[11px] text-slate-500 italic mt-3 line-clamp-2">
+                          {acc.description}
+                        </p>
+                      )}
 
-                    {canAccess('finance') && (
-                      <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
-                        <button
-                          onClick={() => {
-                            resetIncomeForm(acc.id);
-                            setShowRecordIncomeModal(true);
-                          }}
-                          className="flex-1 py-1.5 px-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 font-semibold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer"
-                          title={`Record institutional income credited into ${acc.name}`}
-                        >
-                          <TrendingUp className="w-3 h-3" />
-                          <span>+ Income</span>
-                        </button>
-                        <button
-                          onClick={() => {
-                            resetExpenseForm();
-                            setFormAccountId(acc.id);
-                            setShowRecordExpenseModal(true);
-                          }}
-                          className="flex-1 py-1.5 px-2 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 font-semibold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer"
-                          title={`Record expenditure disbursed from ${acc.name}`}
-                        >
-                          <TrendingDown className="w-3 h-3" />
-                          <span>- Expense</span>
-                        </button>
-                      </div>
-                    )}
+                      {canAccess('finance') && (
+                        <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                          <button
+                            onClick={() => {
+                              resetIncomeForm(acc.id);
+                              setShowRecordIncomeModal(true);
+                            }}
+                            className="flex-1 py-1.5 px-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 font-semibold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                            title={`Record institutional income credited into ${acc.name}`}
+                          >
+                            <TrendingUp className="w-3 h-3" />
+                            <span>+ Income</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              resetExpenseForm();
+                              setFormAccountId(acc.id);
+                              setShowRecordExpenseModal(true);
+                            }}
+                            className="flex-1 py-1.5 px-2 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 font-semibold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                            title={`Record expenditure disbursed from ${acc.name}`}
+                          >
+                            <TrendingDown className="w-3 h-3" />
+                            <span>- Expense</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Quick Treasury Actions Banner */}
           <div className="bg-gradient-to-br from-slate-900 via-rose-950 to-slate-900 text-white p-6 rounded-2xl border border-rose-900 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1180,8 +1225,40 @@ export const ChurchFinancePage: React.FC = () => {
                     <tr>
                       <td colSpan={10} className="py-12 text-center text-slate-400">
                         <Receipt className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                        <p className="font-semibold">No finance records match current filter</p>
-                        <p className="text-xs">Adjust your date filter, transaction type, or search query.</p>
+                        <p className="font-semibold text-slate-700 dark:text-slate-200">
+                          {churchFinances.length === 0
+                            ? 'Your financial ledger is clean and ready'
+                            : 'No finance records match current filter'}
+                        </p>
+                        <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+                          {churchFinances.length === 0
+                            ? 'Start recording institutional church income (rentals, grants, sales) or operational expenditures.'
+                            : 'Adjust your date filter, transaction type, or search query.'}
+                        </p>
+                        {churchFinances.length === 0 && canAccess('finance') && (
+                          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                            <button
+                              onClick={() => {
+                                resetIncomeForm();
+                                setShowRecordIncomeModal(true);
+                              }}
+                              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 shadow-2xs"
+                            >
+                              <Plus className="w-4 h-4" />
+                              <span>Record Church Income</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                resetExpenseForm();
+                                setShowRecordExpenseModal(true);
+                              }}
+                              className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 shadow-2xs"
+                            >
+                              <Plus className="w-4 h-4" />
+                              <span>Record Expenditure</span>
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ) : (
@@ -1305,89 +1382,108 @@ export const ChurchFinancePage: React.FC = () => {
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {departmentBudgets.map((bgt) => {
-              const allocated = Number(bgt.allocated_amount) || 0;
-              const spent = Number(bgt.spent_amount) || 0;
-              const remaining = Math.max(0, allocated - spent);
-              const pct = allocated > 0 ? (spent / allocated) * 100 : 0;
-              const isOver = spent > allocated;
-
-              return (
-                <div
-                  key={bgt.id}
-                  className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs flex flex-col justify-between"
+          {departmentBudgets.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border border-slate-200 dark:border-slate-800 text-center">
+              <BarChart3 className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-600 mb-3" />
+              <h4 className="text-base font-bold text-slate-900 dark:text-white">No Department Budgets Defined</h4>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto mt-1 mb-4">
+                Establish annual departmental budget allocations for Sound & Media, Facilities, Welfare, and Children Ministry to track operational spending.
+              </p>
+              {canAccess('finance') && (
+                <button
+                  onClick={() => setShowBudgetModal(true)}
+                  className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs shadow-xs cursor-pointer inline-flex items-center gap-1.5"
                 >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                        {bgt.period}
-                      </span>
-                      <span
-                        className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                          isOver
-                            ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
-                            : pct > 80
-                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                            : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                        }`}
-                      >
-                        {pct.toFixed(0)}% Utilized
-                      </span>
-                    </div>
+                  <Plus className="w-4 h-4" />
+                  <span>Create Department Budget</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {departmentBudgets.map((bgt) => {
+                const allocated = Number(bgt.allocated_amount) || 0;
+                const spent = Number(bgt.spent_amount) || 0;
+                const remaining = Math.max(0, allocated - spent);
+                const pct = allocated > 0 ? (spent / allocated) * 100 : 0;
+                const isOver = spent > allocated;
 
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="font-bold text-slate-900 dark:text-white text-sm">
-                        {bgt.department}
-                      </h4>
-                      {canAccess('finance') && (
-                        <button
-                          onClick={() => {
-                            setSelectedEditBudget(bgt);
-                            setShowBudgetModal(true);
-                          }}
-                          className="text-xs text-rose-600 hover:text-rose-700 font-semibold cursor-pointer"
+                return (
+                  <div
+                    key={bgt.id}
+                    className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                          {bgt.period}
+                        </span>
+                        <span
+                          className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                            isOver
+                              ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                              : pct > 80
+                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                          }`}
                         >
-                          Edit
-                        </button>
-                      )}
-                    </div>
+                          {pct.toFixed(0)}% Utilized
+                        </span>
+                      </div>
 
-                    {/* Progress Bar */}
-                    <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2.5 overflow-hidden mb-3">
-                      <div
-                        className={`h-2.5 rounded-full ${
-                          isOver ? 'bg-rose-600' : pct > 80 ? 'bg-amber-500' : 'bg-emerald-500'
-                        }`}
-                        style={{ width: `${Math.min(100, pct)}%` }}
-                      />
-                    </div>
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="font-bold text-slate-900 dark:text-white text-sm">
+                          {bgt.department}
+                        </h4>
+                        {canAccess('finance') && (
+                          <button
+                            onClick={() => {
+                              setSelectedEditBudget(bgt);
+                              setShowBudgetModal(true);
+                            }}
+                            className="text-xs text-rose-600 hover:text-rose-700 font-semibold cursor-pointer"
+                          >
+                            Edit
+                          </button>
+                        )}
+                      </div>
 
-                    <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-100 dark:border-slate-800">
-                      <div>
-                        <span className="text-[10px] text-slate-400 uppercase font-bold">Allocated</span>
-                        <div className="font-bold text-slate-900 dark:text-white">
-                          GH₵ {allocated.toLocaleString()}
+                      {/* Progress Bar */}
+                      <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2.5 overflow-hidden mb-3">
+                        <div
+                          className={`h-2.5 rounded-full ${
+                            isOver ? 'bg-rose-600' : pct > 80 ? 'bg-amber-500' : 'bg-emerald-500'
+                          }`}
+                          style={{ width: `${Math.min(100, pct)}%` }}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-100 dark:border-slate-800">
+                        <div>
+                          <span className="text-[10px] text-slate-400 uppercase font-bold">Allocated</span>
+                          <div className="font-bold text-slate-900 dark:text-white">
+                            GH₵ {allocated.toLocaleString()}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 uppercase font-bold">Spent to Date</span>
+                          <div className="font-bold text-rose-600 dark:text-rose-400">
+                            GH₵ {spent.toLocaleString()}
+                          </div>
                         </div>
                       </div>
-                      <div>
-                        <span className="text-[10px] text-slate-400 uppercase font-bold">Spent to Date</span>
-                        <div className="font-bold text-rose-600 dark:text-rose-400">
-                          GH₵ {spent.toLocaleString()}
-                        </div>
-                      </div>
                     </div>
+
+                    {bgt.notes && (
+                      <p className="text-[11px] text-slate-500 italic mt-3 line-clamp-2">
+                        {bgt.notes}
+                      </p>
+                    )}
                   </div>
-
-                  {bgt.notes && (
-                    <p className="text-[11px] text-slate-500 italic mt-3 line-clamp-2">
-                      {bgt.notes}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -1581,17 +1677,33 @@ export const ChurchFinancePage: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Credit Holding Account *
                   </label>
-                  <select
-                    value={incomeAccountId}
-                    onChange={(e) => setIncomeAccountId(e.target.value)}
-                    className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
-                  >
-                    {churchAccounts.map((acc) => (
-                      <option key={acc.id} value={acc.id}>
-                        {acc.name} (Bal: GH₵{acc.current_balance.toFixed(0)})
-                      </option>
-                    ))}
-                  </select>
+                  {churchAccounts.length === 0 ? (
+                    <div className="p-2 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-xs text-amber-800 dark:text-amber-300 flex items-center justify-between gap-2">
+                      <span className="text-[11px]">No accounts exist yet.</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowRecordIncomeModal(false);
+                          setShowAddAccountModal(true);
+                        }}
+                        className="px-2 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-[10px] shrink-0"
+                      >
+                        + Add Account
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={incomeAccountId}
+                      onChange={(e) => setIncomeAccountId(e.target.value)}
+                      className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
+                    >
+                      {churchAccounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.name} (Bal: GH₵{acc.current_balance.toFixed(0)})
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
                 <div>
@@ -2248,6 +2360,118 @@ export const ChurchFinancePage: React.FC = () => {
             setSelectedEditBudget(null);
           }}
         />
+      )}
+
+      {/* START AFRESH MODAL */}
+      {showStartAfreshModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5 text-rose-600 dark:text-rose-400">
+                <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/60">
+                  <RotateCcw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                    Start Finance Afresh
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Clear dummy data & start with clean records
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowStartAfreshModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              This action clears out hardcoded demo vouchers, expenditure entries, and department budgets so you can record your church's real institutional transactions from scratch.
+            </p>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Select Option:
+              </label>
+
+              <label
+                onClick={() => setStartAfreshMode('reset_balances')}
+                className={`flex items-start gap-3 p-3 rounded-xl border text-xs cursor-pointer transition-all ${
+                  startAfreshMode === 'reset_balances'
+                    ? 'border-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 font-semibold ring-1 ring-emerald-500/20'
+                    : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="afreshMode"
+                  checked={startAfreshMode === 'reset_balances'}
+                  onChange={() => setStartAfreshMode('reset_balances')}
+                  className="mt-0.5"
+                />
+                <div>
+                  <p className="font-bold text-slate-900 dark:text-white">Clean Ledger & Reset Balances (Recommended)</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-normal mt-0.5">
+                    Clears all transactions and budgets, and resets your church bank/MoMo holding accounts to GH₵ 0.00 ready for new entries.
+                  </p>
+                </div>
+              </label>
+
+              <label
+                onClick={() => setStartAfreshMode('wipe_all')}
+                className={`flex items-start gap-3 p-3 rounded-xl border text-xs cursor-pointer transition-all ${
+                  startAfreshMode === 'wipe_all'
+                    ? 'border-rose-500 bg-rose-50/60 dark:bg-rose-950/40 text-rose-900 dark:text-rose-200 font-semibold ring-1 ring-rose-500/20'
+                    : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="afreshMode"
+                  checked={startAfreshMode === 'wipe_all'}
+                  onChange={() => setStartAfreshMode('wipe_all')}
+                  className="mt-0.5"
+                />
+                <div>
+                  <p className="font-bold text-slate-900 dark:text-white">Complete Clean Slate</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-normal mt-0.5">
+                    Clears all transactions, budgets, and all holding accounts so you can build your church's custom holding accounts from scratch.
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 text-[11px] text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-800">
+              <span className="font-bold text-slate-700 dark:text-slate-200">Safeguard: </span>
+              Member tithes and offerings in the Giving module will remain intact and will not be altered.
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowStartAfreshModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const res = resetChurchFinanceData(startAfreshMode);
+                  success('Finance Data Reset', res.message);
+                  setShowStartAfreshModal(false);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Confirm & Start Afresh</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

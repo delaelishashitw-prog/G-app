@@ -277,6 +277,7 @@ interface ChurchDataContextType {
   departmentBudgets: DepartmentBudget[];
   updateDepartmentBudget: (id: string, updates: Partial<DepartmentBudget>) => void;
   addDepartmentBudget: (budget: Omit<DepartmentBudget, 'id' | 'created_at' | 'updated_at'>) => DepartmentBudget;
+  resetChurchFinanceData: (mode?: 'reset_balances' | 'wipe_all') => { success: boolean; message: string };
 
   // Pledges
   campaigns: PledgeCampaign[];
@@ -476,23 +477,80 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return loaded && loaded.length > 0 ? loaded : samplePledges;
   });
   const [expenses, setExpenses] = useState<ExpenseRecord[]>(() => {
-    const loaded = loadFromStorage<ExpenseRecord[]>('expenses', []);
-    return loaded && loaded.length > 0 ? loaded : sampleExpenses;
+    try {
+      const saved = localStorage.getItem('gwcc_expenses');
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          if (parsed.some((e: any) => typeof e?.id === 'string' && e.id.startsWith('exp-'))) {
+            localStorage.removeItem('gwcc_expenses');
+            return [];
+          }
+          return parsed;
+        }
+      }
+    } catch {
+      // fallback
+    }
+    return sampleExpenses;
   });
 
   const [churchAccounts, setChurchAccounts] = useState<ChurchAccount[]>(() => {
-    const loaded = loadFromStorage<ChurchAccount[]>('churchAccounts', []);
-    return loaded && loaded.length > 0 ? loaded : sampleChurchAccounts;
+    try {
+      const saved = localStorage.getItem('gwcc_churchAccounts');
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          if (parsed.some((a: any) => a.id === 'acc-1' && a.current_balance === 48500)) {
+            const zeroed = parsed.map((a: any) => ({ ...a, current_balance: 0.00 }));
+            localStorage.setItem('gwcc_churchAccounts', JSON.stringify(zeroed));
+            return zeroed;
+          }
+          return parsed;
+        }
+      }
+    } catch {
+      // fallback
+    }
+    return sampleChurchAccounts;
   });
 
   const [churchFinances, setChurchFinances] = useState<ChurchFinanceRecord[]>(() => {
-    const loaded = loadFromStorage<ChurchFinanceRecord[]>('churchFinances', []);
-    return loaded && loaded.length > 0 ? loaded : sampleChurchFinances;
+    try {
+      const saved = localStorage.getItem('gwcc_churchFinances');
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          if (parsed.some((f: any) => typeof f?.id === 'string' && f.id.startsWith('cfin-'))) {
+            localStorage.removeItem('gwcc_churchFinances');
+            return [];
+          }
+          return parsed;
+        }
+      }
+    } catch {
+      // fallback
+    }
+    return sampleChurchFinances;
   });
 
   const [departmentBudgets, setDepartmentBudgets] = useState<DepartmentBudget[]>(() => {
-    const loaded = loadFromStorage<DepartmentBudget[]>('departmentBudgets', []);
-    return loaded && loaded.length > 0 ? loaded : sampleDepartmentBudgets;
+    try {
+      const saved = localStorage.getItem('gwcc_departmentBudgets');
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          if (parsed.some((b: any) => typeof b?.id === 'string' && b.id.startsWith('bgt-'))) {
+            localStorage.removeItem('gwcc_departmentBudgets');
+            return [];
+          }
+          return parsed;
+        }
+      }
+    } catch {
+      // fallback
+    }
+    return sampleDepartmentBudgets;
   });
   const [ministries, setMinistries] = useState<Ministry[]>(() => {
     const loaded = loadFromStorage<Ministry[]>('ministries', []);
@@ -1489,6 +1547,35 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     updateDepartmentBudgetRecord(id, updates, setDepartmentBudgets, logAction);
   };
 
+  const resetChurchFinanceData = (mode: 'reset_balances' | 'wipe_all' = 'reset_balances') => {
+    setChurchFinances([]);
+    setExpenses([]);
+    setDepartmentBudgets([]);
+    saveToStorage('churchFinances', []);
+    saveToStorage('expenses', []);
+    saveToStorage('departmentBudgets', []);
+
+    if (mode === 'wipe_all') {
+      setChurchAccounts([]);
+      saveToStorage('churchAccounts', []);
+      logAction('PURGE_ALL_FINANCE', 'Church Finance', 'Purged all financial records and accounts to start completely afresh');
+    } else {
+      setChurchAccounts((prev) => {
+        const sourceAccounts = prev.length > 0 ? prev : sampleChurchAccounts;
+        const zeroed = sourceAccounts.map((acc) => ({
+          ...acc,
+          current_balance: 0.00,
+          updated_at: new Date().toISOString(),
+        }));
+        saveToStorage('churchAccounts', zeroed);
+        return zeroed;
+      });
+      logAction('RESET_FINANCE_DATA', 'Church Finance', 'Cleared all transactions and reset treasury account balances to GH₵ 0.00');
+    }
+
+    return { success: true, message: 'Finance records cleared. You can now start afresh with a clean financial slate.' };
+  };
+
   // CAMPAIGNS
   const addCampaign = (data: Omit<PledgeCampaign, 'id'>): PledgeCampaign =>
     addCampaignRecord(data, setCampaigns, logAction, dbSyncUpsert);
@@ -2010,6 +2097,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       departmentBudgets,
       addDepartmentBudget,
       updateDepartmentBudget,
+      resetChurchFinanceData,
       campaigns,
       addCampaign,
       updateCampaign,

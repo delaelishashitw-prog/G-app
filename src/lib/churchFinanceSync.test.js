@@ -14,18 +14,18 @@ import {
   sampleDepartmentBudgets,
 } from './initialData.ts';
 
-test('Church Finance: sample accounts and finances are properly seeded', () => {
+test('Church Finance: sample accounts and clean finance state are properly configured', () => {
   assert.ok(sampleChurchAccounts.length >= 3, 'Should have at least 3 sample church accounts');
   const gcbAccount = sampleChurchAccounts.find((a) => a.account_type === 'bank');
   assert.ok(gcbAccount, 'Should have a bank account');
-  assert.ok(gcbAccount.current_balance > 0, 'Bank account should have a balance');
+  assert.ok(gcbAccount.current_balance >= 0, 'Bank account should have a valid balance');
 
   const momoAccount = sampleChurchAccounts.find((a) => a.account_type === 'momo');
   assert.ok(momoAccount, 'Should have an MTN MoMo account');
   assert.ok(momoAccount.bank_or_provider.includes('MTN MoMo'));
 
-  assert.ok(sampleChurchFinances.length >= 4, 'Should have sample church financial records');
-  assert.ok(sampleDepartmentBudgets.length >= 4, 'Should have sample department budgets');
+  assert.ok(Array.isArray(sampleChurchFinances), 'Should have sample church financial records array');
+  assert.ok(Array.isArray(sampleDepartmentBudgets), 'Should have sample department budgets array');
 });
 
 test('Church Finance: sanitizeRecordForSupabase handles church_accounts correctly', () => {
