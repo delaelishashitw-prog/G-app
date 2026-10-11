@@ -50,7 +50,7 @@ import {
   DEFAULT_SUPABASE_URL,
   DEFAULT_SUPABASE_ANON_KEY,
 } from '../lib/supabase';
-import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA, SQL_FIX_ROSTER_SCHEMA } from '../lib/supabaseSchema';
+import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA, SQL_FIX_ROSTER_SCHEMA, SQL_FIX_CHURCH_FINANCE_SCHEMA } from '../lib/supabaseSchema';
 import { useAuth } from '../contexts/AuthContext';
 
 export const SettingsPage: React.FC = () => {
@@ -205,9 +205,11 @@ export const SettingsPage: React.FC = () => {
   const [copiedFixSql, setCopiedFixSql] = useState(false);
   const [copiedWelfareSql, setCopiedWelfareSql] = useState(false);
   const [copiedRosterSql, setCopiedRosterSql] = useState(false);
+  const [copiedChurchFinanceSql, setCopiedChurchFinanceSql] = useState(false);
   const [showSqlEditor, setShowSqlEditor] = useState(false);
   const [showWelfareSql, setShowWelfareSql] = useState(false);
   const [showRosterSql, setShowRosterSql] = useState(false);
+  const [showChurchFinanceSql, setShowChurchFinanceSql] = useState(false);
 
   // Supabase project direct URL helpers
   const projectRef = getSupabaseProjectRef(supabaseUrlInput || supabaseConfig.url || '');
@@ -550,6 +552,13 @@ export const SettingsPage: React.FC = () => {
     setCopiedRosterSql(true);
     toastSuccess('Roster Permissions Fix Copied', 'Paste and run in your Supabase SQL Editor to grant permissions on roster_assignments.');
     setTimeout(() => setCopiedRosterSql(false), 2500);
+  };
+
+  const copyChurchFinanceSqlToClipboard = () => {
+    navigator.clipboard.writeText(SQL_FIX_CHURCH_FINANCE_SCHEMA);
+    setCopiedChurchFinanceSql(true);
+    toastSuccess('Church Finance SQL Copied', 'Paste and run in your Supabase SQL Editor to create church_accounts and church_finances tables with open RLS policies.');
+    setTimeout(() => setCopiedChurchFinanceSql(false), 2500);
   };
 
   const [isRetryingRosterSync, setIsRetryingRosterSync] = useState(false);
@@ -2183,6 +2192,16 @@ CREATE POLICY "gwcc_policy_all_welfare_claims" ON public.welfare_claims FOR ALL 
                 >
                   {copiedFixSql ? <Check className="w-3.5 h-3.5 text-amber-700" /> : <Shield className="w-3.5 h-3.5 text-amber-600" />}
                   <span>{copiedFixSql ? 'Copied RLS Fix!' : 'Copy RLS Fix Script'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={copyChurchFinanceSqlToClipboard}
+                  className="px-3 py-1.5 text-xs font-semibold text-rose-900 hover:text-rose-950 bg-rose-50 hover:bg-rose-100 rounded-lg flex items-center gap-1 border border-rose-300 transition"
+                  title="Copy SQL for dedicated church_accounts and church_finances tables with RLS"
+                >
+                  {copiedChurchFinanceSql ? <Check className="w-3.5 h-3.5 text-rose-700" /> : <Copy className="w-3.5 h-3.5 text-rose-600" />}
+                  <span>{copiedChurchFinanceSql ? 'Copied Finance SQL!' : 'Copy Church Finance SQL'}</span>
                 </button>
 
                 <button

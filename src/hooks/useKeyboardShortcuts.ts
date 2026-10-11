@@ -81,12 +81,20 @@ export function useKeyboardShortcuts({
       action: () => navigateWithFeedback('/members', 'Members Directory', 'Ctrl+M'),
     },
     {
+      id: 'nav-giving',
+      category: 'Navigation',
+      label: 'Member Giving',
+      keys: ['Ctrl', 'G'],
+      description: 'Go to Tithes, Offerings & Member Giving Records',
+      action: () => navigateWithFeedback('/giving', 'Member Giving', 'Ctrl+G'),
+    },
+    {
       id: 'nav-finance',
       category: 'Navigation',
-      label: 'Finance & Tithes',
+      label: 'Church Finance',
       keys: ['Ctrl', 'F'],
-      description: 'Go to Financial Accounts, Giving & Expenses',
-      action: () => navigateWithFeedback('/finance', 'Finance & Giving', 'Ctrl+F'),
+      description: 'Go to Operating Expenses, Bank Accounts & Budgets',
+      action: () => navigateWithFeedback('/church-finance', 'Church Finance', 'Ctrl+F'),
     },
     {
       id: 'nav-dashboard',
@@ -323,10 +331,16 @@ export function useKeyboardShortcuts({
             navigateWithFeedback('/members', 'Members Directory', modifier ? 'Ctrl+M' : 'Alt+M');
             break;
 
-          // Ctrl+F: Finance
+          // Ctrl+G: Member Giving
+          case 'g':
+            e.preventDefault();
+            navigateWithFeedback('/giving', 'Member Giving', modifier ? 'Ctrl+G' : 'Alt+G');
+            break;
+
+          // Ctrl+F: Church Finance
           case 'f':
             e.preventDefault();
-            navigateWithFeedback('/finance', 'Finance & Giving', modifier ? 'Ctrl+F' : 'Alt+F');
+            navigateWithFeedback('/church-finance', 'Church Finance', modifier ? 'Ctrl+F' : 'Alt+F');
             break;
 
           // Ctrl+D: Dashboard

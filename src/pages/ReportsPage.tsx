@@ -53,6 +53,7 @@ export const ReportsPage: React.FC = () => {
     headcounts,
     giving,
     expenses,
+    churchFinances,
     pledges,
     settings,
     smallGroups,
@@ -208,16 +209,30 @@ export const ReportsPage: React.FC = () => {
     });
   }, [members, membershipMinistryFilter, tableSearch]);
 
-  // Financial aggregates
-  const totalIncome = useMemo(
+  // Financial aggregates: Member Giving vs Church Institutional Income
+  const totalMemberGiving = useMemo(
     () => filteredGivingByDate.reduce((s, g) => s + g.amount, 0),
     [filteredGivingByDate]
   );
+  // Keep totalIncome for backwards compatibility mapped to member giving
+  const totalIncome = totalMemberGiving;
+
+  // Institutional Church Income (from dedicated churchFinances records)
+  const totalChurchIncome = useMemo(
+    () => (churchFinances || [])
+      .filter((f) => {
+        const matchDate = (!startDate || f.date >= startDate) && (!endDate || f.date <= endDate);
+        return matchDate && (f.transaction_type === 'income' || f.transaction_type === 'grant');
+      })
+      .reduce((s, f) => s + (Number(f.amount) || 0), 0),
+    [churchFinances, startDate, endDate]
+  );
+
   const totalExp = useMemo(
     () => filteredExpenses.reduce((s, e) => s + e.amount, 0),
     [filteredExpenses]
   );
-  const netSurplus = totalIncome - totalExp;
+  const netSurplus = totalMemberGiving - totalExp;
 
   const tithesTotal = useMemo(
     () =>
@@ -579,7 +594,7 @@ export const ReportsPage: React.FC = () => {
         totalMembers={totalMembersCount}
         activeMembers={activeMembersCount}
         monthlyIncome={monthlyIncomeTotal}
-        incomeLabel={activeDatePreset === 'this_month' || activeDatePreset === 'last_month' ? 'Monthly Income' : 'Period Income'}
+        incomeLabel={activeDatePreset === 'this_month' || activeDatePreset === 'last_month' ? 'Monthly Member Giving' : 'Period Member Giving'}
         averageWeeklyAttendance={averageWeeklyAttendanceCount}
         tithesIncome={monthlyTithesTotal}
         offeringsIncome={monthlyOfferingsTotal}

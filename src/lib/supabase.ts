@@ -20,6 +20,8 @@ import {
   WelfareContribution,
   WelfareClaim,
   RosterAssignment,
+  ChurchAccount,
+  ChurchFinanceRecord,
 } from '../types/database.types';
 
 const STORAGE_KEY_URL = 'gwcc_supabase_url';
@@ -702,6 +704,49 @@ export function sanitizeRecordForSupabase(table: string, record: any): any {
       };
     }
 
+    case 'church_accounts': {
+      return {
+        ...record,
+        name: record.name || 'Main Church Account',
+        account_type: record.account_type || 'bank',
+        account_number: record.account_number || null,
+        bank_or_provider: record.bank_or_provider || 'GCB Bank',
+        current_balance: Number(record.current_balance) || 0,
+        currency: record.currency || 'GHS',
+        is_active: record.is_active !== false,
+        description: record.description || null,
+        created_at: record.created_at || new Date().toISOString(),
+        updated_at: record.updated_at || new Date().toISOString(),
+      };
+    }
+
+    case 'church_finances': {
+      return {
+        ...record,
+        transaction_type: record.transaction_type || 'expense',
+        account_id: record.account_id || null,
+        account_name: record.account_name || 'Main Operating Account',
+        category: record.category || 'Operations',
+        title: record.title || 'Church Expenditure',
+        recipient_or_vendor: record.recipient_or_vendor || null,
+        amount: Number(record.amount) || 0,
+        currency: record.currency || 'GHS',
+        date: cleanDate(record.date) || new Date().toISOString().split('T')[0],
+        payment_method: record.payment_method || 'bank_transfer',
+        reference_no: record.reference_no || null,
+        department: record.department || null,
+        budget_id: record.budget_id || null,
+        description: record.description || null,
+        notes: record.notes || null,
+        approved_by: record.approved_by || null,
+        receipt_url: record.receipt_url || null,
+        recorded_by: record.recorded_by || null,
+        status: record.status || 'completed',
+        created_at: record.created_at || new Date().toISOString(),
+        updated_at: record.updated_at || new Date().toISOString(),
+      };
+    }
+
     default:
       return record;
   }
@@ -718,6 +763,8 @@ export interface ChurchAllData {
   headcounts?: HeadcountRecord[];
   giving: GivingRecord[];
   expenses: ExpenseRecord[];
+  churchAccounts?: ChurchAccount[];
+  churchFinances?: ChurchFinanceRecord[];
   campaigns: PledgeCampaign[];
   pledges: PledgeRecord[];
   ministries: Ministry[];
@@ -1121,6 +1168,65 @@ export async function pushAllDataToSupabase(
       },
     },
     {
+      name: 'church_accounts',
+      label: 'Church Bank & MoMo Accounts',
+      run: async () => {
+        if (!data.churchAccounts || data.churchAccounts.length === 0) return;
+        const now = new Date().toISOString();
+        const sanitized = data.churchAccounts.map((acc) => ({
+          ...acc,
+          name: acc.name || 'Main Account',
+          account_type: acc.account_type || 'bank',
+          bank_or_provider: acc.bank_or_provider || 'GCB Bank',
+          current_balance: Number(acc.current_balance) || 0,
+          currency: acc.currency || 'GHS',
+          is_active: acc.is_active !== false,
+          created_at: acc.created_at || now,
+          updated_at: acc.updated_at || now,
+        }));
+        const { error } = await client.from('church_accounts').upsert(sanitized);
+        if (error) {
+          if (error.message?.includes('row-level security') || error.message?.includes('violates row-level security')) {
+            throw new Error('new row violates row-level security policy for table "church_accounts". Run Church Finance RLS script.');
+          }
+          throw error;
+        }
+        summary['church_accounts'] = sanitized.length;
+      },
+    },
+    {
+      name: 'church_finances',
+      label: 'Church Operational Finances',
+      run: async () => {
+        if (!data.churchFinances || data.churchFinances.length === 0) return;
+        const now = new Date().toISOString();
+        const sanitized = data.churchFinances.map((f) => ({
+          ...f,
+          transaction_type: f.transaction_type || 'expense',
+          account_id: f.account_id || null,
+          account_name: f.account_name || 'Main Operating Account',
+          category: f.category || 'Operations',
+          title: f.title || 'Church Expenditure',
+          recipient_or_vendor: f.recipient_or_vendor || null,
+          amount: Number(f.amount) || 0,
+          currency: f.currency || 'GHS',
+          date: cleanDate(f.date) || now.split('T')[0],
+          payment_method: f.payment_method || 'bank_transfer',
+          status: f.status || 'completed',
+          created_at: f.created_at || now,
+          updated_at: f.updated_at || now,
+        }));
+        const { error } = await client.from('church_finances').upsert(sanitized);
+        if (error) {
+          if (error.message?.includes('row-level security') || error.message?.includes('violates row-level security')) {
+            throw new Error('new row violates row-level security policy for table "church_finances". Run Church Finance RLS script.');
+          }
+          throw error;
+        }
+        summary['church_finances'] = sanitized.length;
+      },
+    },
+    {
       name: 'pledge_campaigns',
       label: 'Pledge Campaigns',
       run: async () => {
@@ -1407,6 +1513,8 @@ export async function pullAllDataFromSupabase(): Promise<{
     { table: 'headcounts', key: 'headcounts' },
     { table: 'giving', key: 'giving' },
     { table: 'expenses', key: 'expenses' },
+    { table: 'church_accounts', key: 'churchAccounts' },
+    { table: 'church_finances', key: 'churchFinances' },
     { table: 'pledge_campaigns', key: 'campaigns' },
     { table: 'pledges', key: 'pledges' },
     { table: 'ministries', key: 'ministries' },

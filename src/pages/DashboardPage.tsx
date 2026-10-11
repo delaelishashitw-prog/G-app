@@ -560,7 +560,7 @@ export const DashboardPage: React.FC = () => {
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="font-bold text-slate-900 text-base">Giving Breakdown (GH₵)</h3>
                   <button
-                    onClick={() => navigate('/finance')}
+                    onClick={() => navigate('/giving')}
                     className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 cursor-pointer"
                   >
                     View Details
@@ -1127,7 +1127,7 @@ export const DashboardPage: React.FC = () => {
               <div className="flex items-center justify-between">
                 <h3 className="font-bold text-slate-900 text-sm">Recent Giving Ledger</h3>
                 <button
-                  onClick={() => navigate('/finance')}
+                  onClick={() => navigate('/giving')}
                   className="text-xs font-semibold text-emerald-700 hover:underline"
                 >
                   View All Receipts

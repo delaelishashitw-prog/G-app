@@ -25,6 +25,7 @@ import {
   Sparkles,
   Package,
   GraduationCap,
+  Landmark,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
@@ -107,7 +108,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {
       group: 'Financial Stewardship',
       items: [
-        { name: 'Finance & Giving', path: '/finance', icon: Wallet, module: 'finance' },
+        { name: 'Member Giving', path: '/giving', icon: Coins, module: 'finance' },
+        { name: 'Church Finance', path: '/church-finance', icon: Landmark, module: 'finance' },
         {
           name: 'Welfare & Relief',
           path: '/welfare',
@@ -116,7 +118,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           badge: pendingWelfareCount > 0 ? pendingWelfareCount : undefined,
           badgeColor: 'bg-emerald-600 text-white',
         },
-        { name: 'Pledges', path: '/pledges', icon: Coins, module: 'pledges' },
+        { name: 'Pledges', path: '/pledges', icon: Wallet, module: 'pledges' },
       ],
     },
     {

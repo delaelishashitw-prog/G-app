@@ -306,7 +306,7 @@ export const DashboardSummary: React.FC<DashboardSummaryProps> = ({
           variants={cardVariants}
           whileHover={{ y: -3, transition: { duration: 0.18, ease: [0.16, 1, 0.3, 1] } }}
           whileTap={{ scale: 0.985 }}
-          onClick={() => handleNavigate('/finance')}
+          onClick={() => handleNavigate('/giving')}
           className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs hover:border-amber-400 hover:shadow-md transition-all cursor-pointer group flex flex-col justify-between relative overflow-hidden"
         >
           <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-bl-full pointer-events-none transition group-hover:scale-110" />

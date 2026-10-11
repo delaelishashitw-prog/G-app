@@ -882,6 +882,47 @@ CREATE TABLE IF NOT EXISTS public.roster_assignments (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 3.21 CHURCH HOLDING ACCOUNTS (Bank & MoMo)
+CREATE TABLE IF NOT EXISTS public.church_accounts (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  name VARCHAR(150) NOT NULL,
+  account_type VARCHAR(50) NOT NULL DEFAULT 'bank',
+  account_number VARCHAR(100),
+  bank_or_provider VARCHAR(150) NOT NULL DEFAULT 'GCB Bank',
+  current_balance DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+  currency VARCHAR(10) NOT NULL DEFAULT 'GHS',
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  description TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 3.22 DEDICATED INSTITUTIONAL CHURCH FINANCES
+CREATE TABLE IF NOT EXISTS public.church_finances (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  transaction_type VARCHAR(50) NOT NULL DEFAULT 'expense',
+  account_id TEXT,
+  account_name VARCHAR(150) NOT NULL DEFAULT 'Main Operating Account',
+  category VARCHAR(100) NOT NULL DEFAULT 'Operations',
+  title VARCHAR(200) NOT NULL,
+  recipient_or_vendor VARCHAR(150),
+  amount DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+  currency VARCHAR(10) NOT NULL DEFAULT 'GHS',
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  payment_method VARCHAR(50) NOT NULL DEFAULT 'bank_transfer',
+  reference_no VARCHAR(100),
+  department VARCHAR(100),
+  budget_id TEXT,
+  description TEXT,
+  notes TEXT,
+  approved_by VARCHAR(150),
+  receipt_url TEXT,
+  recorded_by VARCHAR(150),
+  status VARCHAR(30) NOT NULL DEFAULT 'completed',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ==============================================================================
 -- 4. NON-DESTRUCTIVE COLUMN MIGRATIONS (Safe for existing live databases)
 -- ==============================================================================
@@ -1222,6 +1263,8 @@ ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.welfare_contributions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.welfare_claims ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.roster_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.church_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.church_finances ENABLE ROW LEVEL SECURITY;
 
 DO $$
 DECLARE
@@ -1231,7 +1274,8 @@ DECLARE
     'visitors', 'services', 'attendance', 'headcounts', 'giving',
     'pledge_campaigns', 'pledges', 'expenses', 'events', 'pastoral_care',
     'prayer_requests', 'communications', 'audit_logs',
-    'welfare_contributions', 'welfare_claims', 'roster_assignments'
+    'welfare_contributions', 'welfare_claims', 'roster_assignments',
+    'church_accounts', 'church_finances'
   ];
 BEGIN
   FOREACH t IN ARRAY tables LOOP
@@ -1254,7 +1298,7 @@ $$;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.members, public.giving, public.attendance, public.visitors, public.services, public.pledges, public.welfare_contributions, public.welfare_claims, public.roster_assignments;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.members, public.giving, public.attendance, public.visitors, public.services, public.pledges, public.welfare_contributions, public.welfare_claims, public.roster_assignments, public.church_accounts, public.church_finances;
   END IF;
 EXCEPTION
   WHEN duplicate_object THEN NULL;
@@ -1718,6 +1762,46 @@ CREATE TABLE IF NOT EXISTS public.roster_assignments (
 ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS announcement TEXT;
 ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS notes TEXT;
 
+-- 2.2 Ensure church_accounts and church_finances tables exist in PostgreSQL
+CREATE TABLE IF NOT EXISTS public.church_accounts (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  name VARCHAR(150) NOT NULL,
+  account_type VARCHAR(50) NOT NULL DEFAULT 'bank',
+  account_number VARCHAR(100),
+  bank_or_provider VARCHAR(150) NOT NULL DEFAULT 'GCB Bank',
+  current_balance DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+  currency VARCHAR(10) NOT NULL DEFAULT 'GHS',
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  description TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.church_finances (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  transaction_type VARCHAR(50) NOT NULL DEFAULT 'expense',
+  account_id TEXT,
+  account_name VARCHAR(150) NOT NULL DEFAULT 'Main Operating Account',
+  category VARCHAR(100) NOT NULL DEFAULT 'Operations',
+  title VARCHAR(200) NOT NULL,
+  recipient_or_vendor VARCHAR(150),
+  amount DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+  currency VARCHAR(10) NOT NULL DEFAULT 'GHS',
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  payment_method VARCHAR(50) NOT NULL DEFAULT 'bank_transfer',
+  reference_no VARCHAR(100),
+  department VARCHAR(100),
+  budget_id TEXT,
+  description TEXT,
+  notes TEXT,
+  approved_by VARCHAR(150),
+  receipt_url TEXT,
+  recorded_by VARCHAR(150),
+  status VARCHAR(30) NOT NULL DEFAULT 'completed',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- 3. Grant full API permissions on schema public to anon and authenticated roles
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
@@ -1738,7 +1822,8 @@ DECLARE
     'visitors', 'services', 'attendance', 'headcounts', 'giving',
     'pledge_campaigns', 'pledges', 'expenses', 'events', 'pastoral_care',
     'prayer_requests', 'communications', 'audit_logs',
-    'welfare_contributions', 'welfare_claims', 'roster_assignments'
+    'welfare_contributions', 'welfare_claims', 'roster_assignments',
+    'church_accounts', 'church_finances'
   ];
 BEGIN
   FOREACH t IN ARRAY tables LOOP
@@ -1753,6 +1838,71 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+`;
+
+export const SQL_FIX_CHURCH_FINANCE_SCHEMA = `-- ==============================================================================
+-- GREATER WORKS CITY CHURCH (GWCC) - CHURCH FINANCE & ACCOUNTS PERMISSION REPAIR
+-- Paste and Run in Supabase SQL Editor: https://supabase.com/dashboard/project/_/sql/new
+-- ==============================================================================
+
+CREATE TABLE IF NOT EXISTS public.church_accounts (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  name VARCHAR(150) NOT NULL,
+  account_type VARCHAR(50) NOT NULL DEFAULT 'bank',
+  account_number VARCHAR(100),
+  bank_or_provider VARCHAR(150) NOT NULL DEFAULT 'GCB Bank',
+  current_balance DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+  currency VARCHAR(10) NOT NULL DEFAULT 'GHS',
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  description TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.church_finances (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  transaction_type VARCHAR(50) NOT NULL DEFAULT 'expense',
+  account_id TEXT,
+  account_name VARCHAR(150) NOT NULL DEFAULT 'Main Operating Account',
+  category VARCHAR(100) NOT NULL DEFAULT 'Operations',
+  title VARCHAR(200) NOT NULL,
+  recipient_or_vendor VARCHAR(150),
+  amount DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+  currency VARCHAR(10) NOT NULL DEFAULT 'GHS',
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  payment_method VARCHAR(50) NOT NULL DEFAULT 'bank_transfer',
+  reference_no VARCHAR(100),
+  department VARCHAR(100),
+  budget_id TEXT,
+  description TEXT,
+  notes TEXT,
+  approved_by VARCHAR(150),
+  receipt_url TEXT,
+  recorded_by VARCHAR(150),
+  status VARCHAR(30) NOT NULL DEFAULT 'completed',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.church_accounts TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.church_finances TO anon, authenticated, service_role;
+
+ALTER TABLE public.church_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.church_finances ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "gwcc_policy_all_church_accounts" ON public.church_accounts;
+DROP POLICY IF EXISTS "gwcc_policy_all_church_finances" ON public.church_finances;
+
+CREATE POLICY "gwcc_policy_all_church_accounts" ON public.church_accounts
+  FOR ALL TO public
+  USING (true)
+  WITH CHECK (true);
+
+CREATE POLICY "gwcc_policy_all_church_finances" ON public.church_finances
+  FOR ALL TO public
+  USING (true)
+  WITH CHECK (true);
 `;
 
 /**

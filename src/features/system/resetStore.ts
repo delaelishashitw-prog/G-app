@@ -55,7 +55,11 @@ import {
   sampleVisitors,
   sampleWelfareClaims,
   sampleWelfareContributions,
+  sampleChurchAccounts,
+  sampleChurchFinances,
+  sampleDepartmentBudgets,
 } from '../../lib/initialData';
+import type { ChurchAccount, ChurchFinanceRecord, DepartmentBudget } from '../../types/database.types';
 
 export type ResetStateSetters = {
   setSettings: Dispatch<SetStateAction<ChurchSettings>>;
@@ -68,6 +72,9 @@ export type ResetStateSetters = {
   setCampaigns: Dispatch<SetStateAction<PledgeCampaign[]>>;
   setPledges: Dispatch<SetStateAction<PledgeRecord[]>>;
   setExpenses: Dispatch<SetStateAction<ExpenseRecord[]>>;
+  setChurchAccounts?: Dispatch<SetStateAction<ChurchAccount[]>>;
+  setChurchFinances?: Dispatch<SetStateAction<ChurchFinanceRecord[]>>;
+  setDepartmentBudgets?: Dispatch<SetStateAction<DepartmentBudget[]>>;
   setMinistries: Dispatch<SetStateAction<Ministry[]>>;
   setSmallGroups: Dispatch<SetStateAction<SmallGroup[]>>;
   setEvents: Dispatch<SetStateAction<ChurchEvent[]>>;
@@ -103,6 +110,9 @@ export function resetToSampleDataState(
     setCampaigns,
     setPledges,
     setExpenses,
+    setChurchAccounts,
+    setChurchFinances,
+    setDepartmentBudgets,
     setMinistries,
     setSmallGroups,
     setEvents,
@@ -132,6 +142,9 @@ export function resetToSampleDataState(
   setCampaigns(sampleCampaigns);
   setPledges(samplePledges);
   setExpenses(sampleExpenses);
+  if (setChurchAccounts) setChurchAccounts(sampleChurchAccounts);
+  if (setChurchFinances) setChurchFinances(sampleChurchFinances);
+  if (setDepartmentBudgets) setDepartmentBudgets(sampleDepartmentBudgets);
   setMinistries(sampleMinistries);
   setSmallGroups(sampleSmallGroups);
   setEvents(sampleEvents);
@@ -160,6 +173,9 @@ export function resetToSampleDataState(
   saveToStorage('campaigns', sampleCampaigns);
   saveToStorage('pledges', samplePledges);
   saveToStorage('expenses', sampleExpenses);
+  saveToStorage('churchAccounts', sampleChurchAccounts);
+  saveToStorage('churchFinances', sampleChurchFinances);
+  saveToStorage('departmentBudgets', sampleDepartmentBudgets);
   saveToStorage('ministries', sampleMinistries);
   saveToStorage('smallGroups', sampleSmallGroups);
   saveToStorage('events', sampleEvents);

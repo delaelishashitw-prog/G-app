@@ -31,6 +31,9 @@ import {
   PastoralVisitationRecord,
   PastoralCounselingSession,
   IntercessoryWatchSlot,
+  ChurchAccount,
+  ChurchFinanceRecord,
+  DepartmentBudget,
 } from '../types/database.types';
 import {
   initialSettings,
@@ -43,6 +46,9 @@ import {
   sampleCampaigns,
   samplePledges,
   sampleExpenses,
+  sampleChurchAccounts,
+  sampleChurchFinances,
+  sampleDepartmentBudgets,
   sampleMinistries,
   sampleSmallGroups,
   sampleEvents,
@@ -120,6 +126,15 @@ import {
   recordGiving as recordGivingRecord,
   updateExpense as updateExpenseRecord,
   updateGiving as updateGivingRecord,
+  addChurchAccount as addChurchAccountRecord,
+  updateChurchAccount as updateChurchAccountRecord,
+  deleteChurchAccount as deleteChurchAccountRecord,
+  recordChurchFinance as recordChurchFinanceRecord,
+  updateChurchFinance as updateChurchFinanceRecord,
+  deleteChurchFinance as deleteChurchFinanceRecord,
+  transferBetweenAccounts as transferBetweenAccountsRecord,
+  addDepartmentBudget as addDepartmentBudgetRecord,
+  updateDepartmentBudget as updateDepartmentBudgetRecord,
 } from '../features/finance/financeStore';
 import {
   addCampaign as addCampaignRecord,
@@ -248,6 +263,20 @@ interface ChurchDataContextType {
   recordExpense: (record: Omit<ExpenseRecord, 'id' | 'created_at'>) => ExpenseRecord;
   updateExpense: (id: string, updates: Partial<ExpenseRecord>) => void;
   deleteExpense: (id: string) => void;
+
+  // Dedicated Church Finance & Accounts
+  churchAccounts: ChurchAccount[];
+  addChurchAccount: (account: Omit<ChurchAccount, 'id' | 'created_at' | 'updated_at'>) => ChurchAccount;
+  updateChurchAccount: (id: string, updates: Partial<ChurchAccount>) => void;
+  deleteChurchAccount: (id: string) => void;
+  churchFinances: ChurchFinanceRecord[];
+  recordChurchFinance: (record: Omit<ChurchFinanceRecord, 'id' | 'created_at' | 'updated_at'>) => ChurchFinanceRecord;
+  updateChurchFinance: (id: string, updates: Partial<ChurchFinanceRecord>) => void;
+  deleteChurchFinance: (id: string) => void;
+  transferBetweenAccounts: (fromAccountId: string, toAccountId: string, amount: number, notes?: string) => { success: boolean; message: string };
+  departmentBudgets: DepartmentBudget[];
+  updateDepartmentBudget: (id: string, updates: Partial<DepartmentBudget>) => void;
+  addDepartmentBudget: (budget: Omit<DepartmentBudget, 'id' | 'created_at' | 'updated_at'>) => DepartmentBudget;
 
   // Pledges
   campaigns: PledgeCampaign[];
@@ -450,6 +479,21 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const loaded = loadFromStorage<ExpenseRecord[]>('expenses', []);
     return loaded && loaded.length > 0 ? loaded : sampleExpenses;
   });
+
+  const [churchAccounts, setChurchAccounts] = useState<ChurchAccount[]>(() => {
+    const loaded = loadFromStorage<ChurchAccount[]>('churchAccounts', []);
+    return loaded && loaded.length > 0 ? loaded : sampleChurchAccounts;
+  });
+
+  const [churchFinances, setChurchFinances] = useState<ChurchFinanceRecord[]>(() => {
+    const loaded = loadFromStorage<ChurchFinanceRecord[]>('churchFinances', []);
+    return loaded && loaded.length > 0 ? loaded : sampleChurchFinances;
+  });
+
+  const [departmentBudgets, setDepartmentBudgets] = useState<DepartmentBudget[]>(() => {
+    const loaded = loadFromStorage<DepartmentBudget[]>('departmentBudgets', []);
+    return loaded && loaded.length > 0 ? loaded : sampleDepartmentBudgets;
+  });
   const [ministries, setMinistries] = useState<Ministry[]>(() => {
     const loaded = loadFromStorage<Ministry[]>('ministries', []);
     return loaded && loaded.length > 0 ? loaded : sampleMinistries;
@@ -631,6 +675,21 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (isInitialMount.current) return;
     saveToStorage('expenses', expenses);
   }, [expenses]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('churchAccounts', churchAccounts);
+  }, [churchAccounts]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('churchFinances', churchFinances);
+  }, [churchFinances]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('departmentBudgets', departmentBudgets);
+  }, [departmentBudgets]);
 
   useEffect(() => {
     if (isInitialMount.current) return;
@@ -874,6 +933,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (data.headcounts && data.headcounts.length > 0) setHeadcounts(data.headcounts);
           if (data.giving && data.giving.length > 0) setGiving(data.giving);
           if (data.expenses && data.expenses.length > 0) setExpenses(data.expenses);
+          if (data.churchAccounts && data.churchAccounts.length > 0) setChurchAccounts(data.churchAccounts);
+          if (data.churchFinances && data.churchFinances.length > 0) setChurchFinances(data.churchFinances);
           if (data.campaigns && data.campaigns.length > 0) setCampaigns(data.campaigns);
           if (data.pledges && data.pledges.length > 0) setPledges(data.pledges);
           if (data.ministries && data.ministries.length > 0) setMinistries(data.ministries);
@@ -932,6 +993,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         headcounts,
         giving,
         expenses,
+        churchAccounts,
+        churchFinances,
         campaigns,
         pledges,
         ministries,
@@ -963,6 +1026,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       headcounts,
       giving,
       expenses,
+      churchAccounts,
+      churchFinances,
       campaigns,
       pledges,
       ministries,
@@ -998,6 +1063,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (data.headcounts) setHeadcounts(data.headcounts);
       if (data.giving) setGiving(data.giving);
       if (data.expenses) setExpenses(data.expenses);
+      if (data.churchAccounts) setChurchAccounts(data.churchAccounts);
+      if (data.churchFinances) setChurchFinances(data.churchFinances);
       if (data.campaigns) setCampaigns(data.campaigns);
       if (data.pledges) setPledges(data.pledges);
       if (data.ministries) setMinistries(data.ministries);
@@ -1047,6 +1114,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (data.headcounts) setHeadcounts(data.headcounts);
           if (data.giving) setGiving(data.giving);
           if (data.expenses) setExpenses(data.expenses);
+          if (data.churchAccounts) setChurchAccounts(data.churchAccounts);
+          if (data.churchFinances) setChurchFinances(data.churchFinances);
           if (data.campaigns) setCampaigns(data.campaigns);
           if (data.pledges) setPledges(data.pledges);
           if (data.ministries) setMinistries(data.ministries);
@@ -1101,6 +1170,15 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       const loadedExpenses = loadFromStorage<ExpenseRecord[]>('expenses', []);
       if (loadedExpenses && loadedExpenses.length > 0) setExpenses(loadedExpenses);
+
+      const loadedChurchAccounts = loadFromStorage<ChurchAccount[]>('churchAccounts', []);
+      if (loadedChurchAccounts && loadedChurchAccounts.length > 0) setChurchAccounts(loadedChurchAccounts);
+
+      const loadedChurchFinances = loadFromStorage<ChurchFinanceRecord[]>('churchFinances', []);
+      if (loadedChurchFinances && loadedChurchFinances.length > 0) setChurchFinances(loadedChurchFinances);
+
+      const loadedDepartmentBudgets = loadFromStorage<DepartmentBudget[]>('departmentBudgets', []);
+      if (loadedDepartmentBudgets && loadedDepartmentBudgets.length > 0) setDepartmentBudgets(loadedDepartmentBudgets);
 
       const loadedCampaigns = loadFromStorage<PledgeCampaign[]>('campaigns', []);
       if (loadedCampaigns && loadedCampaigns.length > 0) setCampaigns(loadedCampaigns);
@@ -1376,6 +1454,39 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const deleteExpense = (id: string) => {
     deleteExpenseRecord(id, setExpenses, logAction, dbSyncDelete);
+  };
+
+  // DEDICATED CHURCH ACCOUNTS & FINANCES
+  const addChurchAccount = (data: Omit<ChurchAccount, 'id' | 'created_at' | 'updated_at'>): ChurchAccount =>
+    addChurchAccountRecord(data, setChurchAccounts, logAction, dbSyncUpsert);
+
+  const updateChurchAccount = (id: string, updates: Partial<ChurchAccount>) => {
+    updateChurchAccountRecord(id, updates, setChurchAccounts, logAction, dbSyncUpsert);
+  };
+
+  const deleteChurchAccount = (id: string) => {
+    deleteChurchAccountRecord(id, setChurchAccounts, logAction, dbSyncDelete);
+  };
+
+  const recordChurchFinance = (data: Omit<ChurchFinanceRecord, 'id' | 'created_at' | 'updated_at'>): ChurchFinanceRecord =>
+    recordChurchFinanceRecord(data, setChurchFinances, setChurchAccounts, logAction, dbSyncUpsert);
+
+  const updateChurchFinance = (id: string, updates: Partial<ChurchFinanceRecord>) => {
+    updateChurchFinanceRecord(id, updates, setChurchFinances, logAction, dbSyncUpsert);
+  };
+
+  const deleteChurchFinance = (id: string) => {
+    deleteChurchFinanceRecord(id, setChurchFinances, logAction, dbSyncDelete);
+  };
+
+  const transferBetweenAccounts = (fromAccountId: string, toAccountId: string, amount: number, notes?: string) =>
+    transferBetweenAccountsRecord(fromAccountId, toAccountId, amount, notes, setChurchAccounts, setChurchFinances, logAction, dbSyncUpsert);
+
+  const addDepartmentBudget = (data: Omit<DepartmentBudget, 'id' | 'created_at' | 'updated_at'>): DepartmentBudget =>
+    addDepartmentBudgetRecord(data, setDepartmentBudgets, logAction);
+
+  const updateDepartmentBudget = (id: string, updates: Partial<DepartmentBudget>) => {
+    updateDepartmentBudgetRecord(id, updates, setDepartmentBudgets, logAction);
   };
 
   // CAMPAIGNS
@@ -1823,6 +1934,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setCampaigns,
         setPledges,
         setExpenses,
+        setChurchAccounts,
+        setChurchFinances,
+        setDepartmentBudgets,
         setMinistries,
         setSmallGroups,
         setEvents,
@@ -1884,6 +1998,18 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       recordExpense,
       updateExpense,
       deleteExpense,
+      churchAccounts,
+      addChurchAccount,
+      updateChurchAccount,
+      deleteChurchAccount,
+      churchFinances,
+      recordChurchFinance,
+      updateChurchFinance,
+      deleteChurchFinance,
+      transferBetweenAccounts,
+      departmentBudgets,
+      addDepartmentBudget,
+      updateDepartmentBudget,
       campaigns,
       addCampaign,
       updateCampaign,
@@ -1992,6 +2118,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       attendance,
       giving,
       expenses,
+      churchAccounts,
+      churchFinances,
+      departmentBudgets,
       campaigns,
       pledges,
       ministries,

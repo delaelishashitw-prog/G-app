@@ -16,6 +16,8 @@ const VisitorsPage = lazy(() => import('./pages/VisitorsPage').then(m => ({ defa
 const AttendancePage = lazy(() => import('./pages/AttendancePage').then(m => ({ default: m.AttendancePage })));
 const ServicesPage = lazy(() => import('./pages/ServicesPage').then(m => ({ default: m.ServicesPage })));
 const FinancePage = lazy(() => import('./pages/FinancePage').then(m => ({ default: m.FinancePage })));
+const GivingPage = lazy(() => import('./pages/GivingPage').then(m => ({ default: m.GivingPage })));
+const ChurchFinancePage = lazy(() => import('./pages/ChurchFinancePage').then(m => ({ default: m.ChurchFinancePage })));
 const PledgesPage = lazy(() => import('./pages/PledgesPage').then(m => ({ default: m.PledgesPage })));
 const MinistriesPage = lazy(() => import('./pages/MinistriesPage').then(m => ({ default: m.MinistriesPage })));
 const SmallGroupsPage = lazy(() => import('./pages/SmallGroupsPage').then(m => ({ default: m.SmallGroupsPage })));
@@ -53,7 +55,9 @@ export default function App() {
                     <Route path="visitors" element={<VisitorsPage />} />
                     <Route path="attendance" element={<AttendancePage />} />
                     <Route path="services" element={<ServicesPage />} />
-                    <Route path="finance" element={<FinancePage />} />
+                    <Route path="giving" element={<GivingPage />} />
+                    <Route path="church-finance" element={<ChurchFinancePage />} />
+                    <Route path="finance" element={<Navigate to="/church-finance" replace />} />
                     <Route path="welfare" element={<WelfarePage />} />
                     <Route path="inventory" element={<InventoryPage />} />
                     <Route path="pledges" element={<PledgesPage />} />

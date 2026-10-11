@@ -321,6 +321,57 @@ export interface ExpenseRecord {
   created_at: string;
 }
 
+export interface ChurchAccount {
+  id: string;
+  name: string;
+  account_type: 'bank' | 'momo' | 'cash_petty' | 'treasury' | string;
+  account_number?: string;
+  bank_or_provider: string; // e.g. 'GCB Bank', 'MTN MoMo', 'CalBank', 'Ecobank', 'Cash on Hand'
+  current_balance: number;
+  currency: string;
+  is_active: boolean;
+  description?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface ChurchFinanceRecord {
+  id: string;
+  transaction_type: 'expense' | 'disbursement' | 'transfer' | 'income' | 'grant' | string;
+  account_id?: string;
+  account_name: string;
+  category: string;
+  title: string;
+  recipient_or_vendor?: string;
+  amount: number;
+  currency: string;
+  date: string;
+  payment_method: string;
+  reference_no?: string;
+  department?: string;
+  budget_id?: string;
+  description?: string;
+  notes?: string;
+  approved_by?: string;
+  receipt_url?: string;
+  recorded_by?: string;
+  status: 'completed' | 'pending' | 'cancelled' | string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface DepartmentBudget {
+  id: string;
+  department: string;
+  allocated_amount: number;
+  spent_amount: number;
+  period: string; // e.g. '2026 Annual' or 'Q1-2026'
+  currency: string;
+  notes?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Ministry {
   id: string;
   name: string;
