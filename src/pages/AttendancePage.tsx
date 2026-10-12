@@ -51,6 +51,7 @@ import {
   Legend,
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
+import { useSearchParams } from 'react-router-dom';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useToast } from '../contexts/ToastContext';
 import { ChurchService, AttendanceRecord, HeadcountRecord, Member, Visitor } from '../types/database.types';
@@ -84,10 +85,25 @@ export const AttendancePage: React.FC = () => {
     refreshData,
   } = useChurchData();
   const { success, error, warning, info } = useToast();
+  const [searchParams] = useSearchParams();
 
   // Active service and date selection
   const [selectedServiceId, setSelectedServiceId] = useState(services[0]?.id || '');
-  const [selectedDate, setSelectedDate] = useState(() => getLocalDateString());
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const urlDate = searchParams.get('date');
+    if (urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
+      return urlDate;
+    }
+    return getLocalDateString();
+  });
+
+  // Keep selectedDate in sync if URL param changes
+  React.useEffect(() => {
+    const urlDate = searchParams.get('date');
+    if (urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
+      setSelectedDate(urlDate);
+    }
+  }, [searchParams]);
 
   // Ensure selectedServiceId is kept in sync if services load or change
   React.useEffect(() => {

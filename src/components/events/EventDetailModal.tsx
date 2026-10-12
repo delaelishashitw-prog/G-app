@@ -22,9 +22,12 @@ import {
   Phone,
   Mail,
   UserCheck,
+  ExternalLink,
 } from 'lucide-react';
 import { ChurchEvent } from '../../types/database.types';
 import { useChurchData } from '../../contexts/ChurchDataContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { useToast } from '../../contexts/ToastContext';
 import { downloadEventIcs, generateWhatsAppAnnouncement } from './eventCalendarExport';
 import { PrintEventFlyerModal } from './PrintEventFlyerModal';
 import { RegisterAttendeeModal } from './RegisterAttendeeModal';
@@ -43,6 +46,14 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
   onEdit,
 }) => {
   const { deleteEvent, updateEvent, toggleAttendeeCheckIn, removeEventAttendee, settings } = useChurchData();
+  const { success, info } = useToast();
+  const { canAccess, currentRole } = useAuth();
+  const canManageEvents =
+    canAccess('events') &&
+    (currentRole === 'senior_pastor' ||
+      currentRole === 'administrator' ||
+      currentRole === 'pastor' ||
+      currentRole === 'ministry_leader');
   const [activeTab, setActiveTab] = useState<'overview' | 'attendees' | 'share'>('overview');
   const [copiedAnnouncement, setCopiedAnnouncement] = useState(false);
   const [copiedGps, setCopiedGps] = useState(false);
@@ -71,11 +82,13 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
 
   const handleDelete = () => {
     deleteEvent(event.id);
+    success('Event Deleted', `"${event.title}" was removed successfully.`);
     onClose();
   };
 
   const handleStatusChange = (newStatus: ChurchEvent['status']) => {
     updateEvent(event.id, { status: newStatus });
+    info('Status Updated', `Event status set to ${newStatus}.`);
   };
 
   const isMultiDay = event.start_date !== event.end_date;
@@ -290,6 +303,26 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                   )}
                 </div>
 
+                {/* Direct link to Attendance Register */}
+                <div className="p-3 bg-rose-50/50 rounded-xl border border-rose-100 flex items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-rose-800" />
+                      Attendance Integration
+                    </span>
+                    <p className="text-[11px] text-slate-600">
+                      Take live headcount or record check-ins on this event's date ({event.start_date}) in the Attendance terminal.
+                    </p>
+                  </div>
+                  <a
+                    href={`/attendance?date=${event.start_date}`}
+                    className="shrink-0 px-3 py-1.5 bg-white border border-rose-200 hover:border-rose-400 text-rose-900 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs hover:bg-rose-50 transition"
+                  >
+                    <span>Open Attendance</span>
+                    <ExternalLink className="w-3 h-3 text-rose-700" />
+                  </a>
+                </div>
+
                 {/* Description & Order of Program */}
                 {event.description && (
                   <div className="space-y-1.5">
@@ -303,57 +336,67 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                 )}
 
                 {/* Status Switcher & Management */}
-                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] font-bold text-slate-600">Change Status:</span>
-                    <select
-                      value={event.status}
-                      onChange={(e) => handleStatusChange(e.target.value as any)}
-                      className="px-2.5 py-1 text-xs border border-slate-300 rounded-lg bg-white font-medium focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
-                    >
-                      <option value="upcoming">Upcoming</option>
-                      <option value="ongoing">Ongoing</option>
-                      <option value="completed">Completed</option>
-                      <option value="draft">Draft</option>
-                      <option value="cancelled">Cancelled</option>
-                    </select>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => onEdit(event)}
-                      className="px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg border border-slate-300 flex items-center gap-1 transition"
-                    >
-                      <Edit className="w-3.5 h-3.5" />
-                      <span>Edit Program</span>
-                    </button>
-                    {!confirmDelete ? (
-                      <button
-                        onClick={() => setConfirmDelete(true)}
-                        className="px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-lg transition"
-                        title="Delete event"
+                {canManageEvents ? (
+                  <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold text-slate-600">Change Status:</span>
+                      <select
+                        value={event.status}
+                        onChange={(e) => handleStatusChange(e.target.value as any)}
+                        className="px-2.5 py-1 text-xs border border-slate-300 rounded-lg bg-white font-medium focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <option value="upcoming">Upcoming</option>
+                        <option value="ongoing">Ongoing</option>
+                        <option value="completed">Completed</option>
+                        <option value="draft">Draft</option>
+                        <option value="cancelled">Cancelled</option>
+                      </select>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => onEdit(event)}
+                        className="px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg border border-slate-300 flex items-center gap-1 transition"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                        <span>Edit Program</span>
                       </button>
-                    ) : (
-                      <div className="flex items-center gap-1.5 bg-red-50 p-1 rounded-lg border border-red-200">
-                        <span className="text-[10px] text-red-700 font-bold">Delete?</span>
+                      {!confirmDelete ? (
                         <button
-                          onClick={handleDelete}
-                          className="px-2 py-0.5 bg-red-600 text-white rounded text-[10px] font-bold hover:bg-red-700"
+                          onClick={() => setConfirmDelete(true)}
+                          className="px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-lg transition"
+                          title="Delete event"
                         >
-                          Confirm
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
-                        <button
-                          onClick={() => setConfirmDelete(false)}
-                          className="px-1.5 py-0.5 text-slate-600 text-[10px] hover:text-slate-900"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
+                      ) : (
+                        <div className="flex items-center gap-1.5 bg-red-50 p-1 rounded-lg border border-red-200">
+                          <span className="text-[10px] text-red-700 font-bold">Delete?</span>
+                          <button
+                            onClick={handleDelete}
+                            className="px-2 py-0.5 bg-red-600 text-white rounded text-[10px] font-bold hover:bg-red-700"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            onClick={() => setConfirmDelete(false)}
+                            className="px-1.5 py-0.5 text-slate-600 text-[10px] hover:text-slate-900"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                    <span className="flex items-center gap-1.5">
+                      <span className="font-semibold text-slate-700">Status:</span>
+                      <span className="capitalize font-mono font-bold text-slate-900">{event.status}</span>
+                    </span>
+                    <span className="text-[11px] italic text-slate-400">View-only role (Admin privileges required to edit or delete)</span>
+                  </div>
+                )}
               </div>
             )}
 

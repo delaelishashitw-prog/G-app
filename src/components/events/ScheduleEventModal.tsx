@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { X, Calendar, Clock, MapPin, Sparkles, BookOpen, Users, DollarSign, Plus, Check } from 'lucide-react';
+import { X, Calendar, Clock, MapPin, Sparkles, BookOpen, Users, DollarSign, Plus, Check, AlertCircle } from 'lucide-react';
 import { ChurchEvent } from '../../types/database.types';
 import { useChurchData } from '../../contexts/ChurchDataContext';
+import { useToast } from '../../contexts/ToastContext';
 
 interface ScheduleEventModalProps {
   isOpen: boolean;
@@ -25,6 +26,7 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
   defaultDate,
 }) => {
   const { createEvent, updateEvent, ministries } = useChurchData();
+  const { success } = useToast();
 
   const todayStr = defaultDate || new Date().toISOString().split('T')[0];
 
@@ -49,7 +51,11 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
     banner_color: 'rose',
   });
 
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [syncAsService, setSyncAsService] = useState(false);
+
   useEffect(() => {
+    setValidationError(null);
     if (eventToEdit) {
       setFormData({
         title: eventToEdit.title,
@@ -71,6 +77,7 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
         requires_registration: eventToEdit.requires_registration || false,
         banner_color: eventToEdit.banner_color || 'rose',
       });
+      setSyncAsService(false);
     } else {
       setFormData({
         title: '',
@@ -92,6 +99,7 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
         requires_registration: false,
         banner_color: 'rose',
       });
+      setSyncAsService(false);
     }
   }, [eventToEdit, defaultDate, isOpen]);
 
@@ -99,7 +107,36 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.title.trim()) return;
+    setValidationError(null);
+
+    if (!formData.title.trim()) {
+      setValidationError('Please provide an event / program title.');
+      return;
+    }
+
+    if (!formData.venue.trim()) {
+      setValidationError('Please specify the event venue or meeting link.');
+      return;
+    }
+
+    if (!formData.start_date) {
+      setValidationError('Start date is required.');
+      return;
+    }
+
+    const effectiveEndDate = formData.end_date || formData.start_date;
+    if (effectiveEndDate < formData.start_date) {
+      setValidationError('End date cannot be earlier than start date.');
+      return;
+    }
+
+    // Time validation if single-day event
+    if (formData.start_date === effectiveEndDate && formData.start_time && formData.end_time) {
+      if (formData.end_time <= formData.start_time) {
+        setValidationError('End time must be later than start time for single-day programs.');
+        return;
+      }
+    }
 
     const payload = {
       title: formData.title.trim(),
@@ -108,15 +145,15 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
       theme_scripture: formData.theme_scripture.trim() || undefined,
       description: formData.description.trim() || undefined,
       start_date: formData.start_date,
-      end_date: formData.end_date || formData.start_date,
+      end_date: effectiveEndDate,
       start_time: formData.start_time,
       end_time: formData.end_time,
       venue: formData.venue.trim(),
       organizer: formData.organizer.trim() || undefined,
       ministry_name: formData.ministry_name.trim() || undefined,
       speaker: formData.speaker.trim() || undefined,
-      expected_attendance: parseInt(formData.expected_attendance, 10) || 100,
-      budget: parseFloat(formData.budget) || 0,
+      expected_attendance: Math.max(0, parseInt(formData.expected_attendance, 10) || 100),
+      budget: Math.max(0, parseFloat(formData.budget) || 0),
       status: formData.status,
       requires_registration: formData.requires_registration,
       banner_color: formData.banner_color,
@@ -124,12 +161,14 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
 
     if (eventToEdit) {
       updateEvent(eventToEdit.id, payload);
+      success('Program Updated', `"${payload.title}" has been updated.`);
     } else {
       createEvent({
         ...payload,
         attendees: [],
         registration_count: 0,
       });
+      success('Program Scheduled', `"${payload.title}" has been scheduled successfully.`);
     }
 
     onClose();
@@ -161,12 +200,20 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-4 text-xs">
+          {validationError && (
+            <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl flex items-center gap-2 font-medium">
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+              <span>{validationError}</span>
+            </div>
+          )}
+
           {/* Program Title */}
           <div>
-            <label className="block font-semibold text-slate-700 mb-1">
+            <label htmlFor="event-title" className="block font-semibold text-slate-700 mb-1">
               Program / Event Title *
             </label>
             <input
+              id="event-title"
               type="text"
               required
               value={formData.title}
@@ -251,8 +298,9 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
           {/* Date & Time Range */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Start Date *</label>
+              <label htmlFor="event-start-date" className="block font-semibold text-slate-700 mb-1">Start Date *</label>
               <input
+                id="event-start-date"
                 type="date"
                 required
                 value={formData.start_date}
@@ -269,10 +317,12 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">End Date *</label>
+              <label htmlFor="event-end-date" className="block font-semibold text-slate-700 mb-1">End Date *</label>
               <input
+                id="event-end-date"
                 type="date"
                 required
+                min={formData.start_date}
                 value={formData.end_date}
                 onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
                 className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
@@ -280,8 +330,9 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Start Time</label>
+              <label htmlFor="event-start-time" className="block font-semibold text-slate-700 mb-1">Start Time (GMT)</label>
               <input
+                id="event-start-time"
                 type="time"
                 value={formData.start_time}
                 onChange={(e) => setFormData({ ...formData, start_time: e.target.value })}
@@ -290,8 +341,9 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">End Time</label>
+              <label htmlFor="event-end-time" className="block font-semibold text-slate-700 mb-1">End Time (GMT)</label>
               <input
+                id="event-end-time"
                 type="time"
                 value={formData.end_time}
                 onChange={(e) => setFormData({ ...formData, end_time: e.target.value })}
@@ -303,7 +355,7 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
           {/* Venue & Presets */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="block font-semibold text-slate-700">Venue *</label>
+              <label htmlFor="event-venue" className="block font-semibold text-slate-700">Venue *</label>
               <div className="flex items-center gap-1.5 overflow-x-auto text-[10px] text-slate-500">
                 <span className="shrink-0 font-medium">Presets:</span>
                 {VENUE_PRESETS.slice(0, 3).map((v) => (
@@ -319,6 +371,7 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
               </div>
             </div>
             <input
+              id="event-venue"
               type="text"
               required
               value={formData.venue}
@@ -330,10 +383,11 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
           {/* Speaker & Host Ministry */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">
+              <label htmlFor="event-speaker" className="block font-semibold text-slate-700 mb-1">
                 Guest Minister / Speaker
               </label>
               <input
+                id="event-speaker"
                 type="text"
                 value={formData.speaker}
                 onChange={(e) => setFormData({ ...formData, speaker: e.target.value })}
@@ -343,10 +397,11 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">
+              <label htmlFor="event-ministry" className="block font-semibold text-slate-700 mb-1">
                 Host Ministry / Department
               </label>
               <select
+                id="event-ministry"
                 value={formData.ministry_name}
                 onChange={(e) => setFormData({ ...formData, ministry_name: e.target.value, organizer: e.target.value })}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
@@ -366,11 +421,13 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
           {/* Expected Attendance & Budget */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">
+              <label htmlFor="event-expected-attendance" className="block font-semibold text-slate-700 mb-1">
                 Expected Attendance
               </label>
               <input
+                id="event-expected-attendance"
                 type="number"
+                min="0"
                 value={formData.expected_attendance}
                 onChange={(e) => setFormData({ ...formData, expected_attendance: e.target.value })}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
@@ -378,11 +435,14 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">
+              <label htmlFor="event-budget" className="block font-semibold text-slate-700 mb-1">
                 Allocated Budget (GH₵)
               </label>
               <input
+                id="event-budget"
                 type="number"
+                min="0"
+                step="any"
                 value={formData.budget}
                 onChange={(e) => setFormData({ ...formData, budget: e.target.value })}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
@@ -397,7 +457,7 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
               id="requires_registration"
               checked={formData.requires_registration}
               onChange={(e) => setFormData({ ...formData, requires_registration: e.target.checked })}
-              className="w-4 h-4 rounded text-rose-700 focus:ring-rose-500"
+              className="w-4 h-4 rounded text-rose-700 focus:ring-rose-500 cursor-pointer"
             />
             <label htmlFor="requires_registration" className="text-xs font-semibold text-slate-800 cursor-pointer">
               Enable Volunteer & Attendee Pre-Registration (RSVP)
@@ -406,10 +466,11 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
 
           {/* Description */}
           <div>
-            <label className="block font-semibold text-slate-700 mb-1">
+            <label htmlFor="event-description" className="block font-semibold text-slate-700 mb-1">
               Program Description & Objectives
             </label>
             <textarea
+              id="event-description"
               rows={3}
               value={formData.description}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}

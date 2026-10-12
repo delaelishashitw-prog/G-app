@@ -26,6 +26,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { useChurchData } from '../contexts/ChurchDataContext';
+import { useAuth } from '../contexts/AuthContext';
 import { ChurchEvent } from '../types/database.types';
 import { EventDetailModal } from '../components/events/EventDetailModal';
 import { ScheduleEventModal } from '../components/events/ScheduleEventModal';
@@ -47,6 +48,13 @@ const CATEGORY_TABS: Array<{ id: string; label: string }> = [
 
 export const EventsPage: React.FC = () => {
   const { events, services, settings } = useChurchData();
+  const { canAccess, currentRole, currentUser } = useAuth();
+  const canManageEvents =
+    canAccess('events') &&
+    (currentRole === 'senior_pastor' ||
+      currentRole === 'administrator' ||
+      currentRole === 'pastor' ||
+      currentRole === 'ministry_leader');
 
   // Navigation & View State
   const [viewMode, setViewMode] = useState<ViewMode>('calendar');
@@ -55,8 +63,8 @@ export const EventsPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'ongoing' | 'completed' | 'draft'>('all');
   const [showWeeklyServices, setShowWeeklyServices] = useState(false);
 
-  // Calendar Date State (defaults to current month: September 2026)
-  const [currentDate, setCurrentDate] = useState(() => new Date('2026-09-25T00:00:00'));
+  // Calendar Date State (defaults to current month)
+  const [currentDate, setCurrentDate] = useState(() => new Date());
 
   // Modals state
   const [selectedEventForDetail, setSelectedEventForDetail] = useState<ChurchEvent | null>(null);
@@ -86,7 +94,7 @@ export const EventsPage: React.FC = () => {
   };
 
   const jumpToToday = () => {
-    setCurrentDate(new Date('2026-09-25T00:00:00'));
+    setCurrentDate(new Date());
   };
 
   // Filtered Events
@@ -155,23 +163,57 @@ export const EventsPage: React.FC = () => {
     return map;
   }, [events]);
 
-  // Recurring weekly services mapping
+  // Recurring weekly services mapping dynamically loaded from services context
   const regularServicesByDayOfWeek = useMemo(() => {
-    // 0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed, 4 = Thu, 5 = Fri, 6 = Sat
-    return {
-      0: [
+    const map: Record<number, Array<{ name: string; time: string; venue: string }>> = {
+      0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: []
+    };
+
+    const dayNameMap: Record<string, number> = {
+      sunday: 0,
+      sun: 0,
+      monday: 1,
+      mon: 1,
+      tuesday: 2,
+      tue: 2,
+      wednesday: 3,
+      wed: 3,
+      thursday: 4,
+      thu: 4,
+      friday: 5,
+      fri: 5,
+      saturday: 6,
+      sat: 6,
+    };
+
+    if (services && services.length > 0) {
+      services.filter((s) => s.is_active !== false).forEach((s) => {
+        const dayIdx = dayNameMap[s.day_of_week?.toLowerCase().trim()] ?? 0;
+        map[dayIdx].push({
+          name: s.name,
+          time: `${s.start_time || '08:00'} - ${s.end_time || '11:00'}`,
+          venue: s.venue || settings.church_name || 'GWCC Sanctuary',
+        });
+      });
+    } else {
+      // Standard Greater Works City Church weekly liturgical schedule defaults
+      map[0] = [
         { name: 'Sunday 1st Service', time: '07:00 - 09:00', venue: 'GWCC Sanctuary' },
         { name: 'Sunday 2nd Service', time: '09:30 - 12:30', venue: 'GWCC Sanctuary' },
-      ],
-      3: [{ name: 'Midweek Teaching & Communion', time: '18:30 - 20:30', venue: 'GWCC Sanctuary' }],
-      5: [{ name: 'Friday Breakthrough & Deliverance', time: '19:00 - 21:00', venue: 'GWCC Sanctuary' }],
-    } as Record<number, Array<{ name: string; time: string; venue: string }>>;
-  }, []);
+      ];
+      map[3] = [{ name: 'Midweek Miracle & Communion', time: '18:30 - 20:30', venue: 'GWCC Sanctuary' }];
+      map[5] = [{ name: 'Friday Breakthrough & Deliverance', time: '19:00 - 21:00', venue: 'GWCC Sanctuary' }];
+    }
+
+    return map;
+  }, [services, settings.church_name]);
 
   // Compute countdown for spotlight
   const getCountdownText = (startDateStr: string) => {
-    const today = new Date('2026-09-25T00:00:00').getTime();
-    const target = new Date(startDateStr).getTime();
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const targetParts = startDateStr.split('-').map(Number);
+    const target = new Date(targetParts[0], (targetParts[1] || 1) - 1, targetParts[2] || 1).getTime();
     const diffDays = Math.ceil((target - today) / (1000 * 60 * 60 * 24));
 
     if (diffDays === 0) return 'Happening Today';
@@ -209,17 +251,23 @@ export const EventsPage: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              setEventToEdit(null);
-              setScheduleDefaultDate(undefined);
-              setIsScheduleModalOpen(true);
-            }}
-            className="px-4 py-2 rounded-xl bg-rose-800 hover:bg-rose-900 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-xs"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Schedule Program</span>
-          </button>
+          {canManageEvents ? (
+            <button
+              onClick={() => {
+                setEventToEdit(null);
+                setScheduleDefaultDate(undefined);
+                setIsScheduleModalOpen(true);
+              }}
+              className="px-4 py-2 rounded-xl bg-rose-800 hover:bg-rose-900 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-xs"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Schedule Program</span>
+            </button>
+          ) : (
+            <span className="text-[11px] text-slate-400 font-medium bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">
+              View Only
+            </span>
+          )}
         </div>
       </div>
 
@@ -420,14 +468,16 @@ export const EventsPage: React.FC = () => {
         </div>
 
         {/* Category Segmented Filter Tabs */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pt-1 no-scrollbar border-t border-slate-100">
+        <div role="tablist" aria-label="Event categories" className="flex items-center gap-1.5 overflow-x-auto pt-1 no-scrollbar border-t border-slate-100">
           {CATEGORY_TABS.map((tab) => {
             const isActive = selectedCategory === tab.id;
             return (
               <button
                 key={tab.id}
+                role="tab"
+                aria-selected={isActive}
                 onClick={() => setSelectedCategory(tab.id)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
+                className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition focus:outline-hidden focus:ring-2 focus:ring-rose-500 ${
                   isActive
                     ? 'bg-rose-800 text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -506,7 +556,11 @@ export const EventsPage: React.FC = () => {
               const dayNum = i + 1;
               const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
               const dayOfWeek = new Date(year, month, dayNum).getDay();
-              const isToday = dateStr === '2026-09-25'; // Current system context date
+              const now = new Date();
+              const isToday =
+                year === now.getFullYear() &&
+                month === now.getMonth() &&
+                dayNum === now.getDate();
               const dayEvents = eventsByDate[dateStr] || [];
               const weeklyServicesForDay = showWeeklyServices ? regularServicesByDayOfWeek[dayOfWeek] || [] : [];
 
@@ -523,31 +577,33 @@ export const EventsPage: React.FC = () => {
                       <span
                         className={`text-xs font-mono font-bold w-6 h-6 rounded-full flex items-center justify-center ${
                           isToday
-                            ? 'bg-rose-800 text-white font-black'
+                            ? 'bg-rose-800 text-white font-black shadow-xs'
                             : 'text-slate-700 group-hover:text-rose-800'
                         }`}
                       >
                         {dayNum}
                       </span>
 
-                      {/* Small plus button on hover */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEventToEdit(null);
-                          setScheduleDefaultDate(dateStr);
-                          setIsScheduleModalOpen(true);
-                        }}
-                        className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-rose-800 hover:bg-slate-100 rounded transition"
-                        title={`Schedule on ${dateStr}`}
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
+                      {/* Small plus button on hover for privileged users */}
+                      {canManageEvents && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEventToEdit(null);
+                            setScheduleDefaultDate(dateStr);
+                            setIsScheduleModalOpen(true);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-rose-800 hover:bg-slate-100 rounded transition"
+                          title={`Schedule on ${dateStr}`}
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
 
                     {/* Events list in cell */}
                     <div className="space-y-1 overflow-hidden">
-                      {dayEvents.map((evt) => (
+                      {dayEvents.slice(0, 2).map((evt) => (
                         <div
                           key={evt.id}
                           onClick={(e) => {
@@ -565,7 +621,7 @@ export const EventsPage: React.FC = () => {
                       ))}
 
                       {/* Regular weekly church service pills if toggled */}
-                      {weeklyServicesForDay.map((srv, idx) => (
+                      {weeklyServicesForDay.slice(0, 1).map((srv, idx) => (
                         <div
                           key={`ws-${idx}`}
                           className="px-1.5 py-0.5 rounded text-[9px] font-medium truncate border border-slate-200 bg-slate-50 text-slate-600"
@@ -579,9 +635,9 @@ export const EventsPage: React.FC = () => {
                   </div>
 
                   {/* Day count indicator */}
-                  {dayEvents.length > 2 && (
-                    <span className="text-[9px] text-slate-400 font-semibold self-end">
-                      +{dayEvents.length - 2} more
+                  {(dayEvents.length > 2 || (showWeeklyServices && weeklyServicesForDay.length > 1)) && (
+                    <span className="text-[9px] text-rose-700 font-bold self-end bg-rose-50 px-1 rounded border border-rose-200">
+                      +{Math.max(0, dayEvents.length - 2) + Math.max(0, weeklyServicesForDay.length - 1)} more
                     </span>
                   )}
                 </div>
@@ -645,11 +701,16 @@ export const EventsPage: React.FC = () => {
                             <span className="text-[10px] font-bold uppercase px-2 py-0.2 rounded bg-slate-100 text-slate-700">
                               {evt.status}
                             </span>
-                            {evt.start_date === '2026-09-25' && (
-                              <span className="text-[10px] font-extrabold px-1.5 py-0.2 rounded bg-amber-400 text-slate-950">
-                                TODAY
-                              </span>
-                            )}
+                            {(() => {
+                              const todayKey = new Date().toISOString().split('T')[0];
+                              const isHappeningToday =
+                                evt.start_date <= todayKey && (evt.end_date || evt.start_date) >= todayKey;
+                              return isHappeningToday ? (
+                                <span className="text-[10px] font-extrabold px-1.5 py-0.2 rounded bg-amber-400 text-slate-950">
+                                  TODAY
+                                </span>
+                              ) : null;
+                            })()}
                           </div>
 
                           <h3 className="text-base font-bold text-slate-900">{evt.title}</h3>
@@ -847,19 +908,21 @@ export const EventsPage: React.FC = () => {
                 >
                   Close
                 </button>
-                <button
-                  onClick={() => {
-                    const d = inspectedDate;
-                    setInspectedDate(null);
-                    setEventToEdit(null);
-                    setScheduleDefaultDate(d);
-                    setIsScheduleModalOpen(true);
-                  }}
-                  className="px-4 py-2 bg-rose-800 hover:bg-rose-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Schedule on This Day</span>
-                </button>
+                {canManageEvents && (
+                  <button
+                    onClick={() => {
+                      const d = inspectedDate;
+                      setInspectedDate(null);
+                      setEventToEdit(null);
+                      setScheduleDefaultDate(d);
+                      setIsScheduleModalOpen(true);
+                    }}
+                    className="px-4 py-2 bg-rose-800 hover:bg-rose-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Schedule on This Day</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>

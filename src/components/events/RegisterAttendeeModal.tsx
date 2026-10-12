@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { X, UserPlus, Search, Check, Phone, ShieldCheck, HeartHandshake } from 'lucide-react';
+import { X, UserPlus, Search, Check, Phone, ShieldCheck, HeartHandshake, AlertCircle } from 'lucide-react';
 import { useChurchData } from '../../contexts/ChurchDataContext';
+import { useToast } from '../../contexts/ToastContext';
 
 interface RegisterAttendeeModalProps {
   isOpen: boolean;
@@ -27,11 +28,13 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
   eventId,
   eventTitle,
 }) => {
-  const { members, addEventAttendee } = useChurchData();
+  const { members, events, addEventAttendee } = useChurchData();
+  const { success } = useToast();
   const [activeTab, setActiveTab] = useState<'member' | 'guest'>('member');
   const [memberSearch, setMemberSearch] = useState('');
   const [selectedMemberId, setSelectedMemberId] = useState('');
   const [selectedRole, setSelectedRole] = useState('Attendee');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Guest inputs
   const [guestName, setGuestName] = useState('');
@@ -39,6 +42,9 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
   const [guestEmail, setGuestEmail] = useState('');
 
   if (!isOpen) return null;
+
+  const currentEvent = events.find((e) => e.id === eventId);
+  const existingAttendees = currentEvent?.attendees || [];
 
   const filteredMembers = members.filter((m) => {
     const q = memberSearch.toLowerCase();
@@ -50,10 +56,21 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMsg(null);
 
     if (activeTab === 'member') {
+      if (!selectedMemberId) {
+        setErrorMsg('Please select a member from the list.');
+        return;
+      }
       const selectedMember = members.find((m) => m.id === selectedMemberId);
       if (!selectedMember) return;
+
+      const alreadyAdded = existingAttendees.some((a) => a.member_id === selectedMember.id);
+      if (alreadyAdded) {
+        setErrorMsg(`${selectedMember.first_name} ${selectedMember.last_name} is already registered for this event.`);
+        return;
+      }
 
       addEventAttendee(eventId, {
         name: `${selectedMember.first_name} ${selectedMember.last_name}`,
@@ -62,8 +79,12 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
         member_id: selectedMember.id,
         role: selectedRole,
       });
+      success('Registered Successfully', `${selectedMember.first_name} ${selectedMember.last_name} assigned as ${selectedRole}.`);
     } else {
-      if (!guestName.trim()) return;
+      if (!guestName.trim()) {
+        setErrorMsg('Please enter the guest full name.');
+        return;
+      }
 
       addEventAttendee(eventId, {
         name: guestName.trim(),
@@ -71,6 +92,7 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
         email: guestEmail.trim() || undefined,
         role: selectedRole,
       });
+      success('Guest Registered', `${guestName.trim()} registered as ${selectedRole}.`);
     }
 
     onClose();
@@ -123,12 +145,20 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4 text-xs">
+          {errorMsg && (
+            <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl flex items-center gap-2 font-medium">
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
           {/* Role Selection */}
           <div>
-            <label className="block font-semibold text-slate-700 mb-1">
+            <label htmlFor="attendee-role" className="block font-semibold text-slate-700 mb-1">
               Assignment / Participation Role
             </label>
             <select
+              id="attendee-role"
               value={selectedRole}
               onChange={(e) => setSelectedRole(e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
@@ -193,8 +223,9 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
           ) : (
             <div className="space-y-3">
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Guest Full Name *</label>
+                <label htmlFor="guest-name" className="block font-semibold text-slate-700 mb-1">Guest Full Name *</label>
                 <input
+                  id="guest-name"
                   type="text"
                   required
                   value={guestName}
@@ -206,8 +237,9 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Phone Number</label>
+                  <label htmlFor="guest-phone" className="block font-semibold text-slate-700 mb-1">Phone Number</label>
                   <input
+                    id="guest-phone"
                     type="tel"
                     value={guestPhone}
                     onChange={(e) => setGuestPhone(e.target.value)}
@@ -216,8 +248,9 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Email (Optional)</label>
+                  <label htmlFor="guest-email" className="block font-semibold text-slate-700 mb-1">Email (Optional)</label>
                   <input
+                    id="guest-email"
                     type="email"
                     value={guestEmail}
                     onChange={(e) => setGuestEmail(e.target.value)}
