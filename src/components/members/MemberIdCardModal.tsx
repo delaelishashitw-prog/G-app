@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { X, Printer, User, ShieldCheck, Sparkles, Building, Phone, QrCode } from 'lucide-react';
 import { Member, ChurchSettings } from '../../types/database.types';
+import { PastorSignature } from '../common/PastorSignature';
 
 interface MemberIdCardModalProps {
   isOpen: boolean;
@@ -160,7 +161,9 @@ export const MemberIdCardModal: React.FC<MemberIdCardModalProps> = ({
             <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[10px]">
               <div>
                 <span className="text-slate-400 block text-[8px] uppercase">Resident Pastor Signature</span>
-                <span className="font-serif italic font-bold text-slate-800">Pastor-in-Charge</span>
+                <div className="h-6 flex items-center pt-0.5">
+                  <PastorSignature className="h-5 w-auto max-w-[90px]" color="#0f388a" />
+                </div>
               </div>
               <div className="text-right text-slate-400 text-[9px]">
                 If found, return to GWCC Joma Sanctuary

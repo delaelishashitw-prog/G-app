@@ -52,6 +52,7 @@ import {
 } from '../lib/supabase';
 import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA, SQL_FIX_ROSTER_SCHEMA, SQL_FIX_CHURCH_FINANCE_SCHEMA } from '../lib/supabaseSchema';
 import { useAuth } from '../contexts/AuthContext';
+import { PastorSignature } from '../components/common/PastorSignature';
 
 export const SettingsPage: React.FC = () => {
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
@@ -134,6 +135,7 @@ export const SettingsPage: React.FC = () => {
   const [tagline, setTagline] = useState(settings.tagline || 'Faithful, organized, and ready to serve');
   const [branchName, setBranchName] = useState(settings.branch_name || 'Main Branch');
   const [logoUrl, setLogoUrl] = useState(settings.logo_url || '/assets/logo.png');
+  const [pastorSignatureUrl, setPastorSignatureUrl] = useState(settings.pastor_signature_url || '/assets/pastor_signature.svg');
   const [location, setLocation] = useState(settings.location || 'City, Country');
   const [address, setAddress] = useState(settings.address || 'Main Street, City');
   const [gpsAddress, setGpsAddress] = useState(settings.gps_address || 'GPS-0000');
@@ -233,6 +235,7 @@ export const SettingsPage: React.FC = () => {
       if (settings.tagline) setTagline(settings.tagline);
       if (settings.branch_name) setBranchName(settings.branch_name);
       if (settings.logo_url) setLogoUrl(settings.logo_url);
+      if (settings.pastor_signature_url) setPastorSignatureUrl(settings.pastor_signature_url);
       if (settings.location) setLocation(settings.location);
       if (settings.address) setAddress(settings.address);
       if (settings.gps_address) setGpsAddress(settings.gps_address);
@@ -251,6 +254,7 @@ export const SettingsPage: React.FC = () => {
       senior_pastor: seniorPastor,
       general_secretary: generalSecretary,
       logo_url: logoUrl,
+      pastor_signature_url: pastorSignatureUrl,
       location,
       address,
       gps_address: gpsAddress,
@@ -961,6 +965,49 @@ export const SettingsPage: React.FC = () => {
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
                 />
                 <p className="text-[10px] text-slate-400 mt-1">Default: /assets/logo.png</p>
+              </div>
+            </div>
+
+            {/* Official Overseer Signature Card */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4 text-xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm">Official Ecclesiastical Signature</h3>
+                  <p className="text-[11px] text-slate-500">General Overseer & Senior Pastor Signature</p>
+                </div>
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-teal-50 text-teal-800 border border-teal-200">
+                  Verified
+                </span>
+              </div>
+
+              {/* Signature Live Preview Box */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-col items-center justify-center text-center space-y-2">
+                <div className="w-full h-20 bg-white border border-slate-200 rounded-xl p-2 shadow-2xs flex items-center justify-center">
+                  <PastorSignature className="h-16 w-auto max-w-[260px] object-contain" color="#0f388a" />
+                </div>
+                <div className="w-full bg-white rounded-lg p-2 border border-slate-200 text-left space-y-0.5">
+                  <div className="text-[11px] flex justify-between">
+                    <span className="text-slate-500 font-medium">Signatory:</span>
+                    <span className="font-bold text-emerald-800">{seniorPastor}</span>
+                  </div>
+                  <div className="text-[10px] text-slate-400">
+                    Prophet Elisha K. Richard • General Overseer
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Signature Asset Path</label>
+                <input
+                  type="text"
+                  value={pastorSignatureUrl}
+                  onChange={(e) => setPastorSignatureUrl(e.target.value)}
+                  placeholder="/assets/pastor_signature.svg"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Active in: Member Dossiers, Certificates, Giving Statements, Receipts & Vouchers.
+                </p>
               </div>
             </div>
 

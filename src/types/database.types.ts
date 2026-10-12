@@ -521,6 +521,7 @@ export interface ChurchSettings {
   senior_pastor?: string;
   general_secretary?: string;
   logo_url?: string;
+  pastor_signature_url?: string;
   location: string;
   address: string;
   gps_address: string;

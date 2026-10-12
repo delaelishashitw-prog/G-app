@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import { FoundationStudent, ChurchSettings, Member } from '../../types/database.types';
+import { PastorSignature } from '../common/PastorSignature';
 
 interface MemberCertificateModalProps {
   isOpen: boolean;
@@ -280,9 +281,12 @@ export const MemberCertificateModal: React.FC<MemberCertificateModalProps> = ({
                 </div>
               </div>
 
-              <div className="space-y-4">
-                <div className="border-b border-slate-400 pb-1"></div>
-                <div>
+              <div className="flex flex-col items-center">
+                <div className="h-10 flex items-end justify-center mb-1">
+                  <PastorSignature className="h-10 w-auto max-w-[170px]" color="#0f388a" />
+                </div>
+                <div className="w-full border-b border-slate-400 pb-1"></div>
+                <div className="mt-1 text-center">
                   <p className="font-bold text-slate-900 font-serif">
                     {settings.senior_pastor || 'Prophet Elisha K. Richard'}
                   </p>

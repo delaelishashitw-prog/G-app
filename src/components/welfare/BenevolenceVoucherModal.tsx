@@ -3,6 +3,7 @@ import { X, Printer, Download, Check, HeartHandshake, ShieldCheck, FileCheck } f
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { useToast } from '../../contexts/ToastContext';
 import { WelfareClaim, PaymentMethod } from '../../types/database.types';
+import { PastorSignature } from '../common/PastorSignature';
 
 interface BenevolenceVoucherModalProps {
   claim: WelfareClaim | null;
@@ -247,12 +248,12 @@ export const BenevolenceVoucherModal: React.FC<BenevolenceVoucherModalProps> = (
 
             {/* Signatures & Endorsement Box */}
             <div className="pt-6 grid grid-cols-3 gap-4 border-t border-slate-300 text-center text-xs">
-              <div className="space-y-6">
-                <div className="h-8 flex items-center justify-center italic text-slate-400 font-serif text-sm">
-                  Prophet Elisha K. Richard
+              <div className="space-y-2 flex flex-col items-center">
+                <div className="h-10 flex items-end justify-center">
+                  <PastorSignature className="h-9 w-auto max-w-[140px]" color="#0f388a" />
                 </div>
-                <div className="border-t border-slate-400 pt-1">
-                  <p className="font-bold text-slate-900">{settings.senior_pastor}</p>
+                <div className="w-full border-t border-slate-400 pt-1">
+                  <p className="font-bold text-slate-900">{settings.senior_pastor || 'Prophet Elisha K. Richard'}</p>
                   <p className="text-[10px] text-slate-500 uppercase tracking-wider">General Overseer / Presiding</p>
                 </div>
               </div>

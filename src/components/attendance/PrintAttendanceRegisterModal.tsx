@@ -2,6 +2,7 @@ import React from 'react';
 import { Printer, X, Download, ShieldCheck, CheckCircle2, Users } from 'lucide-react';
 import { ChurchSettings, ChurchService, AttendanceRecord, HeadcountRecord } from '../../types/database.types';
 import { formatServiceDayString } from '../../lib/attendanceDateUtils';
+import { PastorSignature } from '../common/PastorSignature';
 
 interface PrintAttendanceRegisterModalProps {
   isOpen: boolean;
@@ -236,11 +237,11 @@ export const PrintAttendanceRegisterModal: React.FC<PrintAttendanceRegisterModal
 
             <div>
               <p className="font-bold text-slate-900">Resident Pastor Endorsement</p>
-              <div className="border-b border-dashed border-slate-400 h-10 mt-2 mb-1 flex items-end justify-start pb-0.5">
-                <span className="font-serif italic text-xs text-slate-700">{settings.senior_pastor || ''}</span>
+              <div className="border-b border-dashed border-slate-400 h-10 mt-1 mb-1 flex items-end justify-start pb-0.5">
+                <PastorSignature className="h-8 w-auto max-w-[140px]" color="#0f388a" />
               </div>
-              <p className="text-[11px] text-emerald-800 font-semibold">{settings.senior_pastor || 'Senior Pastor'}</p>
-              <p className="text-[10px] text-slate-400">Sign & Stamp</p>
+              <p className="text-[11px] text-emerald-800 font-semibold">{settings.senior_pastor || 'Prophet Elisha K. Richard'}</p>
+              <p className="text-[10px] text-slate-400">Official Ecclesiastical Signature</p>
             </div>
           </div>
         </div>

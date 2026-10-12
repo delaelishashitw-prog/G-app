@@ -17,6 +17,7 @@ import {
   PrayerRequest,
   ChurchSettings,
 } from '../../types/database.types';
+import { PastorSignature } from '../common/PastorSignature';
 
 interface PrintPastoralReportModalProps {
   isOpen: boolean;
@@ -303,9 +304,12 @@ export const PrintPastoralReportModal: React.FC<PrintPastoralReportModalProps> =
 
           {/* Signatures & Certification */}
           <div className="pt-8 border-t border-slate-300 grid grid-cols-2 gap-12 text-center text-xs">
-            <div className="space-y-8">
-              <div className="border-b border-slate-400 pb-1"></div>
-              <div>
+            <div className="flex flex-col items-center">
+              <div className="h-10 flex items-end justify-center mb-1">
+                <PastorSignature className="h-10 w-auto max-w-[180px]" color="#0f388a" />
+              </div>
+              <div className="w-full border-b border-slate-400 pb-1"></div>
+              <div className="mt-1">
                 <p className="font-bold text-slate-900">{settings.senior_pastor || 'Prophet Elisha K. Richard'}</p>
                 <p className="text-[10px] text-slate-500 uppercase tracking-wider">
                   Senior Pastor & General Overseer

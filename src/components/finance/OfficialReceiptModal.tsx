@@ -3,6 +3,7 @@ import { Printer, Copy, Check, X, ShieldCheck } from 'lucide-react';
 import { GivingRecord, ChurchSettings } from '../../types/database.types';
 import { formatGHS, numberToCedisWords } from '../../lib/currencyUtils';
 import { useToast } from '../../contexts/ToastContext';
+import { PastorSignature } from '../common/PastorSignature';
 
 interface OfficialReceiptModalProps {
   record: GivingRecord;
@@ -203,8 +204,10 @@ Thank you for your generous stewardship!`;
               <span className="font-bold text-slate-800 block">Church Treasurer / Steward</span>
               <span className="text-slate-400">Finance & Stewardship Committee</span>
             </div>
-            <div className="text-center">
-              <div className="h-8 border-b border-dashed border-slate-400 mx-auto w-4/5 mb-1.5"></div>
+            <div className="text-center flex flex-col items-center">
+              <div className="h-8 border-b border-dashed border-slate-400 mx-auto w-4/5 mb-1.5 flex items-end justify-center pb-0.5">
+                <PastorSignature className="h-7 w-auto max-w-[140px]" color="#0f388a" />
+              </div>
               <span className="font-bold text-slate-800 block">{settings.senior_pastor || 'Prophet Elisha K. Richard'}</span>
               <span className="text-slate-400">Senior Pastor & General Overseer</span>
             </div>

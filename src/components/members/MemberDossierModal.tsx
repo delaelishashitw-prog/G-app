@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Member, ChurchSettings, GivingRecord, AttendanceRecord, PledgeRecord } from '../../types/database.types';
 import { formatGHS } from '../../lib/currencyUtils';
+import { PastorSignature } from '../common/PastorSignature';
 
 interface MemberDossierModalProps {
   isOpen: boolean;
@@ -397,13 +398,11 @@ export const MemberDossierModal: React.FC<MemberDossierModalProps> = ({
             </div>
 
             {/* Senior Pastor */}
-            <div className="text-right">
+            <div className="text-right flex flex-col items-end">
               <p className="font-bold text-slate-900 uppercase text-[9.5px]">Senior Pastor & General Overseer</p>
               <p className="text-[9px] text-slate-500">Pastoral Council Oversight</p>
-              <div className="border-b border-dashed border-slate-400 h-8 mt-1 mb-1 flex items-end justify-end pb-0.5">
-                <span className="font-serif italic text-xs text-emerald-900">
-                  {settings.senior_pastor || 'Prophet Elisha K. Richard'}
-                </span>
+              <div className="border-b border-dashed border-slate-400 h-10 w-full max-w-[180px] mt-0.5 mb-1 flex items-end justify-end pb-0.5">
+                <PastorSignature className="h-9 sm:h-10 w-auto max-w-[170px]" color="#0f388a" />
               </div>
               <p className="text-[10px] text-emerald-900 font-bold">
                 {settings.senior_pastor || 'Prophet Elisha K. Richard'}

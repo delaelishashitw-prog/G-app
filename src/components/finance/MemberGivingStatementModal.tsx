@@ -3,6 +3,7 @@ import { Printer, Calendar, X, Download, ShieldCheck, UserCheck } from 'lucide-r
 import { Member, GivingRecord, ChurchSettings } from '../../types/database.types';
 import { formatGHS, numberToCedisWords } from '../../lib/currencyUtils';
 import { normalizeDateStr } from '../../lib/financeDateUtils';
+import { PastorSignature } from '../common/PastorSignature';
 
 interface MemberGivingStatementModalProps {
   member: Member;
@@ -245,12 +246,12 @@ export const MemberGivingStatementModal: React.FC<MemberGivingStatementModalProp
 
           {/* Closing & Signatures */}
           <div className="pt-4 border-t border-slate-200 grid grid-cols-2 gap-8 text-[10px]">
-            <div className="text-center">
+            <div className="text-center flex flex-col items-center">
               <div className="h-10 border-b border-dashed border-slate-400 mx-auto w-4/5 mb-1.5 flex items-end justify-center pb-0.5">
-                <span className="font-serif italic text-xs text-slate-700">{settings.senior_pastor || 'Prophet Elisha K. Richard'}</span>
+                <PastorSignature className="h-9 w-auto max-w-[150px]" color="#0f388a" />
               </div>
-              <span className="font-bold text-slate-800 block">Senior Minister / Overseer</span>
-              <span className="text-slate-400">Greater Works City Church</span>
+              <span className="font-bold text-slate-800 block">{settings.senior_pastor || 'Prophet Elisha K. Richard'}</span>
+              <span className="text-slate-400">Senior Minister / General Overseer</span>
             </div>
             <div className="text-center">
               <div className="h-10 border-b border-dashed border-slate-400 mx-auto w-4/5 mb-1.5 flex items-end justify-center pb-0.5">

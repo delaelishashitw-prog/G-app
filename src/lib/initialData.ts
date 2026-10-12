@@ -40,6 +40,7 @@ export const initialSettings: ChurchSettings = {
   senior_pastor: 'Prophet Elisha K. Richard',
   general_secretary: 'Tamekloe Clara Gaewornu',
   logo_url: '/assets/logo.png',
+  pastor_signature_url: '/assets/pastor_signature.svg',
   location: 'Joma New Site, Greater Accra, Ghana',
   address: 'Off Ablekuma-Joma Highway, Joma New Site',
   gps_address: 'GA-183-4921',

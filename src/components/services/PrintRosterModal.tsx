@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Printer, Users, Megaphone } from 'lucide-react';
 import { RosterAssignment, ChurchSettings } from '../../types/database.types';
+import { PastorSignature } from '../common/PastorSignature';
 
 interface PrintRosterModalProps {
   isOpen: boolean;
@@ -219,10 +220,13 @@ export const PrintRosterModal: React.FC<PrintRosterModalProps> = ({
               </div>
             </div>
 
-            <div className="space-y-6">
-              <div className="border-b border-slate-400 pb-1"></div>
-              <div>
-                <p className="font-bold text-slate-800">Prophet Elisha K. Richard</p>
+            <div className="flex flex-col items-center">
+              <div className="h-10 flex items-end justify-center mb-1">
+                <PastorSignature className="h-9 w-auto max-w-[170px]" color="#0f388a" />
+              </div>
+              <div className="w-full border-b border-slate-400 pb-1"></div>
+              <div className="mt-1">
+                <p className="font-bold text-slate-800">{settings.senior_pastor || 'Prophet Elisha K. Richard'}</p>
                 <p className="text-[10px] text-slate-500 uppercase">Senior Pastor & General Overseer</p>
               </div>
             </div>
