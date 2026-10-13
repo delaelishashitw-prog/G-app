@@ -28,9 +28,10 @@ import {
   Sparkles,
   RefreshCw,
 } from 'lucide-react';
-import { useAuth, ROLE_PERMISSIONS } from '../contexts/AuthContext';
+import { useAuth, ROLE_PERMISSIONS, isElishaRichard } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { UserRole, UserProfile } from '../types/database.types';
+import { ProfilePhotoUpload } from '../components/ProfilePhotoUpload';
 
 export const UsersPage: React.FC = () => {
   const {
@@ -48,7 +49,7 @@ export const UsersPage: React.FC = () => {
 
   const { logAction } = useChurchData();
 
-  const isSuperAdmin = currentUser.role === 'super_admin' || impersonatingAdmin?.role === 'super_admin';
+  const isSuperAdmin = currentUser.role === 'super_admin' || impersonatingAdmin?.role === 'super_admin' || isElishaRichard(currentUser);
 
   // Navigation tab state
   const [activeTab, setActiveTab] = useState<'directory' | 'matrix' | 'roles_guide'>('directory');
@@ -76,7 +77,10 @@ export const UsersPage: React.FC = () => {
     email: '',
     phone: '',
     department: 'Church Administration',
+    job_title: '',
+    employment_type: 'full_time' as 'full_time' | 'part_time' | 'volunteer' | 'contract',
     role: 'administrator' as UserRole,
+    avatar_url: '',
     password: '',
   });
 
@@ -87,7 +91,10 @@ export const UsersPage: React.FC = () => {
     email: '',
     phone: '',
     department: '',
+    job_title: '',
+    employment_type: 'full_time' as 'full_time' | 'part_time' | 'volunteer' | 'contract',
     role: 'administrator' as UserRole,
+    avatar_url: '',
     is_active: true,
   });
 
@@ -326,6 +333,11 @@ export const UsersPage: React.FC = () => {
       return;
     }
 
+    if (!isSuperAdmin && (newUserForm.role === 'super_admin' || newUserForm.role === 'senior_pastor')) {
+      showToast('Security Alert: Only Super Administrators can create Super Admin or Senior Pastor accounts.', 'error');
+      return;
+    }
+
     const defaultPwd = newUserForm.password.trim() || 'Gwcc@2026';
     const result = await createUser({
       first_name: newUserForm.first_name.trim(),
@@ -333,6 +345,9 @@ export const UsersPage: React.FC = () => {
       email: newUserForm.email.trim(),
       phone: newUserForm.phone.trim() || undefined,
       department: newUserForm.department.trim() || 'General Operations',
+      job_title: newUserForm.job_title.trim() || undefined,
+      employment_type: newUserForm.employment_type,
+      avatar_url: newUserForm.avatar_url || undefined,
       role: newUserForm.role,
       password: defaultPwd,
     });
@@ -351,7 +366,10 @@ export const UsersPage: React.FC = () => {
         email: '',
         phone: '',
         department: 'Church Administration',
+        job_title: '',
+        employment_type: 'full_time',
         role: 'administrator',
+        avatar_url: '',
         password: '',
       });
     } else {
@@ -368,7 +386,10 @@ export const UsersPage: React.FC = () => {
       email: user.email,
       phone: user.phone || '',
       department: user.department || 'Church Administration',
+      job_title: user.job_title || '',
+      employment_type: user.employment_type || 'full_time',
       role: user.role,
+      avatar_url: user.avatar_url || '',
       is_active: user.is_active,
     });
   };
@@ -378,19 +399,31 @@ export const UsersPage: React.FC = () => {
     e.preventDefault();
     if (!editingUser) return;
 
+    // SECURITY GUARD: Non-super-admins cannot elevate users to super_admin or senior_pastor
+    if (!isSuperAdmin && (editForm.role === 'super_admin' || editForm.role === 'senior_pastor')) {
+      showToast('Security Alert: Only Super Administrators can assign Super Admin or Senior Pastor roles.', 'error');
+      return;
+    }
+
+    // SECURITY GUARD: Prevent modifying own role unless super admin
+    const finalRole = editingUser.id === currentUser.id && !isSuperAdmin ? editingUser.role : editForm.role;
+
     updateUser(editingUser.id, {
       first_name: editForm.first_name.trim(),
       last_name: editForm.last_name.trim(),
       phone: editForm.phone.trim() || undefined,
       department: editForm.department.trim(),
-      role: editForm.role,
+      job_title: editForm.job_title.trim() || undefined,
+      employment_type: editForm.employment_type,
+      avatar_url: editForm.avatar_url || undefined,
+      role: finalRole,
       is_active: editForm.is_active,
     });
 
     logAction(
       'UPDATE_STAFF_USER',
       'Users & Roles',
-      `Updated user ${editForm.first_name} ${editForm.last_name} (Role: ${editForm.role}, Active: ${editForm.is_active})`,
+      `Updated user ${editForm.first_name} ${editForm.last_name} (Role: ${finalRole}, Active: ${editForm.is_active})`,
       editingUser.id
     );
 
@@ -423,6 +456,14 @@ export const UsersPage: React.FC = () => {
   const handleDeleteUser = (user: UserProfile) => {
     if (user.id === currentUser.id) {
       showToast('Cannot delete the currently active logged-in user profile.', 'error');
+      return;
+    }
+    if (user.role === 'super_admin' || isElishaRichard(user)) {
+      showToast('Security Alert: Super Administrator accounts are root-protected and cannot be deleted.', 'error');
+      return;
+    }
+    if (!isSuperAdmin) {
+      showToast('Unauthorized: Only Super Administrators can delete staff accounts.', 'error');
       return;
     }
 
@@ -1208,6 +1249,16 @@ export const UsersPage: React.FC = () => {
             </div>
 
             <form onSubmit={handleCreateUser} className="space-y-4 text-xs">
+              {/* Photo Upload & Presets */}
+              <div className="flex flex-col items-center justify-center p-3 rounded-2xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] font-bold text-slate-700 mb-2">Staff Avatar / Official Photo</span>
+                <ProfilePhotoUpload
+                  value={newUserForm.avatar_url}
+                  onChange={(url) => setNewUserForm({ ...newUserForm, avatar_url: url })}
+                  memberName={`${newUserForm.first_name} ${newUserForm.last_name}`.trim() || 'Staff'}
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">First Name *</label>
@@ -1268,6 +1319,33 @@ export const UsersPage: React.FC = () => {
                 </div>
               </div>
 
+              {/* Staff Position & Employment Status */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Official Ministry Title</label>
+                  <input
+                    type="text"
+                    value={newUserForm.job_title}
+                    onChange={(e) => setNewUserForm({ ...newUserForm, job_title: e.target.value })}
+                    placeholder="e.g. Head of Protocol"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Employment / Service</label>
+                  <select
+                    value={newUserForm.employment_type}
+                    onChange={(e) => setNewUserForm({ ...newUserForm, employment_type: e.target.value as any })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
+                  >
+                    <option value="full_time">Full-Time Staff</option>
+                    <option value="part_time">Part-Time Staff</option>
+                    <option value="volunteer">Volunteer / Ministerial Worker</option>
+                    <option value="contract">Contractor / External</option>
+                  </select>
+                </div>
+              </div>
+
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Assigned System Role *</label>
                 <select
@@ -1275,12 +1353,19 @@ export const UsersPage: React.FC = () => {
                   onChange={(e) => setNewUserForm({ ...newUserForm, role: e.target.value as UserRole })}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
                 >
-                  {rolesList.map((r) => (
-                    <option key={r.role} value={r.role}>
-                      {r.title} — {r.desc.slice(0, 50)}...
-                    </option>
-                  ))}
+                  {rolesList
+                    .filter((r) => isSuperAdmin || (r.role !== 'super_admin' && r.role !== 'senior_pastor'))
+                    .map((r) => (
+                      <option key={r.role} value={r.role}>
+                        {r.title} — {r.desc.slice(0, 50)}...
+                      </option>
+                    ))}
                 </select>
+                {!isSuperAdmin && (
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Super Admin and Senior Pastor roles require root authorization.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -1340,6 +1425,16 @@ export const UsersPage: React.FC = () => {
             </div>
 
             <form onSubmit={handleSaveEdit} className="space-y-4 text-xs">
+              {/* Photo Upload & Presets */}
+              <div className="flex flex-col items-center justify-center p-3 rounded-2xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] font-bold text-slate-700 mb-2">Staff Avatar / Official Photo</span>
+                <ProfilePhotoUpload
+                  value={editForm.avatar_url}
+                  onChange={(url) => setEditForm({ ...editForm, avatar_url: url })}
+                  memberName={`${editForm.first_name} ${editForm.last_name}`.trim() || 'Staff'}
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">First Name</label>
@@ -1394,19 +1489,73 @@ export const UsersPage: React.FC = () => {
                 </div>
               </div>
 
+              {/* Staff Position & Employment Status */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Official Ministry Title</label>
+                  <input
+                    type="text"
+                    value={editForm.job_title}
+                    onChange={(e) => setEditForm({ ...editForm, job_title: e.target.value })}
+                    placeholder="e.g. Senior Associate Pastor"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Employment / Service</label>
+                  <select
+                    value={editForm.employment_type}
+                    onChange={(e) => setEditForm({ ...editForm, employment_type: e.target.value as any })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
+                  >
+                    <option value="full_time">Full-Time Staff</option>
+                    <option value="part_time">Part-Time Staff</option>
+                    <option value="volunteer">Volunteer / Ministerial Worker</option>
+                    <option value="contract">Contractor / External</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Assigned Role Guard: Protect self-elevation and require super_admin */}
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Assigned Role</label>
-                <select
-                  value={editForm.role}
-                  onChange={(e) => setEditForm({ ...editForm, role: e.target.value as UserRole })}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
-                >
-                  {rolesList.map((r) => (
-                    <option key={r.role} value={r.role}>
-                      {r.title}
-                    </option>
-                  ))}
-                </select>
+                <label className="block font-semibold text-slate-700 mb-1">Assigned System Role</label>
+                {editingUser.id === currentUser.id && !isSuperAdmin ? (
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-xs flex items-center justify-between">
+                    <div>
+                      <span className="font-bold text-slate-800 block">
+                        {rolesList.find((r) => r.role === editForm.role)?.title || editForm.role}
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        Active account session role
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200">
+                      Self-role elevation locked
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <select
+                      value={editForm.role}
+                      onChange={(e) => setEditForm({ ...editForm, role: e.target.value as UserRole })}
+                      disabled={!isSuperAdmin}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800 disabled:bg-slate-50 disabled:cursor-not-allowed"
+                    >
+                      {rolesList
+                        .filter((r) => isSuperAdmin || (r.role !== 'super_admin' && r.role !== 'senior_pastor'))
+                        .map((r) => (
+                          <option key={r.role} value={r.role}>
+                            {r.title}
+                          </option>
+                        ))}
+                    </select>
+                    {!isSuperAdmin && (
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Only Super Administrators can modify staff system roles.
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
 
               <div className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200">
@@ -1414,11 +1563,19 @@ export const UsersPage: React.FC = () => {
                   type="checkbox"
                   id="userActiveCheck"
                   checked={editForm.is_active}
+                  disabled={editingUser.id === currentUser.id || isElishaRichard(editingUser)}
                   onChange={(e) => setEditForm({ ...editForm, is_active: e.target.checked })}
-                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 disabled:opacity-50"
                 />
-                <label htmlFor="userActiveCheck" className="text-xs font-semibold text-slate-800 cursor-pointer">
-                  Account Active (Uncheck to suspend login privileges)
+                <label
+                  htmlFor="userActiveCheck"
+                  className={`text-xs font-semibold ${
+                    editingUser.id === currentUser.id || isElishaRichard(editingUser)
+                      ? 'text-slate-400 cursor-not-allowed'
+                      : 'text-slate-800 cursor-pointer'
+                  }`}
+                >
+                  Account Active {editingUser.id === currentUser.id ? '(Active session cannot suspend itself)' : '(Uncheck to suspend login privileges)'}
                 </label>
               </div>
 

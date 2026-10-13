@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Outlet, useLocation, Navigate } from 'react-router-dom';
+import { Outlet, useLocation, Navigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sidebar } from '../components/Sidebar';
 import { Header } from '../components/Header';
@@ -22,6 +22,8 @@ export const AppLayout: React.FC = () => {
     isSimulating,
     impersonatingAdmin,
     exitSimulation,
+    canAccess,
+    logout,
   } = useAuth();
   const { refreshData } = useChurchData();
   const { success, warning } = useToast();
@@ -73,6 +75,12 @@ export const AppLayout: React.FC = () => {
     onCloseAllModals: handleCloseAllModals,
   });
 
+  // Check if active account has been suspended/deactivated
+  if (currentUser && currentUser.is_active === false) {
+    logout();
+    return <Navigate to="/login" replace state={{ deactivated: true }} />;
+  }
+
   // Redirect to login if user is not authenticated (must be after all hooks)
   if (!isAuthenticated) {
     return <Navigate to="/login" replace state={{ from: location }} />;
@@ -82,6 +90,33 @@ export const AppLayout: React.FC = () => {
   if (currentRole === 'member') {
     return <Navigate to="/portal" replace />;
   }
+
+  // Route-level authorization module resolution
+  const getRequiredModuleForPath = (pathname: string): { module: string; label: string } | null => {
+    const clean = pathname.toLowerCase();
+    if (clean === '/' || clean === '') return null; // Dashboard is core
+    if (clean.startsWith('/users')) return { module: 'users', label: 'Staff Directory & Access Control' };
+    if (clean.startsWith('/church-finance') || clean.startsWith('/finance')) return { module: 'finance', label: 'Church Treasury & Finance' };
+    if (clean.startsWith('/giving')) return { module: 'giving', label: 'Member Giving & Tithes' };
+    if (clean.startsWith('/pledges')) return { module: 'pledges', label: 'Pledge Campaigns' };
+    if (clean.startsWith('/welfare')) return { module: 'welfare', label: 'Welfare & Relief Fund' };
+    if (clean.startsWith('/pastoral-care')) return { module: 'pastoral_care', label: 'Pastoral Care & Counseling' };
+    if (clean.startsWith('/reports')) return { module: 'reports', label: 'Reports & Analytics' };
+    if (clean.startsWith('/audit-logs')) return { module: 'audit_logs', label: 'Audit Trail Logs' };
+    if (clean.startsWith('/settings')) return { module: 'settings', label: 'System Settings & Cloud Database' };
+    if (clean.startsWith('/visitors')) return { module: 'visitors', label: 'Visitors & Follow-up' };
+    if (clean.startsWith('/attendance')) return { module: 'attendance', label: 'Attendance & Headcounts' };
+    if (clean.startsWith('/services')) return { module: 'services', label: 'Church Services' };
+    if (clean.startsWith('/ministries')) return { module: 'ministries', label: 'Ministries & Departments' };
+    if (clean.startsWith('/small-groups')) return { module: 'small_groups', label: 'Cell Groups & Fellowships' };
+    if (clean.startsWith('/events')) return { module: 'events', label: 'Events & Calendar' };
+    if (clean.startsWith('/communication')) return { module: 'communication', label: 'Broadcast Communications' };
+    if (clean.startsWith('/members')) return { module: 'members', label: 'Congregational Registry' };
+    return null;
+  };
+
+  const requiredModuleInfo = getRequiredModuleForPath(location.pathname);
+  const isRouteUnauthorized = requiredModuleInfo ? !canAccess(requiredModuleInfo.module) : false;
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-[#070b14] flex text-slate-800 dark:text-slate-100 antialiased selection:bg-emerald-700 selection:text-white transition-colors duration-200">
@@ -130,18 +165,51 @@ export const AppLayout: React.FC = () => {
 
         {/* Dynamic Page Outlet with smooth route transitions */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={location.pathname}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-              className="w-full"
-            >
-              <Outlet />
-            </motion.div>
-          </AnimatePresence>
+          {isRouteUnauthorized ? (
+            <div className="bg-white rounded-2xl border border-rose-200 p-8 sm:p-12 text-center shadow-xs max-w-xl mx-auto my-12 animate-fade-in">
+              <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto mb-4 border border-rose-200 shadow-xs">
+                <ShieldAlert className="w-8 h-8" />
+              </div>
+              <h2 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
+                Access Restricted
+              </h2>
+              <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                Your account role <span className="font-bold text-slate-800 uppercase px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200">{currentRole.replace('_', ' ')}</span> does not have authorization to view <strong className="text-slate-800">{requiredModuleInfo?.label}</strong>.
+              </p>
+              <p className="text-[11px] text-slate-400 mt-2">
+                This operational security boundary is enforced according to Greater Works City Church administrative policy.
+              </p>
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+                <Link
+                  to="/"
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition shadow-xs"
+                >
+                  Return to Dashboard
+                </Link>
+                {isSimulating && (
+                  <button
+                    onClick={exitSimulation}
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-xs font-bold transition shadow-xs"
+                  >
+                    Exit Simulation Mode
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={location.pathname}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                className="w-full"
+              >
+                <Outlet />
+              </motion.div>
+            </AnimatePresence>
+          )}
         </main>
 
         {/* Footer */}

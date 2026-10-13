@@ -136,9 +136,8 @@ export const GivingPage: React.FC = () => {
     canAccess('finance') ||
     canAccess('giving') ||
     currentUser?.role === 'super_admin' ||
-    currentUser?.role === 'administrator' ||
-    currentUser?.role === 'finance_officer' ||
-    currentUser?.role === 'pastor';
+    currentUser?.role === 'senior_pastor' ||
+    currentUser?.role === 'finance_officer';
 
   // Identify linked member record for logged-in user
   const currentMember = useMemo(() => {

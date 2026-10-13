@@ -69,10 +69,16 @@ export interface UserProfile {
   email: string;
   phone?: string;
   department?: string;
+  job_title?: string;
+  employment_type?: 'full_time' | 'part_time' | 'volunteer' | 'contract';
   role: UserRole;
   avatar_url?: string;
   is_active: boolean;
   member_id?: string;
+  has_login_account?: boolean;
+  emergency_contact?: string;
+  hire_date?: string;
+  notes?: string;
   created_at: string;
   updated_at: string;
 }

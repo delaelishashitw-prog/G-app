@@ -644,6 +644,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               (isElishaRichard(undefined, cleanEmail) && isElishaRichard(u))
           );
           if (staff) {
+            if (staff.is_active === false) {
+              return {
+                success: false,
+                message: 'This staff account has been deactivated. Please contact church administration.',
+              };
+            }
             const effectiveStaff: UserProfile = isElishaRichard(staff, cleanEmail)
               ? { ...staff, role: 'super_admin' as UserRole }
               : staff;
@@ -687,6 +693,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         (isElishaRichard(undefined, cleanEmail) && isElishaRichard(u))
     );
     if (staff) {
+      if (staff.is_active === false) {
+        return {
+          success: false,
+          message: 'This staff account has been deactivated. Please contact church administration.',
+        };
+      }
       if (!password || password.trim().length < 4) {
         return { success: false, message: 'Please provide a valid password.' };
       }
@@ -1280,14 +1292,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isMemberPortalUser = currentUser.role === 'member' || currentMember !== null;
 
   const updateUser = (userId: string, updates: Partial<UserProfile>) => {
+    const caller = impersonatingAdmin || currentUser;
+    const isCallerSuperAdmin = caller.role === 'super_admin' || isElishaRichard(caller);
+    const isCallerAdmin = isCallerSuperAdmin || caller.role === 'administrator';
+
+    if (!isCallerAdmin) {
+      console.warn('Unauthorized updateUser: user lacks administrative permissions.');
+      return;
+    }
+
     setUsersList((prev) => {
       const index = prev.findIndex((u) => u.id === userId);
       if (index === -1) return prev;
-      const isTargetElisha = isElishaRichard(prev[index]);
+      const targetUser = prev[index];
+      const isTargetElisha = isElishaRichard(targetUser);
+
+      // SECURITY GUARD: Only super_admin can change roles, and cannot escalate non-admins without super_admin
+      let allowedRole = targetUser.role;
+      if (updates.role && updates.role !== targetUser.role) {
+        if (!isCallerSuperAdmin) {
+          console.warn('Unauthorized role change blocked: only super_admin can modify staff roles.');
+        } else if (isTargetElisha) {
+          allowedRole = 'super_admin';
+        } else {
+          allowedRole = updates.role;
+        }
+      }
+
       const updatedUser: UserProfile = {
-        ...prev[index],
+        ...targetUser,
         ...updates,
-        role: isTargetElisha ? 'super_admin' : (updates.role || prev[index].role),
+        role: allowedRole,
         updated_at: new Date().toISOString(),
       };
       const next = [...prev];
@@ -1320,9 +1355,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteUser = (userId: string): boolean => {
+    const caller = impersonatingAdmin || currentUser;
+    const isCallerSuperAdmin = caller.role === 'super_admin' || isElishaRichard(caller);
+
+    // SECURITY GUARD: Only super_admin can remove staff accounts
+    if (!isCallerSuperAdmin) {
+      console.warn('Unauthorized deleteUser: only super_admin can delete staff accounts.');
+      return false;
+    }
+
     if (currentUser.id === userId) {
       return false; // Prevent deleting active logged-in user
     }
+
+    const targetUser = usersList.find((u) => u.id === userId);
+    if (!targetUser) return false;
+
+    // SECURITY GUARD: Never delete Prophet Elisha or super_admin accounts
+    if (isElishaRichard(targetUser) || targetUser.role === 'super_admin') {
+      console.warn('Protected account: root super_admin accounts cannot be deleted.');
+      return false;
+    }
+
     setUsersList((prev) => prev.filter((u) => u.id !== userId));
 
     const client = getSupabaseClient();
@@ -1346,9 +1400,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUsersList((prev) => {
       const index = prev.findIndex((u) => u.id === userId);
       if (index === -1) return prev;
-      const newActive = !prev[index].is_active;
+      const targetUser = prev[index];
+
+      // SECURITY GUARD: Cannot suspend root senior pastor
+      if (isElishaRichard(targetUser) && targetUser.is_active) {
+        console.warn('Protected account: root senior pastor cannot be suspended.');
+        return prev;
+      }
+
+      const newActive = !targetUser.is_active;
       const updatedUser: UserProfile = {
-        ...prev[index],
+        ...targetUser,
         is_active: newActive,
         updated_at: new Date().toISOString(),
       };
