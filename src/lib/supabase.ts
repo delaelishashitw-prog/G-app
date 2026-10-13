@@ -19,6 +19,8 @@ import {
   HeadcountRecord,
   WelfareContribution,
   WelfareClaim,
+  WelfareEvent,
+  WelfareEventContribution,
   RosterAssignment,
   ChurchAccount,
   ChurchFinanceRecord,
@@ -376,6 +378,8 @@ export async function checkSupabaseTables(): Promise<{
     'communications',
     'welfare_contributions',
     'welfare_claims',
+    'welfare_events',
+    'welfare_event_contributions',
     'audit_logs',
     'settings',
   ];
@@ -751,9 +755,142 @@ export function sanitizeRecordForSupabase(table: string, record: any): any {
       };
     }
 
+    case 'settings': {
+      return {
+        ...record,
+        id: record.id || 'gwcc_global_settings',
+        church_name: record.church_name || 'Greater Works City Church',
+        short_name: record.short_name || 'GWCC',
+        location: record.location || 'Joma, Accra, Ghana',
+        address: record.address || 'Main High Street, Adjacent to Joma Market, Joma, Accra',
+        gps_address: record.gps_address || 'GA-183-4921',
+        phone: record.phone || '+233 24 456 7890',
+        email: record.email || 'admin@greaterworkscitychurch.org',
+        currency: record.currency || 'GHS',
+        currency_symbol: record.currency_symbol || 'GH₵',
+        timezone: record.timezone || 'Africa/Accra',
+        updated_at: record.updated_at || new Date().toISOString(),
+      };
+    }
+
+    case 'welfare_events': {
+      return {
+        ...record,
+        title: record.title || 'Welfare Contribution Appeal',
+        category: record.category || 'other',
+        category_custom: record.category_custom || null,
+        member_id: record.member_id || 'mem-1',
+        member_name: record.member_name || 'Church Member',
+        beneficiary_family_name: record.beneficiary_family_name || null,
+        description: record.description || '',
+        pastoral_notes: record.pastoral_notes || null,
+        start_date: cleanDate(record.start_date) || new Date().toISOString().split('T')[0],
+        end_date: cleanDate(record.end_date) || new Date().toISOString().split('T')[0],
+        target_amount: record.target_amount ? Number(record.target_amount) : null,
+        minimum_contribution: Math.max(20.0, Number(record.minimum_contribution) || 20.0),
+        status: record.status || 'open',
+        created_by: record.created_by || 'Church Administrator',
+        created_at: record.created_at || new Date().toISOString(),
+        updated_at: record.updated_at || new Date().toISOString(),
+      };
+    }
+
+    case 'welfare_event_contributions': {
+      return {
+        ...record,
+        event_id: record.event_id,
+        member_id: record.member_id || 'mem-1',
+        contributor_name: record.contributor_name || 'Member Contributor',
+        contributor_phone: record.contributor_phone || null,
+        tithe_number: record.tithe_number || null,
+        amount: Math.max(20.0, Number(record.amount) || 20.0),
+        payment_date: cleanDate(record.payment_date) || new Date().toISOString().split('T')[0],
+        payment_method: record.payment_method || 'mobile_money',
+        payment_channel: record.payment_channel || null,
+        reference_no: record.reference_no || null,
+        notes: record.notes || null,
+        payment_status: record.payment_status || 'confirmed',
+        recorded_by: record.recorded_by || 'Welfare Officer',
+        corrected_by: record.corrected_by || null,
+        finance_transaction_id: record.finance_transaction_id || null,
+        created_at: record.created_at || new Date().toISOString(),
+        updated_at: record.updated_at || new Date().toISOString(),
+      };
+    }
+
     default:
       return record;
   }
+}
+
+// RESILIENT UPSERT FOR CHURCH SETTINGS
+// Automatically handles remote Supabase databases where schema cache has not yet reloaded
+// or where newly added columns (such as pastor_signature_url, general_secretary, etc.) are pending migration.
+export async function upsertSettingsWithFallback(
+  client: SupabaseClient,
+  rawPayload: any
+): Promise<{ error: any }> {
+  let payload: any = {
+    id: 'gwcc_global_settings',
+    ...rawPayload,
+    updated_at: new Date().toISOString(),
+  };
+
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const { error } = await client.from('settings').upsert(payload);
+    if (!error) {
+      return { error: null };
+    }
+
+    const msg = error.message || '';
+    const details = String(error.details || '');
+    const hint = String((error as any).hint || '');
+    const combined = `${msg} ${details} ${hint}`;
+
+    // Detect PostgREST schema cache missing column error:
+    // e.g. "Could not find the 'pastor_signature_url' column of 'settings' in the schema cache"
+    const match = combined.match(/Could not find the '([^']+)' column of 'settings'/i);
+    if (match && match[1] && match[1] in payload) {
+      const colToRemove = match[1];
+      delete payload[colToRemove];
+      continue;
+    }
+
+    if (combined.includes('pastor_signature_url') && 'pastor_signature_url' in payload) {
+      delete payload.pastor_signature_url;
+      continue;
+    }
+
+    if (combined.includes('general_secretary') && 'general_secretary' in payload) {
+      delete payload.general_secretary;
+      continue;
+    }
+
+    if (combined.includes('senior_pastor') && 'senior_pastor' in payload) {
+      delete payload.senior_pastor;
+      continue;
+    }
+
+    if (combined.includes('branch_name') && 'branch_name' in payload) {
+      delete payload.branch_name;
+      continue;
+    }
+
+    if (combined.includes('tagline') && 'tagline' in payload) {
+      delete payload.tagline;
+      continue;
+    }
+
+    if (combined.includes('website') && 'website' in payload) {
+      delete payload.website;
+      continue;
+    }
+
+    // Unrecoverable error
+    return { error };
+  }
+
+  return { error: null };
 }
 
 // PUSH ALL DATA FROM LOCAL TO SUPABASE
@@ -780,6 +917,8 @@ export interface ChurchAllData {
   auditLogs: AuditLog[];
   welfareContributions?: WelfareContribution[];
   welfareClaims?: WelfareClaim[];
+  welfareEvents?: WelfareEvent[];
+  welfareEventContributions?: WelfareEventContribution[];
 }
 
 export async function pushAllDataToSupabase(
@@ -799,17 +938,7 @@ export async function pushAllDataToSupabase(
       name: 'settings',
       label: 'Church Settings',
       run: async () => {
-        const payload: any = {
-          id: 'gwcc_global_settings',
-          ...data.settings,
-          updated_at: new Date().toISOString(),
-        };
-        let { error } = await client.from('settings').upsert(payload);
-        if (error && (error.message?.includes('general_secretary') || String(error.details || '').includes('general_secretary'))) {
-          delete payload.general_secretary;
-          const retry = await client.from('settings').upsert(payload);
-          error = retry.error;
-        }
+        const { error } = await upsertSettingsWithFallback(client, data.settings);
         if (error) throw error;
         summary['settings'] = 1;
       },
@@ -1457,6 +1586,56 @@ export async function pushAllDataToSupabase(
       },
     },
     {
+      name: 'welfare_events',
+      label: 'Welfare Contribution Events',
+      run: async () => {
+        if (!data.welfareEvents || data.welfareEvents.length === 0) return;
+        const now = new Date().toISOString();
+        const sanitized = data.welfareEvents.map((event) => ({
+          ...event,
+          start_date: cleanDate(event.start_date) || now.split('T')[0],
+          end_date: cleanDate(event.end_date) || now.split('T')[0],
+          target_amount: event.target_amount ? Number(event.target_amount) : null,
+          minimum_contribution: Math.max(20.0, Number(event.minimum_contribution) || 20.0),
+          created_at: event.created_at || now,
+          updated_at: event.updated_at || now,
+        }));
+        const { error } = await client.from('welfare_events').upsert(sanitized);
+        if (error) {
+          if (isTableNotFoundError(error) || isPermissionDeniedError(error)) {
+            console.warn('Welfare events table pending in Supabase; continuing sync');
+            return;
+          }
+          throw error;
+        }
+        summary['welfare_events'] = sanitized.length;
+      },
+    },
+    {
+      name: 'welfare_event_contributions',
+      label: 'Welfare Event Contributions',
+      run: async () => {
+        if (!data.welfareEventContributions || data.welfareEventContributions.length === 0) return;
+        const now = new Date().toISOString();
+        const sanitized = data.welfareEventContributions.map((c) => ({
+          ...c,
+          amount: Math.max(20.0, Number(c.amount) || 20.0),
+          payment_date: cleanDate(c.payment_date) || now.split('T')[0],
+          created_at: c.created_at || now,
+          updated_at: c.updated_at || now,
+        }));
+        const { error } = await client.from('welfare_event_contributions').upsert(sanitized);
+        if (error) {
+          if (isTableNotFoundError(error) || isPermissionDeniedError(error)) {
+            console.warn('Welfare event contributions table pending in Supabase; continuing sync');
+            return;
+          }
+          throw error;
+        }
+        summary['welfare_event_contributions'] = sanitized.length;
+      },
+    },
+    {
       name: 'audit_logs',
       label: 'System Audit Logs',
       run: async () => {
@@ -1529,6 +1708,8 @@ export async function pullAllDataFromSupabase(): Promise<{
     { table: 'communications', key: 'communications' },
     { table: 'welfare_contributions', key: 'welfareContributions' },
     { table: 'welfare_claims', key: 'welfareClaims' },
+    { table: 'welfare_events', key: 'welfareEvents' },
+    { table: 'welfare_event_contributions', key: 'welfareEventContributions' },
     { table: 'audit_logs', key: 'auditLogs' },
   ];
 
@@ -1630,6 +1811,13 @@ export async function dbSyncUpsert(table: string, record: any): Promise<void> {
       }
     }
 
+    if (table === 'settings') {
+      const { error: settingsErr } = await upsertSettingsWithFallback(client, sanitized);
+      if (!settingsErr) return;
+      console.warn(`Supabase upsert failed on settings:`, settingsErr.message);
+      return;
+    }
+
     let { error } = await client.from(table).upsert(sanitized);
     if (error && !isTableNotFoundError(error)) {
       if (
@@ -1639,11 +1827,6 @@ export async function dbSyncUpsert(table: string, record: any): Promise<void> {
           String((error as any).hint || '').includes('tithe_number'))
       ) {
         const { tithe_number, ...rest } = sanitized;
-        const retry = await client.from(table).upsert(rest);
-        if (!retry.error) return;
-      }
-      if (table === 'settings' && (error.message?.includes('general_secretary') || String(error.details || '').includes('general_secretary'))) {
-        const { general_secretary, ...rest } = sanitized;
         const retry = await client.from(table).upsert(rest);
         if (!retry.error) return;
       }

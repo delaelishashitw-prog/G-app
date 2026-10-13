@@ -177,6 +177,7 @@ CREATE TABLE IF NOT EXISTS public.settings (
   tagline VARCHAR(250) DEFAULT 'Taking Cities and Nations for Christ through the Greater Works',
   short_name VARCHAR(50) NOT NULL DEFAULT 'GWCC',
   logo_url TEXT DEFAULT '/assets/logo.png',
+  pastor_signature_url TEXT DEFAULT '/assets/pastor_signature.svg',
   location VARCHAR(200) NOT NULL DEFAULT 'Joma, Accra, Ghana',
   address TEXT DEFAULT 'Main High Street, Adjacent to Joma Market, Joma, Accra',
   gps_address VARCHAR(50) DEFAULT 'GA-183-4921',
@@ -894,6 +895,7 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
 -- ==============================================================================
 ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS general_secretary VARCHAR(150) DEFAULT 'Tamekloe Clara Gaewornu';
 ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS senior_pastor VARCHAR(150) DEFAULT 'Prophet Elisha K. Richard';
+ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS pastor_signature_url TEXT DEFAULT '/assets/pastor_signature.svg';
 
 ALTER TABLE public.members ADD COLUMN IF NOT EXISTS date_joined DATE DEFAULT CURRENT_DATE;
 ALTER TABLE public.members ADD COLUMN IF NOT EXISTS national_id VARCHAR(50);

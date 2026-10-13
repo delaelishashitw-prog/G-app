@@ -188,6 +188,7 @@ CREATE TABLE IF NOT EXISTS public.settings (
   senior_pastor VARCHAR(150) DEFAULT 'Prophet Elisha K. Richard',
   general_secretary VARCHAR(150) DEFAULT 'Tamekloe Clara Gaewornu',
   logo_url TEXT DEFAULT '/assets/logo.png',
+  pastor_signature_url TEXT DEFAULT '/assets/pastor_signature.svg',
   location VARCHAR(200) NOT NULL DEFAULT 'Joma, Accra, Ghana',
   address TEXT DEFAULT 'Main High Street, Adjacent to Joma Market, Joma, Accra',
   gps_address VARCHAR(50) DEFAULT 'GA-183-4921',
@@ -873,7 +874,50 @@ ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS finance_account_id TE
 ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS finance_account_name VARCHAR(150);
 ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS disbursements JSONB DEFAULT '[]'::jsonb;
 
--- 3.19 AUDIT TRAIL LOGS
+-- 3.19 WELFARE CONTRIBUTION EVENTS
+CREATE TABLE IF NOT EXISTS public.welfare_events (
+  id VARCHAR(100) PRIMARY KEY,
+  title VARCHAR(255) NOT NULL,
+  category VARCHAR(100) NOT NULL,
+  category_custom VARCHAR(255),
+  member_id VARCHAR(100) NOT NULL,
+  member_name VARCHAR(150) NOT NULL,
+  beneficiary_family_name VARCHAR(200),
+  description TEXT NOT NULL,
+  pastoral_notes TEXT,
+  start_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  end_date DATE NOT NULL,
+  target_amount NUMERIC(12, 2),
+  minimum_contribution NUMERIC(10, 2) NOT NULL DEFAULT 20.00 CHECK (minimum_contribution >= 20.00),
+  status VARCHAR(50) NOT NULL DEFAULT 'open',
+  created_by VARCHAR(150) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 3.20 WELFARE EVENT CONTRIBUTIONS
+CREATE TABLE IF NOT EXISTS public.welfare_event_contributions (
+  id VARCHAR(100) PRIMARY KEY,
+  event_id VARCHAR(100) NOT NULL REFERENCES public.welfare_events(id) ON DELETE CASCADE,
+  member_id VARCHAR(100) NOT NULL,
+  contributor_name VARCHAR(150) NOT NULL,
+  contributor_phone VARCHAR(50),
+  tithe_number VARCHAR(50),
+  amount NUMERIC(12, 2) NOT NULL CHECK (amount >= 20.00),
+  payment_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  payment_method VARCHAR(50) NOT NULL DEFAULT 'mobile_money',
+  payment_channel VARCHAR(100),
+  reference_no VARCHAR(100),
+  notes TEXT,
+  payment_status VARCHAR(50) NOT NULL DEFAULT 'confirmed',
+  recorded_by VARCHAR(150) NOT NULL,
+  corrected_by VARCHAR(150),
+  finance_transaction_id VARCHAR(100),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 3.21 AUDIT TRAIL LOGS
 CREATE TABLE IF NOT EXISTS public.audit_logs (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   user_name VARCHAR(150) NOT NULL,
@@ -950,6 +994,7 @@ CREATE TABLE IF NOT EXISTS public.church_finances (
 -- ==============================================================================
 ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS general_secretary VARCHAR(150) DEFAULT 'Tamekloe Clara Gaewornu';
 ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS senior_pastor VARCHAR(150) DEFAULT 'Prophet Elisha K. Richard';
+ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS pastor_signature_url TEXT DEFAULT '/assets/pastor_signature.svg';
 
 ALTER TABLE public.members ADD COLUMN IF NOT EXISTS date_joined DATE DEFAULT CURRENT_DATE;
 ALTER TABLE public.members ADD COLUMN IF NOT EXISTS national_id VARCHAR(50);
@@ -1144,6 +1189,7 @@ ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS branch_name VARCHAR(100) DE
 ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS tagline VARCHAR(250) DEFAULT 'Taking Cities and Nations for Christ through the Greater Works';
 ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS senior_pastor VARCHAR(150) DEFAULT 'Prophet Elisha K. Richard';
 ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS general_secretary VARCHAR(150) DEFAULT 'Tamekloe Clara Gaewornu';
+ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS pastor_signature_url TEXT DEFAULT '/assets/pastor_signature.svg';
 
 -- ==============================================================================
 -- 5. HIGH PERFORMANCE DATABASE INDEXES
@@ -1284,6 +1330,8 @@ ALTER TABLE public.communications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.welfare_contributions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.welfare_claims ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.welfare_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.welfare_event_contributions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.roster_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.church_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.church_finances ENABLE ROW LEVEL SECURITY;
@@ -1296,8 +1344,8 @@ DECLARE
     'visitors', 'services', 'attendance', 'headcounts', 'giving',
     'pledge_campaigns', 'pledges', 'expenses', 'events', 'pastoral_care',
     'prayer_requests', 'communications', 'audit_logs',
-    'welfare_contributions', 'welfare_claims', 'roster_assignments',
-    'church_accounts', 'church_finances'
+    'welfare_contributions', 'welfare_claims', 'welfare_events', 'welfare_event_contributions',
+    'roster_assignments', 'church_accounts', 'church_finances'
   ];
 BEGIN
   FOREACH t IN ARRAY tables LOOP
@@ -1320,7 +1368,7 @@ $$;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.members, public.giving, public.attendance, public.visitors, public.services, public.pledges, public.welfare_contributions, public.welfare_claims, public.roster_assignments, public.church_accounts, public.church_finances;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.members, public.giving, public.attendance, public.visitors, public.services, public.pledges, public.welfare_contributions, public.welfare_claims, public.welfare_events, public.welfare_event_contributions, public.roster_assignments, public.church_accounts, public.church_finances;
   END IF;
 EXCEPTION
   WHEN duplicate_object THEN NULL;
@@ -1717,6 +1765,7 @@ export const SQL_FIX_RLS_SCHEMA = `-- ==========================================
 ALTER TABLE public.giving ADD COLUMN IF NOT EXISTS tithe_number VARCHAR(100);
 ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS general_secretary VARCHAR(150) DEFAULT 'Tamekloe Clara Gaewornu';
 ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS senior_pastor VARCHAR(150) DEFAULT 'Prophet Elisha K. Richard';
+ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS pastor_signature_url TEXT DEFAULT '/assets/pastor_signature.svg';
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- 2. Ensure Welfare tables exist in PostgreSQL

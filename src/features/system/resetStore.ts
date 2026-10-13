@@ -55,11 +55,13 @@ import {
   sampleVisitors,
   sampleWelfareClaims,
   sampleWelfareContributions,
+  sampleWelfareEvents,
+  sampleWelfareEventContributions,
   sampleChurchAccounts,
   sampleChurchFinances,
   sampleDepartmentBudgets,
 } from '../../lib/initialData';
-import type { ChurchAccount, ChurchFinanceRecord, DepartmentBudget } from '../../types/database.types';
+import type { ChurchAccount, ChurchFinanceRecord, DepartmentBudget, WelfareEvent, WelfareEventContribution } from '../../types/database.types';
 
 export type ResetStateSetters = {
   setSettings: Dispatch<SetStateAction<ChurchSettings>>;
@@ -84,6 +86,8 @@ export type ResetStateSetters = {
   setAuditLogs: Dispatch<SetStateAction<AuditLog[]>>;
   setWelfareContributions: Dispatch<SetStateAction<WelfareContribution[]>>;
   setWelfareClaims: Dispatch<SetStateAction<WelfareClaim[]>>;
+  setWelfareEvents?: Dispatch<SetStateAction<WelfareEvent[]>>;
+  setWelfareEventContributions?: Dispatch<SetStateAction<WelfareEventContribution[]>>;
   setChildCheckIns: Dispatch<SetStateAction<ChildCheckInRecord[]>>;
   setAssets: Dispatch<SetStateAction<ChurchAsset[]>>;
   setRosterAssignments: Dispatch<SetStateAction<RosterAssignment[]>>;
@@ -154,6 +158,8 @@ export function resetToSampleDataState(
   setAuditLogs(sampleAuditLogs);
   setWelfareContributions(sampleWelfareContributions);
   setWelfareClaims(sampleWelfareClaims);
+  if (setters.setWelfareEvents) setters.setWelfareEvents(sampleWelfareEvents);
+  if (setters.setWelfareEventContributions) setters.setWelfareEventContributions(sampleWelfareEventContributions);
   setChildCheckIns(sampleChildCheckIns);
   setAssets(sampleAssets);
   setRosterAssignments(sampleRosterAssignments);
@@ -185,6 +191,8 @@ export function resetToSampleDataState(
   saveToStorage('auditLogs', sampleAuditLogs);
   saveToStorage('welfareContributions', sampleWelfareContributions);
   saveToStorage('welfareClaims', sampleWelfareClaims);
+  saveToStorage('welfareEvents', sampleWelfareEvents);
+  saveToStorage('welfareEventContributions', sampleWelfareEventContributions);
   saveToStorage('childCheckIns', sampleChildCheckIns);
   saveToStorage('assets', sampleAssets);
   saveToStorage('rosterAssignments', sampleRosterAssignments);

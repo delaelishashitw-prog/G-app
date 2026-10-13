@@ -21,6 +21,8 @@ import {
   PaymentMethod,
   WelfareContribution,
   WelfareClaim,
+  WelfareEvent,
+  WelfareEventContribution,
   ChildCheckInRecord,
   ChurchAsset,
   AssetMaintenanceLog,
@@ -58,6 +60,8 @@ import {
   sampleAuditLogs,
   sampleWelfareContributions,
   sampleWelfareClaims,
+  sampleWelfareEvents,
+  sampleWelfareEventContributions,
   sampleChildCheckIns,
   sampleAssets,
   sampleRosterAssignments,
@@ -173,6 +177,13 @@ import {
   recordWelfareContribution as recordWelfareContributionRecord,
   submitWelfareClaim as submitWelfareClaimRecord,
   updateWelfareClaim as updateWelfareClaimRecord,
+  createWelfareEvent as createWelfareEventRecord,
+  updateWelfareEvent as updateWelfareEventRecord,
+  closeWelfareEvent as closeWelfareEventRecord,
+  deleteWelfareEvent as deleteWelfareEventRecord,
+  recordEventContribution as recordEventContributionRecord,
+  updateEventContribution as updateEventContributionRecord,
+  deleteEventContribution as deleteEventContributionRecord,
 } from '../features/welfare/welfareStore';
 import {
   addAsset as addAssetRecord,
@@ -379,6 +390,25 @@ interface ChurchDataContextType {
       sync_with_church_finance?: boolean;
     }
   ) => void;
+
+  // Welfare Contribution Events
+  welfareEvents: WelfareEvent[];
+  createWelfareEvent: (event: Omit<WelfareEvent, 'id' | 'created_at' | 'updated_at'>) => WelfareEvent;
+  updateWelfareEvent: (id: string, updates: Partial<WelfareEvent>) => WelfareEvent | undefined;
+  closeWelfareEvent: (id: string) => WelfareEvent | undefined;
+  deleteWelfareEvent: (id: string) => { success: boolean; message: string };
+  welfareEventContributions: WelfareEventContribution[];
+  recordEventContribution: (
+    data: Omit<WelfareEventContribution, 'id' | 'created_at' | 'updated_at'>,
+    options?: {
+      forceDuplicateConfirmation?: boolean;
+      linkToChurchFinance?: boolean;
+      financeAccountId?: string;
+      financeAccountName?: string;
+    }
+  ) => { success: boolean; contribution?: WelfareEventContribution; error?: string; isDuplicateWarning?: boolean };
+  updateEventContribution: (id: string, updates: Partial<WelfareEventContribution>) => void;
+  deleteEventContribution: (id: string) => void;
 
   // Children's Ministry Safety & Pickup Tags
   childCheckIns: ChildCheckInRecord[];
@@ -591,6 +621,16 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return loaded && loaded.length > 0 ? loaded : sampleWelfareClaims;
   });
 
+  const [welfareEvents, setWelfareEvents] = useState<WelfareEvent[]>(() => {
+    const loaded = loadFromStorage<WelfareEvent[]>('welfareEvents', []);
+    return loaded && loaded.length > 0 ? loaded : sampleWelfareEvents;
+  });
+
+  const [welfareEventContributions, setWelfareEventContributions] = useState<WelfareEventContribution[]>(() => {
+    const loaded = loadFromStorage<WelfareEventContribution[]>('welfareEventContributions', []);
+    return loaded && loaded.length > 0 ? loaded : sampleWelfareEventContributions;
+  });
+
   const [childCheckIns, setChildCheckIns] = useState<ChildCheckInRecord[]>(() => {
     const loaded = loadFromStorage<ChildCheckInRecord[]>('childCheckIns', []);
     return loaded && loaded.length > 0 ? loaded : sampleChildCheckIns;
@@ -793,6 +833,16 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (isInitialMount.current) return;
     saveToStorage('welfareClaims', welfareClaims);
   }, [welfareClaims]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('welfareEvents', welfareEvents);
+  }, [welfareEvents]);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    saveToStorage('welfareEventContributions', welfareEventContributions);
+  }, [welfareEventContributions]);
 
   useEffect(() => {
     if (isInitialMount.current) return;
@@ -1003,6 +1053,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (data.communications && data.communications.length > 0) setCommunications(data.communications);
           if (data.welfareContributions && data.welfareContributions.length > 0) setWelfareContributions(data.welfareContributions);
           if (data.welfareClaims && data.welfareClaims.length > 0) setWelfareClaims(data.welfareClaims);
+          if (data.welfareEvents && data.welfareEvents.length > 0) setWelfareEvents(data.welfareEvents);
+          if (data.welfareEventContributions && data.welfareEventContributions.length > 0) setWelfareEventContributions(data.welfareEventContributions);
           if (data.settings) setSettings(normalizeSettings(data.settings, initialSettings));
 
           const now = new Date().toISOString();
@@ -1184,6 +1236,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (data.communications) setCommunications(data.communications);
           if (data.welfareContributions) setWelfareContributions(data.welfareContributions);
           if (data.welfareClaims) setWelfareClaims(data.welfareClaims);
+          if (data.welfareEvents) setWelfareEvents(data.welfareEvents);
+          if (data.welfareEventContributions) setWelfareEventContributions(data.welfareEventContributions);
           if (data.auditLogs) setAuditLogs(data.auditLogs);
           if (data.settings) setSettings(normalizeSettings(data.settings, initialSettings));
 
@@ -1944,6 +1998,79 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   };
 
+  // WELFARE CONTRIBUTION EVENTS
+  const createWelfareEvent = (
+    data: Omit<WelfareEvent, 'id' | 'created_at' | 'updated_at'>
+  ): WelfareEvent =>
+    createWelfareEventRecord(data, setWelfareEvents, logAction, dbSyncUpsert);
+
+  const updateWelfareEvent = (id: string, updates: Partial<WelfareEvent>): WelfareEvent | undefined =>
+    updateWelfareEventRecord(id, updates, setWelfareEvents, logAction, dbSyncUpsert);
+
+  const closeWelfareEvent = (id: string): WelfareEvent | undefined =>
+    closeWelfareEventRecord(
+      id,
+      `${currentUser.first_name} ${currentUser.last_name}`,
+      setWelfareEvents,
+      logAction,
+      dbSyncUpsert
+    );
+
+  const deleteWelfareEvent = (id: string): { success: boolean; message: string } =>
+    deleteWelfareEventRecord(
+      id,
+      welfareEvents,
+      welfareEventContributions,
+      setWelfareEvents,
+      logAction,
+      dbSyncDelete
+    );
+
+  const recordEventContribution = (
+    data: Omit<WelfareEventContribution, 'id' | 'created_at' | 'updated_at'>,
+    options?: {
+      forceDuplicateConfirmation?: boolean;
+      linkToChurchFinance?: boolean;
+      financeAccountId?: string;
+      financeAccountName?: string;
+    }
+  ) =>
+    recordEventContributionRecord(
+      data,
+      welfareEvents,
+      welfareEventContributions,
+      setWelfareEventContributions,
+      logAction,
+      dbSyncUpsert,
+      {
+        ...options,
+        setChurchFinances,
+        setChurchAccounts,
+      }
+    );
+
+  const updateEventContribution = (id: string, updates: Partial<WelfareEventContribution>) => {
+    updateEventContributionRecord(
+      id,
+      updates,
+      `${currentUser.first_name} ${currentUser.last_name}`,
+      setWelfareEventContributions,
+      logAction,
+      dbSyncUpsert
+    );
+  };
+
+  const deleteEventContribution = (id: string) => {
+    deleteEventContributionRecord(
+      id,
+      welfareEventContributions,
+      `${currentUser.first_name} ${currentUser.last_name}`,
+      setWelfareEventContributions,
+      logAction,
+      dbSyncDelete
+    );
+  };
+
   // CHILDREN'S MINISTRY SAFETY & PICKUP TAGS
   const checkInChild = (
     data: Omit<ChildCheckInRecord, 'id' | 'security_code' | 'created_at' | 'status'> & { security_code?: string }
@@ -2169,6 +2296,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setAuditLogs,
         setWelfareContributions,
         setWelfareClaims,
+        setWelfareEvents,
+        setWelfareEventContributions,
         setChildCheckIns,
         setAssets,
         setRosterAssignments,
@@ -2295,6 +2424,15 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       updateWelfareClaim,
       deleteWelfareClaim,
       disburseWelfareClaim,
+      welfareEvents,
+      createWelfareEvent,
+      updateWelfareEvent,
+      closeWelfareEvent,
+      deleteWelfareEvent,
+      welfareEventContributions,
+      recordEventContribution,
+      updateEventContribution,
+      deleteEventContribution,
       childCheckIns,
       checkInChild,
       checkOutChild,
@@ -2358,6 +2496,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       auditLogs,
       welfareContributions,
       welfareClaims,
+      welfareEvents,
+      welfareEventContributions,
       childCheckIns,
       assets,
       rosterAssignments,

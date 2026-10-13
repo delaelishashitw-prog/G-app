@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
-import { sanitizeRecordForSupabase } from './supabase.ts';
+import { sanitizeRecordForSupabase, upsertSettingsWithFallback } from './supabase.ts';
 import {
   SQL_MIGRATION_SCHEMA,
   SQL_FIX_RLS_SCHEMA,
@@ -294,3 +294,82 @@ test('Church Finance: recordChurchFinance rounds decimal precision and updates d
   assert.equal(accounts[0].current_balance, 4549.44, 'Account balance should be 5000 - 450.56 = 4549.44');
   assert.equal(budgets[0].spent_amount, 1450.56, 'Budget spent amount should be 1000 + 450.56 = 1450.56');
 });
+
+test('Church Settings: sanitizeRecordForSupabase correctly formats settings table record', () => {
+  const inputSettings = {
+    church_name: 'Greater Works City Church',
+    senior_pastor: 'Prophet Elisha K. Richard',
+    pastor_signature_url: '/assets/pastor_signature.svg',
+    phone: '+233 24 456 7890',
+  };
+
+  const sanitized = sanitizeRecordForSupabase('settings', inputSettings);
+  assert.equal(sanitized.id, 'gwcc_global_settings');
+  assert.equal(sanitized.church_name, 'Greater Works City Church');
+  assert.equal(sanitized.short_name, 'GWCC');
+  assert.equal(sanitized.pastor_signature_url, '/assets/pastor_signature.svg');
+  assert.ok(sanitized.updated_at, 'Should include updated_at timestamp');
+});
+
+test('Church Settings: upsertSettingsWithFallback automatically removes pastor_signature_url when schema cache missing column error occurs', async () => {
+  const recordedPayloads = [];
+  const fakeClient = {
+    from: (table) => {
+      assert.equal(table, 'settings');
+      return {
+        upsert: async (payload) => {
+          recordedPayloads.push({ ...payload });
+          // First attempt: simulate PostgREST schema cache error for pastor_signature_url
+          if (payload.pastor_signature_url) {
+            return {
+              error: {
+                message: "Could not find the 'pastor_signature_url' column of 'settings' in the schema cache",
+                code: 'PGRST204',
+              },
+            };
+          }
+          // Second attempt: succeeds once pastor_signature_url is stripped
+          return { error: null };
+        },
+      };
+    },
+  };
+
+  const testPayload = {
+    church_name: 'Greater Works City Church',
+    pastor_signature_url: '/assets/custom_signature.svg',
+    senior_pastor: 'Prophet Elisha K. Richard',
+  };
+
+  const result = await upsertSettingsWithFallback(fakeClient, testPayload);
+  assert.equal(result.error, null, 'Fallback should resolve the error without throwing');
+  assert.equal(recordedPayloads.length, 2, 'Should have made 2 attempts');
+  assert.ok(recordedPayloads[0].pastor_signature_url, 'First attempt had pastor_signature_url');
+  assert.equal(recordedPayloads[1].pastor_signature_url, undefined, 'Second attempt had pastor_signature_url removed');
+  assert.equal(recordedPayloads[1].church_name, 'Greater Works City Church');
+});
+
+test('Church Settings: SQL schemas and migrations contain pastor_signature_url', () => {
+  assert.ok(
+    SQL_MIGRATION_SCHEMA.includes('pastor_signature_url'),
+    'SQL_MIGRATION_SCHEMA should declare pastor_signature_url column'
+  );
+  assert.ok(
+    SQL_FIX_RLS_SCHEMA.includes('pastor_signature_url'),
+    'SQL_FIX_RLS_SCHEMA should include pastor_signature_url migration statement'
+  );
+
+  const migrationFile = fs.readFileSync(
+    'supabase/migrations/20261014000002_add_pastor_signature_url_to_settings.sql',
+    'utf-8'
+  );
+  assert.ok(
+    migrationFile.includes('ALTER TABLE public.settings'),
+    'Migration file should alter public.settings'
+  );
+  assert.ok(
+    migrationFile.includes('pastor_signature_url'),
+    'Migration file should add pastor_signature_url'
+  );
+});
+

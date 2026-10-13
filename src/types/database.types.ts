@@ -570,6 +570,58 @@ export type WelfareClaimStatus =
 
 export type BeneficiaryType = 'member' | 'external_community';
 
+// Welfare Contribution Event categories
+export type WelfareEventCategory =
+  | 'death_member'
+  | 'death_parent'
+  | 'death_spouse'
+  | 'sickness_hospitalization'
+  | 'emergency_assistance'
+  | 'other';
+
+export type WelfareEventStatus = 'draft' | 'open' | 'closed' | 'cancelled';
+
+export interface WelfareEvent {
+  id: string;
+  title: string;
+  category: WelfareEventCategory;
+  category_custom?: string;
+  member_id: string; // Affected church member
+  member_name: string;
+  beneficiary_family_name?: string; // Receiving family or beneficiary
+  description: string; // Public description suitable for sharing with members
+  pastoral_notes?: string; // Confidential staff/pastoral notes (never exposed in member portal)
+  start_date: string; // Opening date (YYYY-MM-DD)
+  end_date: string; // Contribution deadline (YYYY-MM-DD)
+  target_amount?: number; // Optional fundraising target in GHS
+  minimum_contribution: number; // Mandatory minimum (default 20.00 GHS)
+  status: WelfareEventStatus;
+  created_by: string; // Staff member who created the event
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WelfareEventContribution {
+  id: string;
+  event_id: string; // References WelfareEvent.id
+  member_id: string; // Contributor member ID or 'EXT-...'
+  contributor_name: string;
+  contributor_phone?: string;
+  tithe_number?: string;
+  amount: number; // Must be >= minimum_contribution (GH¢20.00)
+  payment_date: string; // YYYY-MM-DD
+  payment_method: PaymentMethod;
+  payment_channel?: string;
+  reference_no?: string;
+  notes?: string;
+  payment_status: 'confirmed' | 'pending' | 'failed';
+  recorded_by: string;
+  corrected_by?: string;
+  finance_transaction_id?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
 export interface WelfareContribution {
   id: string;
   member_id: string;

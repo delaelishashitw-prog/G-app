@@ -63,6 +63,7 @@ import {
 } from '../types/database.types';
 import { cleanGhanaPhone } from '../lib/currencyUtils';
 import { ApplyWelfareClaimModal } from '../components/welfare/ApplyWelfareClaimModal';
+import { RecordWelfareEventContributionModal } from '../components/welfare/RecordWelfareEventContributionModal';
 import { MemberCertificateModal } from '../components/portal/MemberCertificateModal';
 import { RequestSubstituteModal } from '../components/portal/RequestSubstituteModal';
 import { DownloadMyDutyModal } from '../components/portal/DownloadMyDutyModal';
@@ -292,6 +293,8 @@ export const MemberPortalPage: React.FC = () => {
     pastoralCare,
     welfareContributions,
     welfareClaims,
+    welfareEvents,
+    welfareEventContributions,
     recordGiving,
     recordPledgePayment,
     addPrayerRequest,
@@ -352,6 +355,8 @@ export const MemberPortalPage: React.FC = () => {
   }, [searchParams]);
 
   const [isMemberClaimModalOpen, setIsMemberClaimModalOpen] = useState(false);
+  const [isEventContribModalOpen, setIsEventContribModalOpen] = useState(false);
+  const [selectedPortalEventId, setSelectedPortalEventId] = useState<string | undefined>(undefined);
 
   // Sign-in Form States (when not yet logged in as a member)
   const [identifier, setIdentifier] = useState('');
@@ -535,6 +540,32 @@ export const MemberPortalPage: React.FC = () => {
       .filter((c) => c.member_id === activeMember.id || c.member_id === activeMember.member_id)
       .sort((a, b) => new Date(b.date_submitted).getTime() - new Date(a.date_submitted).getTime());
   }, [activeMember, welfareClaims]);
+
+  // Member's Welfare Event Appeals & Contributions Data
+  const openWelfareEvents = useMemo(() => {
+    return welfareEvents
+      .filter((e) => e.status === 'open')
+      .sort((a, b) => new Date(a.end_date).getTime() - new Date(b.end_date).getTime());
+  }, [welfareEvents]);
+
+  const memberEventContributions = useMemo(() => {
+    if (!activeMember) return [];
+    const memFullName = `${activeMember.first_name} ${activeMember.last_name}`.toLowerCase().trim();
+    return welfareEventContributions
+      .filter(
+        (c) =>
+          c.member_id === activeMember.id ||
+          c.member_id === activeMember.member_id ||
+          c.contributor_name.toLowerCase().trim() === memFullName
+      )
+      .sort((a, b) => new Date(b.payment_date).getTime() - new Date(a.payment_date).getTime());
+  }, [activeMember, welfareEventContributions]);
+
+  const totalMemberEventContributions = useMemo(() => {
+    return memberEventContributions
+      .filter((c) => c.payment_status === 'confirmed')
+      .reduce((sum, c) => sum + c.amount, 0);
+  }, [memberEventContributions]);
 
   // Member's Ministry & Group
   const memberMinistry = useMemo(() => {
@@ -2826,7 +2857,7 @@ export const MemberPortalPage: React.FC = () => {
             </div>
 
             {/* Welfare Stats */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
                   Total Welfare Dues Paid
@@ -2836,6 +2867,18 @@ export const MemberPortalPage: React.FC = () => {
                 </div>
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   {memberWelfareDues.length} recorded monthly receipts
+                </p>
+              </div>
+
+              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  Event Appeal Contributions
+                </span>
+                <div className="text-2xl font-black text-emerald-800 mt-1">
+                  GH₵ {totalMemberEventContributions.toFixed(2)}
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {memberEventContributions.length} donation(s) to welfare appeals
                 </p>
               </div>
 
@@ -2855,13 +2898,188 @@ export const MemberPortalPage: React.FC = () => {
 
               <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                  My Benevolence Applications
+                  My Benevolence Claims
                 </span>
                 <div className="text-2xl font-black text-slate-900 mt-1">
                   {memberWelfareClaims.length}
                 </div>
                 <p className="text-[11px] text-slate-500 mt-0.5">Submitted pastoral claims</p>
               </div>
+            </div>
+
+            {/* Active Welfare Appeals & Event Funds */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                    <HeartHandshake className="w-4 h-4 text-emerald-700" />
+                    Active Welfare Appeals & Solidarity Funds
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Stand in fellowship with fellow church members during critical moments
+                  </p>
+                </div>
+                <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                  {openWelfareEvents.length} Active Appeal(s)
+                </span>
+              </div>
+
+              {openWelfareEvents.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-xs">
+                  There are no active welfare appeal events at this time.
+                </div>
+              ) : (
+                <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {openWelfareEvents.map((evt) => {
+                    const contributions = welfareEventContributions.filter((c) => c.event_id === evt.id);
+                    const confirmed = contributions.filter((c) => c.payment_status === 'confirmed');
+                    const confirmedTotal = confirmed.reduce((sum, c) => sum + c.amount, 0);
+                    const target = evt.target_amount || 0;
+                    const progress = target > 0 ? Math.min(100, (confirmedTotal / target) * 100) : 0;
+
+                    return (
+                      <div
+                        key={evt.id}
+                        className="bg-slate-50 rounded-2xl border border-slate-200 p-5 flex flex-col justify-between space-y-4"
+                      >
+                        <div className="space-y-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-900 border border-emerald-200">
+                              {evt.category.replace('_', ' ')}
+                            </span>
+                            <span className="text-[11px] font-bold text-emerald-800 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                              Min: GH¢ {evt.minimum_contribution.toFixed(2)}
+                            </span>
+                          </div>
+
+                          <h4 className="text-sm font-bold text-slate-900 leading-snug">
+                            {evt.title}
+                          </h4>
+
+                          <div className="text-xs text-slate-600 space-y-0.5">
+                            <div>Member: <strong className="text-slate-800">{evt.member_name}</strong></div>
+                            {evt.beneficiary_family_name && (
+                              <div>Beneficiary: <strong className="text-slate-700">{evt.beneficiary_family_name}</strong></div>
+                            )}
+                          </div>
+
+                          {/* Public description only - pastoral_notes are strictly excluded */}
+                          <p className="text-xs text-slate-600 leading-relaxed line-clamp-3">
+                            {evt.description}
+                          </p>
+
+                          {target > 0 && (
+                            <div className="space-y-1 pt-1">
+                              <div className="flex items-center justify-between text-[11px] text-slate-600 font-semibold">
+                                <span>GH₵ {confirmedTotal.toFixed(2)} raised</span>
+                                <span>Target: GH₵ {target.toFixed(2)}</span>
+                              </div>
+                              <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-emerald-600 rounded-full"
+                                  style={{ width: `${progress}%` }}
+                                ></div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between">
+                          <span className="text-[11px] text-slate-500">
+                            Deadline: <strong>{evt.end_date}</strong>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedPortalEventId(evt.id);
+                              setIsEventContribModalOpen(true);
+                            }}
+                            className="px-3.5 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 shadow-xs"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            Contribute Now
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* My Event Contributions History */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900">My Welfare Event Contributions</h3>
+                  <p className="text-xs text-slate-500">Donations made to specific member appeals</p>
+                </div>
+                <span className="text-xs font-bold text-slate-700">
+                  Total: GH₵ {totalMemberEventContributions.toFixed(2)}
+                </span>
+              </div>
+
+              {memberEventContributions.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-xs">
+                  You have not made any contributions to welfare appeal events yet.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500 font-bold border-b border-slate-200">
+                      <tr>
+                        <th className="py-3 px-4">Date</th>
+                        <th className="py-3 px-4">Appeal Event</th>
+                        <th className="py-3 px-4">Method & Reference</th>
+                        <th className="py-3 px-4 text-right">Amount (GH₵)</th>
+                        <th className="py-3 px-4 text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {memberEventContributions.map((c) => {
+                        const eventObj = welfareEvents.find((e) => e.id === c.event_id);
+                        return (
+                          <tr key={c.id} className="hover:bg-slate-50/70 transition">
+                            <td className="py-3 px-4 font-mono font-medium text-slate-700 whitespace-nowrap">
+                              {c.payment_date}
+                            </td>
+                            <td className="py-3 px-4 font-bold text-slate-900">
+                              <div>{eventObj?.title || 'Welfare Event Appeal'}</div>
+                              {eventObj && (
+                                <div className="text-[10px] text-slate-500 font-normal">
+                                  For: {eventObj.member_name}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-3 px-4 text-slate-700">
+                              <span className="capitalize">{c.payment_method.replace('_', ' ')}</span>
+                              {c.reference_no && (
+                                <span className="text-[10px] text-slate-400 block font-mono">
+                                  {c.reference_no}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-4 text-right font-black text-slate-900 text-sm whitespace-nowrap">
+                              GH₵ {c.amount.toFixed(2)}
+                            </td>
+                            <td className="py-3 px-4 text-center">
+                              <span
+                                className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-lg border ${
+                                  c.payment_status === 'confirmed'
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                    : 'bg-amber-50 text-amber-800 border-amber-200'
+                                }`}
+                              >
+                                {c.payment_status}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
 
             {/* Benevolence Claims Section */}
@@ -3853,6 +4071,19 @@ export const MemberPortalPage: React.FC = () => {
           member={activeMember}
           settings={settings}
           initialSelectedAssignmentId={dutyModalInitialAssignmentId}
+        />
+      )}
+
+      {/* Welfare Event Contribution Modal */}
+      {isEventContribModalOpen && activeMember && (
+        <RecordWelfareEventContributionModal
+          isOpen={isEventContribModalOpen}
+          onClose={() => {
+            setIsEventContribModalOpen(false);
+            setSelectedPortalEventId(undefined);
+          }}
+          preselectedEventId={selectedPortalEventId}
+          preselectedMemberId={activeMember.id}
         />
       )}
     </div>

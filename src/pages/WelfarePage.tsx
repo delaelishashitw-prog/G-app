@@ -15,6 +15,7 @@ import {
   ChevronDown,
   TrendingUp,
   User,
+  Users,
   Shield,
   CreditCard,
   Building,
@@ -36,28 +37,59 @@ import {
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { WelfareClaim, WelfareContribution, WelfareClaimCategory, WelfareClaimStatus } from '../types/database.types';
+import {
+  WelfareClaim,
+  WelfareContribution,
+  WelfareClaimCategory,
+  WelfareClaimStatus,
+  WelfareEvent,
+  WelfareEventContribution,
+  WelfareEventCategory,
+  WelfareEventStatus,
+} from '../types/database.types';
 import { ApplyWelfareClaimModal } from '../components/welfare/ApplyWelfareClaimModal';
 import { ReviewWelfareClaimModal } from '../components/welfare/ReviewWelfareClaimModal';
 import { BenevolenceVoucherModal } from '../components/welfare/BenevolenceVoucherModal';
 import { RecordWelfareDuesModal } from '../components/welfare/RecordWelfareDuesModal';
 import { WelfareAuditReportModal } from '../components/welfare/WelfareAuditReportModal';
+import { CreateWelfareEventModal } from '../components/welfare/CreateWelfareEventModal';
+import { RecordWelfareEventContributionModal } from '../components/welfare/RecordWelfareEventContributionModal';
+import { WelfareEventDetailModal } from '../components/welfare/WelfareEventDetailModal';
+import { PrintWelfareEventReportModal } from '../components/welfare/PrintWelfareEventReportModal';
 
 export const WelfarePage: React.FC = () => {
   const {
     welfareContributions,
     welfareClaims,
+    welfareEvents,
+    welfareEventContributions,
     members,
     settings,
     deleteWelfareContribution,
     deleteWelfareClaim,
+    closeWelfareEvent,
+    updateWelfareEvent,
     isSupabaseConfigured,
     supabaseStatus,
   } = useChurchData();
-  const { canAccess } = useAuth();
+  const { canAccess, currentUser } = useAuth();
   const { success, warning } = useToast();
 
-  const [activeTab, setActiveTab] = useState<'claims' | 'dues' | 'members' | 'analytics' | 'policy'>('claims');
+  const [activeTab, setActiveTab] = useState<'events' | 'claims' | 'dues' | 'members' | 'analytics' | 'policy'>('events');
+
+  // Search & Filter state for welfare events
+  const [eventSearch, setEventSearch] = useState('');
+  const [eventCategoryFilter, setEventCategoryFilter] = useState('ALL');
+  const [eventStatusFilter, setEventStatusFilter] = useState('ALL');
+
+  // Event Modals state
+  const [isCreateEventModalOpen, setIsCreateEventModalOpen] = useState(false);
+  const [eventToEdit, setEventToEdit] = useState<WelfareEvent | null>(null);
+  const [isRecordEventContributionModalOpen, setIsRecordEventContributionModalOpen] = useState(false);
+  const [selectedEventForContribution, setSelectedEventForContribution] = useState<string | undefined>(undefined);
+  const [contributionToEdit, setContributionToEdit] = useState<WelfareEventContribution | null>(null);
+  const [selectedEventForDetail, setSelectedEventForDetail] = useState<WelfareEvent | null>(null);
+  const [selectedEventForReport, setSelectedEventForReport] = useState<WelfareEvent | null>(null);
 
   // Search & Filter state for claims
   const [claimSearch, setClaimSearch] = useState('');
@@ -115,6 +147,42 @@ export const WelfarePage: React.FC = () => {
   const uniqueContributorsCount = useMemo(() => {
     return new Set(welfareContributions.map((c) => c.member_id)).size;
   }, [welfareContributions]);
+
+  // Welfare Event Contributions Aggregations
+  const totalEventFundsCollected = useMemo(() => {
+    return welfareEventContributions
+      .filter((c) => c.payment_status === 'confirmed')
+      .reduce((sum, c) => sum + c.amount, 0);
+  }, [welfareEventContributions]);
+
+  const openEventsCount = useMemo(() => {
+    return welfareEvents.filter((e) => e.status === 'open').length;
+  }, [welfareEvents]);
+
+  // Filtered Welfare Events
+  const filteredEvents = useMemo(() => {
+    return welfareEvents
+      .filter((e) => {
+        const q = (eventSearch || '').toLowerCase().trim();
+        const matchSearch =
+          !q ||
+          e.title.toLowerCase().includes(q) ||
+          e.member_name.toLowerCase().includes(q) ||
+          (e.beneficiary_family_name && e.beneficiary_family_name.toLowerCase().includes(q)) ||
+          e.description.toLowerCase().includes(q) ||
+          (e.category_custom && e.category_custom.toLowerCase().includes(q));
+
+        const matchCat = eventCategoryFilter === 'ALL' || e.category === eventCategoryFilter;
+        const matchStatus = eventStatusFilter === 'ALL' || e.status === eventStatusFilter;
+
+        return matchSearch && matchCat && matchStatus;
+      })
+      .sort((a, b) => {
+        if (a.status === 'open' && b.status !== 'open') return -1;
+        if (a.status !== 'open' && b.status === 'open') return 1;
+        return new Date(a.end_date).getTime() - new Date(b.end_date).getTime();
+      });
+  }, [welfareEvents, eventSearch, eventCategoryFilter, eventStatusFilter]);
 
   // Filtered Claims
   const filteredClaims = useMemo(() => {
@@ -450,17 +518,27 @@ export const WelfarePage: React.FC = () => {
             Record Welfare Dues
           </button>
           <button
-            onClick={() => setIsApplyModalOpen(true)}
+            onClick={() => {
+              setEventToEdit(null);
+              setIsCreateEventModalOpen(true);
+            }}
             className="px-3.5 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center gap-1.5"
           >
             <Plus className="w-4 h-4" />
+            Create Welfare Event
+          </button>
+          <button
+            onClick={() => setIsApplyModalOpen(true)}
+            className="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold rounded-xl border border-slate-300 shadow-2xs transition flex items-center gap-1.5"
+          >
+            <HeartHandshake className="w-4 h-4 text-emerald-800" />
             Apply for Relief Aid
           </button>
         </div>
       </div>
 
       {/* KPI Overview Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Total Fund Balance */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
           <div className="flex items-center justify-between text-slate-500 mb-1">
@@ -471,7 +549,28 @@ export const WelfarePage: React.FC = () => {
             GH₵ {fundBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className="text-[11px] text-emerald-700 font-semibold mt-1">
-            Capital base + current contributions
+            Capital base + reserve
+          </div>
+        </div>
+
+        {/* Event Contributions Collected */}
+        <div
+          onClick={() => {
+            setActiveTab('events');
+            setEventStatusFilter('ALL');
+          }}
+          className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs cursor-pointer hover:border-emerald-300 transition"
+        >
+          <div className="flex items-center justify-between text-slate-500 mb-1">
+            <span className="text-xs font-semibold uppercase tracking-wider">Event Appeal Funds</span>
+            <HeartHandshake className="w-4 h-4 text-emerald-700" />
+          </div>
+          <div className="text-2xl font-black text-emerald-900">
+            GH₵ {totalEventFundsCollected.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+          <div className="text-[11px] text-emerald-700 font-semibold mt-1 flex items-center justify-between">
+            <span>{openEventsCount} active welfare appeal(s)</span>
+            <span className="text-[10px] underline">View</span>
           </div>
         </div>
 
@@ -485,7 +584,7 @@ export const WelfarePage: React.FC = () => {
             GH₵ {totalDuesCollected.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className="text-[11px] text-slate-500 mt-1">
-            {welfareContributions.length} total receipts recorded
+            {welfareContributions.length} monthly dues receipts
           </div>
         </div>
 
@@ -512,12 +611,12 @@ export const WelfarePage: React.FC = () => {
           className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs cursor-pointer hover:border-amber-300 transition"
         >
           <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-semibold uppercase tracking-wider">Pending Applications</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">Pending Claims</span>
             <AlertCircle className="w-4 h-4 text-amber-500" />
           </div>
           <div className="text-2xl font-black text-slate-900">{pendingClaimsCount}</div>
           <div className="text-[11px] text-amber-700 font-semibold mt-1 flex items-center justify-between">
-            <span>Awaiting committee review</span>
+            <span>Awaiting review</span>
             <span className="text-[10px] underline">Filter</span>
           </div>
         </div>
@@ -525,6 +624,23 @@ export const WelfarePage: React.FC = () => {
 
       {/* Navigation Segmented Tabs */}
       <div className="flex border-b border-slate-200 space-x-6 text-sm font-bold overflow-x-auto">
+        <button
+          onClick={() => setActiveTab('events')}
+          className={`pb-3 transition flex items-center gap-2 border-b-2 whitespace-nowrap ${
+            activeTab === 'events'
+              ? 'border-emerald-800 text-emerald-800'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <HeartHandshake className="w-4 h-4" />
+          Event Contributions
+          {openEventsCount > 0 && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800">
+              {openEventsCount}
+            </span>
+          )}
+        </button>
+
         <button
           onClick={() => setActiveTab('claims')}
           className={`pb-3 transition flex items-center gap-2 border-b-2 whitespace-nowrap ${
@@ -590,6 +706,256 @@ export const WelfarePage: React.FC = () => {
           Constitution & Eligibility Calculator
         </button>
       </div>
+
+      {/* TAB 0: WELFARE EVENT CONTRIBUTIONS */}
+      {activeTab === 'events' && (
+        <div className="space-y-4">
+          {/* Filters Bar */}
+          <div className="bg-white p-3 rounded-2xl border border-slate-200 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+            <div className="relative flex-1 max-w-md">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                placeholder="Search event title, affected member, beneficiary..."
+                value={eventSearch}
+                onChange={(e) => setEventSearch(e.target.value)}
+                className="w-full pl-9 pr-3 py-1.5 text-xs rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-700"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Category Filter */}
+              <select
+                value={eventCategoryFilter}
+                onChange={(e) => setEventCategoryFilter(e.target.value)}
+                className="text-xs rounded-xl border border-slate-200 py-1.5 px-2.5 bg-white text-slate-700 font-medium"
+              >
+                <option value="ALL">All Categories</option>
+                <option value="death_member">Death of Member</option>
+                <option value="death_parent">Death of Parent(s)</option>
+                <option value="death_spouse">Death of Spouse</option>
+                <option value="sickness_hospitalization">Sickness / Hospitalisation</option>
+                <option value="emergency_assistance">Emergency Assistance</option>
+                <option value="other">Other Welfare Needs</option>
+              </select>
+
+              {/* Status Filter */}
+              <select
+                value={eventStatusFilter}
+                onChange={(e) => setEventStatusFilter(e.target.value)}
+                className="text-xs rounded-xl border border-slate-200 py-1.5 px-2.5 bg-white text-slate-700 font-medium"
+              >
+                <option value="ALL">All Status</option>
+                <option value="open">Open (Active)</option>
+                <option value="closed">Closed</option>
+                <option value="draft">Draft</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+
+              <button
+                onClick={() => {
+                  setSelectedEventForContribution(undefined);
+                  setContributionToEdit(null);
+                  setIsRecordEventContributionModalOpen(true);
+                }}
+                className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-300 shadow-2xs transition flex items-center gap-1.5"
+              >
+                <CreditCard className="w-3.5 h-3.5 text-emerald-700" />
+                Record Contribution
+              </button>
+
+              <button
+                onClick={() => {
+                  setEventToEdit(null);
+                  setIsCreateEventModalOpen(true);
+                }}
+                className="px-3.5 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                New Event Appeal
+              </button>
+            </div>
+          </div>
+
+          {/* Events Grid */}
+          {filteredEvents.length === 0 ? (
+            <div className="bg-white p-12 rounded-3xl border border-dashed border-slate-300 text-center space-y-3">
+              <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center mx-auto text-emerald-800">
+                <HeartHandshake className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900">No Welfare Events Found</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                No welfare contribution appeals match your filter criteria. Create a new event appeal to mobilize congregational benevolence.
+              </p>
+              <button
+                onClick={() => {
+                  setEventToEdit(null);
+                  setIsCreateEventModalOpen(true);
+                }}
+                className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl shadow-xs inline-flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                Create Welfare Event
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredEvents.map((evt) => {
+                const contributions = welfareEventContributions.filter((c) => c.event_id === evt.id);
+                const confirmed = contributions.filter((c) => c.payment_status === 'confirmed');
+                const confirmedTotal = confirmed.reduce((sum, c) => sum + c.amount, 0);
+                const uniqueContributors = new Set(contributions.map((c) => c.member_id || c.contributor_name)).size;
+                const target = evt.target_amount || 0;
+                const progress = target > 0 ? Math.min(100, (confirmedTotal / target) * 100) : 0;
+                const isClosed = evt.status === 'closed' || evt.status === 'cancelled';
+                const deadline = new Date(evt.end_date);
+                const isPast = deadline < new Date();
+
+                return (
+                  <div
+                    key={evt.id}
+                    className="bg-white rounded-2xl border border-slate-200 shadow-2xs hover:shadow-md transition flex flex-col justify-between overflow-hidden"
+                  >
+                    <div className="p-5 space-y-3">
+                      {/* Category & Status Bar */}
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md border ${
+                            evt.category === 'death_member'
+                              ? 'bg-rose-50 text-rose-800 border-rose-200'
+                              : evt.category === 'death_parent'
+                              ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                              : evt.category === 'death_spouse'
+                              ? 'bg-purple-50 text-purple-800 border-purple-200'
+                              : evt.category === 'sickness_hospitalization'
+                              ? 'bg-amber-50 text-amber-800 border-amber-200'
+                              : evt.category === 'emergency_assistance'
+                              ? 'bg-orange-50 text-orange-800 border-orange-200'
+                              : 'bg-slate-100 text-slate-800 border-slate-200'
+                          }`}
+                        >
+                          {evt.category.replace('_', ' ')}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
+                              evt.status === 'open'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : evt.status === 'closed'
+                                ? 'bg-slate-800 text-white'
+                                : evt.status === 'draft'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-rose-100 text-rose-800'
+                            }`}
+                          >
+                            {evt.status}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Event Title */}
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-900 leading-snug line-clamp-2">
+                          {evt.title}
+                        </h3>
+                        <div className="text-xs text-slate-500 mt-1 flex flex-col gap-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <User className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                            <span>Member: <strong className="text-slate-800 font-semibold">{evt.member_name}</strong></span>
+                          </div>
+                          {evt.beneficiary_family_name && (
+                            <div className="flex items-center gap-1.5">
+                              <Users className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              <span className="line-clamp-1">Beneficiary: <strong className="text-slate-700">{evt.beneficiary_family_name}</strong></span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Public Description */}
+                      <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+                        {evt.description}
+                      </p>
+
+                      {/* Mandatory Min & Deadline Badges */}
+                      <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100">
+                        <span className="text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 text-[11px]">
+                          Min: GH¢ {evt.minimum_contribution.toFixed(2)}
+                        </span>
+                        <span className={`text-[11px] font-medium ${isClosed ? 'text-slate-500' : isPast ? 'text-rose-600 font-semibold' : 'text-slate-600'}`}>
+                          Deadline: {evt.end_date}
+                        </span>
+                      </div>
+
+                      {/* Financial Progress Box */}
+                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-1.5">
+                        <div className="flex items-center justify-between text-xs font-bold text-slate-900">
+                          <span>GH₵ {confirmedTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-[11px] text-slate-500 font-normal">
+                            {target > 0 ? `Target: GH₵ ${target.toLocaleString('en-US')}` : `${uniqueContributors} donor(s)`}
+                          </span>
+                        </div>
+                        {target > 0 && (
+                          <div className="space-y-1">
+                            <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-emerald-600 rounded-full"
+                                style={{ width: `${progress}%` }}
+                              ></div>
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] text-slate-500">
+                              <span>{progress.toFixed(0)}% reached</span>
+                              <span>{uniqueContributors} contributor(s)</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Card Actions Footer */}
+                    <div className="p-3 bg-slate-50/70 border-t border-slate-200 flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => setSelectedEventForDetail(evt)}
+                        className="px-3 py-1.5 text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg shadow-2xs transition flex items-center gap-1"
+                      >
+                        Details & Ledger
+                      </button>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => setSelectedEventForReport(evt)}
+                          className="p-1.5 text-slate-500 hover:text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition"
+                          title="Print official audit report"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                        </button>
+
+                        {evt.status === 'open' ? (
+                          <button
+                            onClick={() => {
+                              setSelectedEventForContribution(evt.id);
+                              setContributionToEdit(null);
+                              setIsRecordEventContributionModalOpen(true);
+                            }}
+                            className="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-lg shadow-xs transition flex items-center gap-1"
+                          >
+                            <Plus className="w-3 h-3" />
+                            Contribute
+                          </button>
+                        ) : (
+                          <span className="text-[11px] text-slate-400 font-medium px-2 py-1">
+                            {evt.status.toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* TAB 1: CLAIMS & APPLICATIONS */}
       {activeTab === 'claims' && (
@@ -1516,6 +1882,59 @@ export const WelfarePage: React.FC = () => {
         isOpen={isAuditReportModalOpen}
         onClose={() => setIsAuditReportModalOpen(false)}
       />
+
+      {/* Welfare Event Modals */}
+      <CreateWelfareEventModal
+        isOpen={isCreateEventModalOpen}
+        onClose={() => {
+          setIsCreateEventModalOpen(false);
+          setEventToEdit(null);
+        }}
+        eventToEdit={eventToEdit}
+      />
+
+      <RecordWelfareEventContributionModal
+        isOpen={isRecordEventContributionModalOpen}
+        onClose={() => {
+          setIsRecordEventContributionModalOpen(false);
+          setSelectedEventForContribution(undefined);
+          setContributionToEdit(null);
+        }}
+        preselectedEventId={selectedEventForContribution}
+        contributionToEdit={contributionToEdit}
+      />
+
+      {selectedEventForDetail && (
+        <WelfareEventDetailModal
+          isOpen={Boolean(selectedEventForDetail)}
+          onClose={() => setSelectedEventForDetail(null)}
+          event={selectedEventForDetail}
+          onRecordContribution={(evt) => {
+            setSelectedEventForContribution(evt.id);
+            setContributionToEdit(null);
+            setIsRecordEventContributionModalOpen(true);
+          }}
+          onEditContribution={(contrib) => {
+            setContributionToEdit(contrib);
+            setIsRecordEventContributionModalOpen(true);
+          }}
+          onPrintReport={(evt) => {
+            setSelectedEventForReport(evt);
+          }}
+          onEditEvent={(evt) => {
+            setEventToEdit(evt);
+            setIsCreateEventModalOpen(true);
+          }}
+        />
+      )}
+
+      {selectedEventForReport && (
+        <PrintWelfareEventReportModal
+          isOpen={Boolean(selectedEventForReport)}
+          onClose={() => setSelectedEventForReport(null)}
+          event={selectedEventForReport}
+        />
+      )}
     </div>
   );
 };
