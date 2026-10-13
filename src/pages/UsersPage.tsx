@@ -27,11 +27,13 @@ import {
   List,
   Sparkles,
   RefreshCw,
+  Download,
 } from 'lucide-react';
 import { useAuth, ROLE_PERMISSIONS, isElishaRichard } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { UserRole, UserProfile } from '../types/database.types';
 import { ProfilePhotoUpload } from '../components/ProfilePhotoUpload';
+import { StaffDossierModal } from '../components/users/StaffDossierModal';
 
 export const UsersPage: React.FC = () => {
   const {
@@ -45,6 +47,7 @@ export const UsersPage: React.FC = () => {
     deleteUser,
     toggleUserStatus,
     resetPassword,
+    setTemporaryPassword,
   } = useAuth();
 
   const { logAction } = useChurchData();
@@ -67,6 +70,7 @@ export const UsersPage: React.FC = () => {
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
   const [resetModalUser, setResetModalUser] = useState<UserProfile | null>(null);
   const [switchTargetUser, setSwitchTargetUser] = useState<UserProfile | null>(null);
+  const [selectedDossierUser, setSelectedDossierUser] = useState<UserProfile | null>(null);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [copiedText, setCopiedText] = useState(false);
 
@@ -82,6 +86,7 @@ export const UsersPage: React.FC = () => {
     role: 'administrator' as UserRole,
     avatar_url: '',
     password: '',
+    has_login_account: true,
   });
 
   // Edit User Form State
@@ -96,6 +101,7 @@ export const UsersPage: React.FC = () => {
     role: 'administrator' as UserRole,
     avatar_url: '',
     is_active: true,
+    has_login_account: true,
   });
 
   // Temporary password state for Reset Modal
@@ -328,9 +334,26 @@ export const UsersPage: React.FC = () => {
   // Handle Add New User
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUserForm.first_name.trim() || !newUserForm.last_name.trim() || !newUserForm.email.trim()) {
-      showToast('Please provide first name, last name, and email address.', 'error');
+    const hasLogin = newUserForm.has_login_account;
+
+    if (!newUserForm.first_name.trim() || !newUserForm.last_name.trim()) {
+      showToast('Please provide first name and last name.', 'error');
       return;
+    }
+
+    if (hasLogin && !newUserForm.email.trim()) {
+      showToast('Please provide an email address for staff accounts with login enabled.', 'error');
+      return;
+    }
+
+    // Check duplicate email
+    if (newUserForm.email.trim()) {
+      const cleanEmail = newUserForm.email.trim().toLowerCase();
+      const duplicate = availableUsers.find((u) => u.email && u.email.toLowerCase() === cleanEmail);
+      if (duplicate) {
+        showToast(`A staff member with the email ${newUserForm.email} already exists (${duplicate.first_name} ${duplicate.last_name}).`, 'error');
+        return;
+      }
     }
 
     if (!isSuperAdmin && (newUserForm.role === 'super_admin' || newUserForm.role === 'senior_pastor')) {
@@ -342,23 +365,24 @@ export const UsersPage: React.FC = () => {
     const result = await createUser({
       first_name: newUserForm.first_name.trim(),
       last_name: newUserForm.last_name.trim(),
-      email: newUserForm.email.trim(),
+      email: newUserForm.email.trim() || undefined,
       phone: newUserForm.phone.trim() || undefined,
       department: newUserForm.department.trim() || 'General Operations',
       job_title: newUserForm.job_title.trim() || undefined,
       employment_type: newUserForm.employment_type,
       avatar_url: newUserForm.avatar_url || undefined,
       role: newUserForm.role,
-      password: defaultPwd,
+      password: hasLogin ? defaultPwd : undefined,
+      has_login_account: hasLogin,
     });
 
     if (result.success) {
       logAction(
         'CREATE_STAFF_USER',
         'Users & Roles',
-        `Created staff account for ${newUserForm.first_name} ${newUserForm.last_name} with role ${newUserForm.role}`
+        `Created staff profile for ${newUserForm.first_name} ${newUserForm.last_name} (${hasLogin ? `Role: ${newUserForm.role}` : 'Directory Only'})`
       );
-      showToast(`Staff account for ${newUserForm.first_name} created successfully!`, 'success');
+      showToast(result.message, 'success');
       setIsAddModalOpen(false);
       setNewUserForm({
         first_name: '',
@@ -371,10 +395,51 @@ export const UsersPage: React.FC = () => {
         role: 'administrator',
         avatar_url: '',
         password: '',
+        has_login_account: true,
       });
     } else {
       showToast(result.message, 'error');
     }
+  };
+
+  // Handle Account Suspension / Activation with Full Audit Logging (SEC-04)
+  const handleToggleStatus = (user: UserProfile) => {
+    if (isElishaRichard(user) && user.is_active) {
+      showToast('Protected Account: Senior Pastor Prophet Elisha Richard cannot be suspended.', 'error');
+      return;
+    }
+    if (user.id === currentUser.id && user.is_active) {
+      showToast('Cannot suspend your own active login session.', 'error');
+      return;
+    }
+    if (!isSuperAdmin && (user.role === 'super_admin' || user.role === 'senior_pastor')) {
+      showToast('Unauthorized: Only Super Administrators can suspend executive accounts.', 'error');
+      return;
+    }
+
+    // Protect last active super admin
+    if (user.role === 'super_admin' && user.is_active) {
+      const otherActiveSuperAdmins = availableUsers.filter(
+        (u) => u.id !== user.id && u.role === 'super_admin' && u.is_active
+      );
+      if (otherActiveSuperAdmins.length === 0) {
+        showToast('Action Blocked: Cannot suspend the last active Super Administrator. At least one Super Admin must remain active.', 'error');
+        return;
+      }
+    }
+
+    const nextActive = !user.is_active;
+    toggleUserStatus(user.id);
+    logAction(
+      nextActive ? 'ACTIVATE_STAFF_ACCOUNT' : 'SUSPEND_STAFF_ACCOUNT',
+      'Users & Roles',
+      `${nextActive ? 'Reinstated' : 'Suspended'} staff access for ${user.first_name} ${user.last_name} (${user.email || user.id})`,
+      user.id
+    );
+    showToast(
+      `Staff profile for ${user.first_name} ${user.last_name} has been ${nextActive ? 'activated' : 'suspended'}.`,
+      nextActive ? 'success' : 'info'
+    );
   };
 
   // Open Edit User Modal
@@ -391,6 +456,7 @@ export const UsersPage: React.FC = () => {
       role: user.role,
       avatar_url: user.avatar_url || '',
       is_active: user.is_active,
+      has_login_account: user.has_login_account !== false,
     });
   };
 
@@ -403,6 +469,17 @@ export const UsersPage: React.FC = () => {
     if (!isSuperAdmin && (editForm.role === 'super_admin' || editForm.role === 'senior_pastor')) {
       showToast('Security Alert: Only Super Administrators can assign Super Admin or Senior Pastor roles.', 'error');
       return;
+    }
+
+    // SECURITY GUARD: Cannot demote the last active super_admin
+    if (editingUser.role === 'super_admin' && editForm.role !== 'super_admin') {
+      const otherActiveSuperAdmins = availableUsers.filter(
+        (u) => u.id !== editingUser.id && u.role === 'super_admin' && u.is_active
+      );
+      if (otherActiveSuperAdmins.length === 0) {
+        showToast('Action Blocked: Cannot demote the last active Super Administrator.', 'error');
+        return;
+      }
     }
 
     // SECURITY GUARD: Prevent modifying own role unless super admin
@@ -418,12 +495,13 @@ export const UsersPage: React.FC = () => {
       avatar_url: editForm.avatar_url || undefined,
       role: finalRole,
       is_active: editForm.is_active,
+      has_login_account: editForm.has_login_account,
     });
 
     logAction(
       'UPDATE_STAFF_USER',
       'Users & Roles',
-      `Updated user ${editForm.first_name} ${editForm.last_name} (Role: ${finalRole}, Active: ${editForm.is_active})`,
+      `Updated user ${editForm.first_name} ${editForm.last_name} (Role: ${finalRole}, Active: ${editForm.is_active}, Login: ${editForm.has_login_account ? 'Yes' : 'No'})`,
       editingUser.id
     );
 
@@ -433,22 +511,97 @@ export const UsersPage: React.FC = () => {
 
   // Open Password Reset Modal
   const openResetModal = (user: UserProfile) => {
+    if (!isSuperAdmin && (user.role === 'super_admin' || user.role === 'senior_pastor')) {
+      showToast('Unauthorized: You cannot reset credentials for executive roles.', 'error');
+      return;
+    }
     setResetModalUser(user);
     const generated = `Gwcc@${Math.floor(1000 + Math.random() * 9000)}`;
     setTempPassword(generated);
   };
 
-  // Confirm Password Reset
-  const handleConfirmReset = async () => {
+  // Export Staff Directory to CSV
+  const handleExportDirectory = () => {
+    if (!['super_admin', 'senior_pastor', 'administrator'].includes(currentRole) && !isSuperAdmin) {
+      showToast('Unauthorized: Only administrators can export staff records.', 'error');
+      return;
+    }
+
+    const headers = [
+      'Staff ID',
+      'First Name',
+      'Last Name',
+      'Official Ministry Title',
+      'Department',
+      'Employment Type',
+      'System Security Role',
+      'Email',
+      'Phone',
+      'Login Account Enabled',
+      'Account Status',
+    ];
+
+    const rows = filteredUsers.map((u) => [
+      `"${u.id}"`,
+      `"${u.first_name}"`,
+      `"${u.last_name}"`,
+      `"${u.job_title || ''}"`,
+      `"${u.department || ''}"`,
+      `"${u.employment_type || 'full_time'}"`,
+      `"${u.role}"`,
+      `"${u.email || ''}"`,
+      `"${u.phone || ''}"`,
+      `"${u.has_login_account !== false ? 'Yes' : 'No'}"`,
+      `"${u.is_active ? 'Active' : 'Suspended'}"`,
+    ]);
+
+    const csvContent =
+      'data:text/csv;charset=utf-8,' +
+      [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute(
+      'download',
+      `GWCC_Staff_Directory_${new Date().toISOString().split('T')[0]}.csv`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    logAction('EXPORT_STAFF_DIRECTORY', 'Users & Roles', `Exported ${filteredUsers.length} staff records to CSV`);
+    showToast(`Staff directory exported (${filteredUsers.length} records).`, 'success');
+  };
+
+  // Set & Persist Temporary Password (SEC-02)
+  const handleApplyTempPassword = async () => {
     if (!resetModalUser) return;
-    await resetPassword(resetModalUser.email);
+    const res = await setTemporaryPassword(resetModalUser.email, tempPassword.trim());
+    if (res.success) {
+      logAction(
+        'SET_TEMPORARY_PASSWORD',
+        'Users & Roles',
+        `Set immediate temporary access password for ${resetModalUser.email}`,
+        resetModalUser.id
+      );
+      showToast(res.message, 'success');
+      setResetModalUser(null);
+    } else {
+      showToast(res.message, 'error');
+    }
+  };
+
+  // Dispatch Email Password Reset Link
+  const handleDispatchResetEmail = async () => {
+    if (!resetModalUser) return;
+    const res = await resetPassword(resetModalUser.email);
     logAction(
-      'RESET_STAFF_PASSWORD',
+      'DISPATCH_RESET_EMAIL',
       'Users & Roles',
       `Dispatched password reset instructions for ${resetModalUser.email}`,
       resetModalUser.id
     );
-    showToast(`Dispatched password reset credentials for ${resetModalUser.email}`, 'success');
+    showToast(res.message, 'success');
     setResetModalUser(null);
   };
 
@@ -557,6 +710,15 @@ export const UsersPage: React.FC = () => {
               {currentRole.replace('_', ' ').toUpperCase()}
             </span>
           </div>
+
+          <button
+            onClick={handleExportDirectory}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold rounded-xl transition shadow-xs cursor-pointer"
+            title="Export staff directory to CSV spreadsheet"
+          >
+            <Download className="w-4 h-4 text-slate-500" />
+            <span>Export CSV</span>
+          </button>
 
           <button
             onClick={() => setIsAddModalOpen(true)}
@@ -826,6 +988,11 @@ export const UsersPage: React.FC = () => {
                           <p className="font-bold text-sm text-slate-900 truncate">
                             {u.first_name} {u.last_name}
                           </p>
+                          {u.job_title && (
+                            <p className="text-[11px] font-semibold text-indigo-700 truncate">
+                              {u.job_title}
+                            </p>
+                          )}
                           <p className="text-[11px] text-slate-500 truncate flex items-center gap-1">
                             <Building className="w-3 h-3 text-slate-400 shrink-0" />
                             {u.department || 'General Ministry'}
@@ -833,11 +1000,18 @@ export const UsersPage: React.FC = () => {
                         </div>
                       </div>
 
-                      {isCurrent && (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-700 text-white shrink-0">
-                          Active
-                        </span>
-                      )}
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        {isCurrent && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-700 text-white shrink-0">
+                            Active
+                          </span>
+                        )}
+                        {u.has_login_account === false && (
+                          <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 shrink-0" title="Personnel catalogued without system login credentials">
+                            Directory Only
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     {/* Middle: Role & Contact */}
@@ -862,6 +1036,14 @@ export const UsersPage: React.FC = () => {
                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1">
                       <div className="flex items-center gap-1">
                         <button
+                          onClick={() => setSelectedDossierUser(u)}
+                          className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+                          title="View Full Staff Dossier"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
                           onClick={() => openEditModal(u)}
                           className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
                           title="Edit User & Permissions"
@@ -869,16 +1051,18 @@ export const UsersPage: React.FC = () => {
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
 
-                        <button
-                          onClick={() => openResetModal(u)}
-                          className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition"
-                          title="Reset Password / Credentials"
-                        >
-                          <Key className="w-3.5 h-3.5" />
-                        </button>
+                        {u.has_login_account !== false && (
+                          <button
+                            onClick={() => openResetModal(u)}
+                            className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition"
+                            title="Reset Password / Credentials"
+                          >
+                            <Key className="w-3.5 h-3.5" />
+                          </button>
+                        )}
 
                         <button
-                          onClick={() => toggleUserStatus(u.id)}
+                          onClick={() => handleToggleStatus(u)}
                           className={`p-1.5 rounded-lg transition ${
                             u.is_active
                               ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
@@ -970,6 +1154,9 @@ export const UsersPage: React.FC = () => {
                                     </span>
                                   )}
                                 </p>
+                                {u.job_title && (
+                                  <p className="text-[11px] font-semibold text-indigo-700">{u.job_title}</p>
+                                )}
                                 <p className="text-[11px] text-slate-400">{u.email}</p>
                               </div>
                             </div>
@@ -978,16 +1165,30 @@ export const UsersPage: React.FC = () => {
                           <td className="py-3 px-3 text-slate-700 font-medium">{u.department || '—'}</td>
                           <td className="py-3 px-3 text-slate-500 font-mono text-[11px]">{u.phone || '—'}</td>
                           <td className="py-3 px-3 text-center">
-                            <span
-                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                u.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
-                              }`}
-                            >
-                              {u.is_active ? 'Active' : 'Suspended'}
-                            </span>
+                            <div className="flex flex-col items-center gap-1">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  u.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
+                                }`}
+                              >
+                                {u.is_active ? 'Active' : 'Suspended'}
+                              </span>
+                              {u.has_login_account === false && (
+                                <span className="text-[9px] font-medium text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200">
+                                  Directory Only
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="py-3 px-4 text-right">
                             <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => setSelectedDossierUser(u)}
+                                className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+                                title="View Staff Dossier"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
                               <button
                                 onClick={() => openEditModal(u)}
                                 className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
@@ -995,12 +1196,25 @@ export const UsersPage: React.FC = () => {
                               >
                                 <Edit2 className="w-3.5 h-3.5" />
                               </button>
+                              {u.has_login_account !== false && (
+                                <button
+                                  onClick={() => openResetModal(u)}
+                                  className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition"
+                                  title="Reset Password"
+                                >
+                                  <Key className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                               <button
-                                onClick={() => openResetModal(u)}
-                                className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition"
-                                title="Reset Password"
+                                onClick={() => handleToggleStatus(u)}
+                                className={`p-1.5 rounded-lg transition ${
+                                  u.is_active
+                                    ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                                    : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
+                                }`}
+                                title={u.is_active ? 'Suspend Account' : 'Activate Account'}
                               >
-                                <Key className="w-3.5 h-3.5" />
+                                <ShieldCheck className="w-3.5 h-3.5" />
                               </button>
                               {isSuperAdmin && u.role !== 'super_admin' && (
                                 <button
@@ -1284,14 +1498,37 @@ export const UsersPage: React.FC = () => {
                 </div>
               </div>
 
+              {/* Login Account Toggle */}
+              <div className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <input
+                  type="checkbox"
+                  id="newUserHasLogin"
+                  checked={newUserForm.has_login_account}
+                  onChange={(e) => setNewUserForm({ ...newUserForm, has_login_account: e.target.checked })}
+                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                />
+                <label htmlFor="newUserHasLogin" className="text-xs font-semibold text-slate-800 cursor-pointer">
+                  Enable System Login Account
+                  <span className="block text-[10px] text-slate-400 font-normal">
+                    Check to generate application credentials. Uncheck for directory-only personnel (e.g. voluntary deacon, visiting minister, groundskeeper).
+                  </span>
+                </label>
+              </div>
+
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Email Address *</label>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Email Address {newUserForm.has_login_account ? '*' : '(Optional)'}
+                </label>
                 <input
                   type="email"
-                  required
+                  required={newUserForm.has_login_account}
                   value={newUserForm.email}
                   onChange={(e) => setNewUserForm({ ...newUserForm, email: e.target.value })}
-                  placeholder="e.g. samuel.mensah@greaterworkscitychurch.org"
+                  placeholder={
+                    newUserForm.has_login_account
+                      ? 'e.g. samuel.mensah@greaterworkscitychurch.org'
+                      : 'e.g. samuel.mensah@gmail.com (optional)'
+                  }
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                 />
               </div>
@@ -1368,17 +1605,19 @@ export const UsersPage: React.FC = () => {
                 )}
               </div>
 
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Initial Password (Optional)</label>
-                <input
-                  type="text"
-                  value={newUserForm.password}
-                  onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
-                  placeholder="Defaults to Gwcc@2026"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">Staff will be asked to update their password upon first login.</p>
-              </div>
+              {newUserForm.has_login_account && (
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Initial Password (Optional)</label>
+                  <input
+                    type="text"
+                    value={newUserForm.password}
+                    onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
+                    placeholder="Defaults to Gwcc@2026"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">Staff will be asked to update their password upon first login.</p>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
@@ -1561,6 +1800,22 @@ export const UsersPage: React.FC = () => {
               <div className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200">
                 <input
                   type="checkbox"
+                  id="editUserHasLogin"
+                  checked={editForm.has_login_account}
+                  onChange={(e) => setEditForm({ ...editForm, has_login_account: e.target.checked })}
+                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                />
+                <label htmlFor="editUserHasLogin" className="text-xs font-semibold text-slate-800 cursor-pointer">
+                  Enable System Login Account
+                  <span className="block text-[10px] text-slate-400 font-normal">
+                    Check to allow this staff member to sign in to the church management back-office.
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <input
+                  type="checkbox"
                   id="userActiveCheck"
                   checked={editForm.is_active}
                   disabled={editingUser.id === currentUser.id || isElishaRichard(editingUser)}
@@ -1589,7 +1844,7 @@ export const UsersPage: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white font-bold transition shadow-xs"
+                  className="px-4 py-2 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white font-bold transition shadow-xs cursor-pointer"
                 >
                   Save Changes
                 </button>
@@ -1623,12 +1878,19 @@ export const UsersPage: React.FC = () => {
 
             <div className="text-xs text-slate-600 space-y-3">
               <p>
-                You can dispatch an official password reset link directly to <strong>{resetModalUser.email}</strong>,
-                or provide the temporary one-time credential below for immediate access:
+                Choose how you want to restore access for <strong>{resetModalUser.email}</strong>:
               </p>
 
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                <p className="text-[10px] uppercase font-bold text-slate-400">Temporary Access Password</p>
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] uppercase font-bold text-slate-500">Option 1: Immediate Temporary Password</p>
+                  <button
+                    onClick={handleApplyTempPassword}
+                    className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-[10px] transition shadow-xs cursor-pointer"
+                  >
+                    Set as Active Password
+                  </button>
+                </div>
                 <div className="flex items-center justify-between font-mono text-sm font-bold text-slate-900 bg-white p-2.5 rounded-lg border border-slate-200">
                   <span>{tempPassword}</span>
                   <button
@@ -1646,6 +1908,13 @@ export const UsersPage: React.FC = () => {
                 </div>
               </div>
 
+              <div className="p-3 bg-indigo-50/60 border border-indigo-200 rounded-xl space-y-1.5">
+                <p className="text-[10px] uppercase font-bold text-indigo-700">Option 2: Dispatch Email Reset Link</p>
+                <p className="text-[11px] text-slate-600">
+                  Sends an official email with an encrypted recovery link directly to {resetModalUser.email}.
+                </p>
+              </div>
+
               <div className="flex items-center gap-2 text-[11px] text-amber-800 bg-amber-50 p-2.5 rounded-xl border border-amber-200">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>Advise staff to change this temporary password after signing in.</span>
@@ -1660,10 +1929,11 @@ export const UsersPage: React.FC = () => {
                 Close
               </button>
               <button
-                onClick={handleConfirmReset}
-                className="px-4 py-2 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white font-bold transition text-xs shadow-xs"
+                onClick={handleDispatchResetEmail}
+                className="px-4 py-2 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white font-bold transition text-xs shadow-xs cursor-pointer flex items-center gap-1.5"
               >
-                Dispatch Reset Email
+                <Mail className="w-3.5 h-3.5" />
+                <span>Dispatch Reset Email</span>
               </button>
             </div>
           </div>
@@ -1717,6 +1987,33 @@ export const UsersPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* MODAL 5: STAFF DOSSIER DETAILED VIEW */}
+      {selectedDossierUser && (
+        <StaffDossierModal
+          user={selectedDossierUser}
+          isOpen={Boolean(selectedDossierUser)}
+          onClose={() => setSelectedDossierUser(null)}
+          onEdit={(u) => {
+            setSelectedDossierUser(null);
+            openEditModal(u);
+          }}
+          onResetPassword={(u) => {
+            setSelectedDossierUser(null);
+            openResetModal(u);
+          }}
+          onToggleStatus={(u) => {
+            handleToggleStatus(u);
+            setSelectedDossierUser((prev) => (prev ? { ...prev, is_active: !prev.is_active } : null));
+          }}
+          onSimulateAccess={(u) => {
+            setSelectedDossierUser(null);
+            setSwitchTargetUser(u);
+          }}
+          isSuperAdmin={isSuperAdmin}
+          currentUserId={currentUser.id}
+        />
       )}
     </div>
   );

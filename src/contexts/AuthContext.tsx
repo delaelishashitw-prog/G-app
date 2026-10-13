@@ -34,15 +34,21 @@ interface AuthContextType {
     department?: string;
   }) => Promise<{ success: boolean; message: string }>;
   createUser: (userData: {
-    email: string;
+    email?: string;
     password?: string;
     first_name: string;
     last_name: string;
     role: UserRole;
     phone?: string;
     department?: string;
+    job_title?: string;
+    employment_type?: 'full_time' | 'part_time' | 'volunteer' | 'contract';
+    avatar_url?: string;
+    has_login_account?: boolean;
+    member_id?: string;
   }) => Promise<{ success: boolean; message: string; user?: UserProfile }>;
   resetPassword: (email: string) => Promise<{ success: boolean; message: string }>;
+  setTemporaryPassword: (email: string, tempPass: string) => Promise<{ success: boolean; message: string }>;
   changePassword: (newPassword: string, oldPassword?: string) => Promise<{ success: boolean; message: string }>;
   quickLoginAs: (user: UserProfile) => void;
   logout: () => Promise<void>;
@@ -839,27 +845,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const createUser = async (userData: {
-    email: string;
+    email?: string;
     password?: string;
     first_name: string;
     last_name: string;
     role: UserRole;
     phone?: string;
     department?: string;
+    job_title?: string;
+    employment_type?: 'full_time' | 'part_time' | 'volunteer' | 'contract';
+    avatar_url?: string;
+    has_login_account?: boolean;
+    member_id?: string;
   }): Promise<{ success: boolean; message: string; user?: UserProfile }> => {
-    const cleanEmail = (userData.email || '').trim().toLowerCase();
+    const hasLogin = userData.has_login_account !== false;
+    let cleanEmail = (userData.email || '').trim().toLowerCase();
+    if (!cleanEmail && !hasLogin) {
+      const sanitizedFirst = (userData.first_name || 'staff').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const sanitizedLast = (userData.last_name || 'member').toLowerCase().replace(/[^a-z0-9]/g, '');
+      cleanEmail = `${sanitizedFirst}.${sanitizedLast}@directory.greaterworkscitychurch.org`;
+    }
 
-    if (!isDemoAuthEnabled() && !getSupabaseClient()) {
+    if (hasLogin && !isDemoAuthEnabled() && !getSupabaseClient()) {
       return {
         success: false,
         message: 'Staff account creation is disabled in production until a secure backend is configured.'
       };
     }
 
-    // Check if email already exists locally
-    const exists = usersList.some((u) => Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail);
-    if (exists) {
-      return { success: false, message: 'A staff account with this email address already exists.' };
+    // Check if email already exists locally (if email is provided)
+    if (cleanEmail) {
+      const exists = usersList.some((u) => Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail);
+      if (exists) {
+        return { success: false, message: 'A staff record with this email address already exists.' };
+      }
     }
 
     const newUserId = `usr-${Date.now()}`;
@@ -870,7 +889,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       email: cleanEmail,
       phone: userData.phone?.trim() || undefined,
       department: userData.department || 'Church Administration',
+      job_title: userData.job_title?.trim() || undefined,
+      employment_type: userData.employment_type,
+      avatar_url: userData.avatar_url || undefined,
       role: userData.role,
+      has_login_account: hasLogin,
+      member_id: userData.member_id || undefined,
       is_active: true,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -879,8 +903,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Add to staff users directory without overriding active admin session
     setUsersList((prev) => [newUser, ...prev]);
 
-    // Store local staff password for offline login capability
-    if (userData.password) {
+    // Store local staff password for offline login capability if login is enabled
+    if (hasLogin && userData.password && cleanEmail) {
       try {
         const storedPass = localStorage.getItem('gwcc_staff_passwords');
         const passMap = storedPass ? JSON.parse(storedPass) : {};
@@ -901,6 +925,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             email: newUser.email,
             phone: newUser.phone,
             department: newUser.department,
+            job_title: newUser.job_title,
+            employment_type: newUser.employment_type,
+            avatar_url: newUser.avatar_url,
             role: newUser.role,
             is_active: true,
             created_at: newUser.created_at,
@@ -910,7 +937,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.warn('Supabase profiles insert notice:', err);
         }
 
-        if (userData.password) {
+        if (hasLogin && userData.password && cleanEmail) {
           try {
             await client.auth.signUp({
               email: cleanEmail,
@@ -934,7 +961,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return {
       success: true,
-      message: `Staff account created for ${newUser.first_name} ${newUser.last_name}!`,
+      message: hasLogin
+        ? `Staff account created for ${newUser.first_name} ${newUser.last_name} with login credentials!`
+        : `Staff directory profile created for ${newUser.first_name} ${newUser.last_name} (No login account).`,
       user: newUser,
     };
   };
@@ -956,7 +985,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         return {
           success: true,
-          message: `Password reset link sent to ${cleanEmail}. Check your inbox.`,
+          message: `Official password reset link sent to ${cleanEmail}. Check your inbox.`,
         };
       } catch (err: any) {
         console.warn('Supabase password reset note:', err);
@@ -966,6 +995,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return {
       success: true,
       message: `Password reset instructions have been dispatched to ${cleanEmail}. Please check your inbox or contact church administration.`,
+    };
+  };
+
+  const setTemporaryPassword = async (
+    email: string,
+    tempPass: string
+  ): Promise<{ success: boolean; message: string }> => {
+    const cleanEmail = email.trim().toLowerCase();
+    const trimmed = tempPass.trim();
+
+    if (!cleanEmail || !trimmed) {
+      return { success: false, message: 'Email and temporary password are required.' };
+    }
+
+    // 1. Immediately store in local staff credentials store so the user can log in right away
+    try {
+      const storedPass = localStorage.getItem('gwcc_staff_passwords');
+      const passMap = storedPass ? JSON.parse(storedPass) : {};
+      passMap[cleanEmail] = trimmed;
+      localStorage.setItem('gwcc_staff_passwords', JSON.stringify(passMap));
+    } catch (err) {
+      console.warn('Local staff password update note:', err);
+    }
+
+    // 2. If Supabase client is connected, try to update in auth service
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        // If current session is the user, updateUser works directly
+        if (currentUser?.email?.toLowerCase() === cleanEmail) {
+          await client.auth.updateUser({ password: trimmed });
+        }
+      } catch (err: any) {
+        console.warn('Supabase auth password update notice:', err);
+      }
+    }
+
+    return {
+      success: true,
+      message: `Temporary password for ${cleanEmail} has been set to "${trimmed}". Staff member can now log in immediately with this credential.`,
     };
   };
 
@@ -1314,6 +1383,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.warn('Unauthorized role change blocked: only super_admin can modify staff roles.');
         } else if (isTargetElisha) {
           allowedRole = 'super_admin';
+        } else if (targetUser.role === 'super_admin' && updates.role !== 'super_admin') {
+          // Check if this would leave zero active super admins
+          const otherActiveSuperAdmins = prev.filter(
+            (u) => u.id !== userId && u.role === 'super_admin' && u.is_active
+          );
+          if (otherActiveSuperAdmins.length === 0) {
+            console.warn('Action blocked: Cannot demote the sole active Super Administrator.');
+            allowedRole = 'super_admin';
+          } else {
+            allowedRole = updates.role;
+          }
         } else {
           allowedRole = updates.role;
         }
@@ -1408,6 +1488,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return prev;
       }
 
+      // SECURITY GUARD: Cannot suspend the last active super_admin
+      if (targetUser.role === 'super_admin' && targetUser.is_active) {
+        const otherActiveSuperAdmins = prev.filter(
+          (u) => u.id !== userId && u.role === 'super_admin' && u.is_active
+        );
+        if (otherActiveSuperAdmins.length === 0) {
+          console.warn('Action blocked: Cannot suspend the last active Super Administrator.');
+          return prev;
+        }
+      }
+
       const newActive = !targetUser.is_active;
       const updatedUser: UserProfile = {
         ...targetUser,
@@ -1448,6 +1539,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       register,
       createUser,
       resetPassword,
+      setTemporaryPassword,
       changePassword,
       quickLoginAs,
       logout,

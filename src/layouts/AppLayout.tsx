@@ -111,6 +111,7 @@ export const AppLayout: React.FC = () => {
     if (clean.startsWith('/small-groups')) return { module: 'small_groups', label: 'Cell Groups & Fellowships' };
     if (clean.startsWith('/events')) return { module: 'events', label: 'Events & Calendar' };
     if (clean.startsWith('/communication')) return { module: 'communication', label: 'Broadcast Communications' };
+    if (clean.startsWith('/inventory')) return { module: 'settings', label: 'Asset Inventory & Equipment' };
     if (clean.startsWith('/members')) return { module: 'members', label: 'Congregational Registry' };
     return null;
   };
