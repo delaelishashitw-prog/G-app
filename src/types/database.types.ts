@@ -345,6 +345,8 @@ export interface ChurchFinanceRecord {
   transaction_type: 'expense' | 'disbursement' | 'transfer' | 'income' | 'grant' | string;
   account_id?: string;
   account_name: string;
+  to_account_id?: string;
+  to_account_name?: string;
   category: string;
   title: string;
   recipient_or_vendor?: string;
@@ -360,7 +362,9 @@ export interface ChurchFinanceRecord {
   approved_by?: string;
   receipt_url?: string;
   recorded_by?: string;
-  status: 'completed' | 'pending' | 'cancelled' | string;
+  status: 'completed' | 'pending' | 'cancelled' | 'voided' | string;
+  void_reason?: string;
+  voided_by?: string;
   created_at: string;
   updated_at?: string;
 }

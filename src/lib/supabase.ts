@@ -726,6 +726,8 @@ export function sanitizeRecordForSupabase(table: string, record: any): any {
         transaction_type: record.transaction_type || 'expense',
         account_id: record.account_id || null,
         account_name: record.account_name || 'Main Operating Account',
+        to_account_id: record.to_account_id || null,
+        to_account_name: record.to_account_name || null,
         category: record.category || 'Operations',
         title: record.title || 'Church Expenditure',
         recipient_or_vendor: record.recipient_or_vendor || null,
@@ -742,6 +744,8 @@ export function sanitizeRecordForSupabase(table: string, record: any): any {
         receipt_url: record.receipt_url || null,
         recorded_by: record.recorded_by || null,
         status: record.status || 'completed',
+        void_reason: record.void_reason || null,
+        voided_by: record.voided_by || null,
         created_at: record.created_at || new Date().toISOString(),
         updated_at: record.updated_at || new Date().toISOString(),
       };

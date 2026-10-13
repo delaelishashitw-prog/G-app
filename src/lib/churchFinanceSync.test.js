@@ -89,3 +89,208 @@ test('Church Finance: migration 20261010000004 exists on disk', () => {
   assert.ok(sql.includes('public.church_accounts'));
   assert.ok(sql.includes('public.church_finances'));
 });
+
+test('Church Finance: voiding an expense reverses account balance and marks status voided', async () => {
+  const { voidChurchFinance } = await import('../features/finance/financeStore.ts');
+
+  let finances = [
+    {
+      id: 'fin-void-test-1',
+      transaction_type: 'expense',
+      account_id: 'acc-void-1',
+      account_name: 'GCB Bank Operations',
+      category: 'Utilities & Power',
+      title: 'Power Voucher',
+      amount: 500,
+      currency: 'GHS',
+      date: '2026-10-10',
+      status: 'completed',
+    },
+  ];
+
+  let accounts = [
+    {
+      id: 'acc-void-1',
+      name: 'GCB Bank Operations',
+      account_type: 'bank',
+      bank_or_provider: 'GCB Bank',
+      current_balance: 1000,
+      currency: 'GHS',
+      is_active: true,
+    },
+  ];
+
+  let budgets = [
+    {
+      id: 'bgt-1',
+      department: 'Facilities & Maintenance',
+      allocated_amount: 5000,
+      spent_amount: 500,
+      currency: 'GHS',
+    },
+  ];
+
+  const setFinances = (updater) => {
+    finances = typeof updater === 'function' ? updater(finances) : updater;
+  };
+  const setAccounts = (updater) => {
+    accounts = typeof updater === 'function' ? updater(accounts) : updater;
+  };
+  const setBudgets = (updater) => {
+    budgets = typeof updater === 'function' ? updater(budgets) : updater;
+  };
+
+  voidChurchFinance(
+    'fin-void-test-1',
+    'Duplicate entry test',
+    'Finance Officer',
+    setFinances,
+    setAccounts,
+    setBudgets,
+    () => {},
+    () => {}
+  );
+
+  // Expense reversed: 1000 + 500 = 1500
+  assert.equal(accounts[0].current_balance, 1500, 'Account balance should be credited back by 500');
+  assert.equal(finances[0].status, 'voided');
+  assert.equal(finances[0].void_reason, 'Duplicate entry test');
+  assert.equal(finances[0].voided_by, 'Finance Officer');
+});
+
+test('Church Finance: internal transfer debits source and credits destination account accurately', async () => {
+  const { transferBetweenAccounts } = await import('../features/finance/financeStore.ts');
+
+  let finances = [];
+  let accounts = [
+    {
+      id: 'acc-src',
+      name: 'GCB Operations',
+      account_type: 'bank',
+      bank_or_provider: 'GCB',
+      current_balance: 2000,
+      currency: 'GHS',
+      is_active: true,
+    },
+    {
+      id: 'acc-dest',
+      name: 'Cathedral Petty Cash',
+      account_type: 'cash_petty',
+      bank_or_provider: 'Cash Float',
+      current_balance: 300,
+      currency: 'GHS',
+      is_active: true,
+    },
+  ];
+
+  const setFinances = (updater) => {
+    finances = typeof updater === 'function' ? updater(finances) : updater;
+  };
+  const setAccounts = (updater) => {
+    accounts = typeof updater === 'function' ? updater(accounts) : updater;
+  };
+
+  // 1. Same account transfer should fail
+  const sameResult = transferBetweenAccounts(
+    'acc-src',
+    'acc-src',
+    500,
+    'Invalid transfer',
+    setAccounts,
+    setFinances,
+    () => {},
+    () => {}
+  );
+  assert.equal(sameResult.success, false);
+
+  // 2. Overdraft transfer should fail
+  const overdraftResult = transferBetweenAccounts(
+    'acc-src',
+    'acc-dest',
+    5000,
+    'Overdraft transfer',
+    setAccounts,
+    setFinances,
+    () => {},
+    () => {}
+  );
+  assert.equal(overdraftResult.success, false);
+
+  // 3. Valid transfer of 600
+  const validResult = transferBetweenAccounts(
+    'acc-src',
+    'acc-dest',
+    600,
+    'Replenish float',
+    setAccounts,
+    setFinances,
+    () => {},
+    () => {}
+  );
+  assert.equal(validResult.success, true);
+  assert.equal(accounts.find((a) => a.id === 'acc-src').current_balance, 1400);
+  assert.equal(accounts.find((a) => a.id === 'acc-dest').current_balance, 900);
+  assert.equal(finances.length, 1);
+  assert.equal(finances[0].transaction_type, 'transfer');
+  assert.equal(finances[0].amount, 600);
+  assert.equal(finances[0].account_id, 'acc-src');
+  assert.equal(finances[0].to_account_id, 'acc-dest');
+});
+
+test('Church Finance: recordChurchFinance rounds decimal precision and updates department budget', async () => {
+  const { recordChurchFinance } = await import('../features/finance/financeStore.ts');
+
+  let finances = [];
+  let accounts = [
+    {
+      id: 'acc-ops',
+      name: 'Main Operations',
+      account_type: 'bank',
+      bank_or_provider: 'GCB',
+      current_balance: 5000,
+      currency: 'GHS',
+      is_active: true,
+    },
+  ];
+  let budgets = [
+    {
+      id: 'bgt-facilities',
+      department: 'Facilities & Logistics',
+      allocated_amount: 10000,
+      spent_amount: 1000,
+      currency: 'GHS',
+    },
+  ];
+
+  const setFinances = (updater) => {
+    finances = typeof updater === 'function' ? updater(finances) : updater;
+  };
+  const setAccounts = (updater) => {
+    accounts = typeof updater === 'function' ? updater(accounts) : updater;
+  };
+  const setBudgets = (updater) => {
+    budgets = typeof updater === 'function' ? updater(budgets) : updater;
+  };
+
+  const rec = recordChurchFinance(
+    {
+      transaction_type: 'expense',
+      account_id: 'acc-ops',
+      account_name: 'Main Operations',
+      category: 'Utilities & Power',
+      title: 'Water Bill Payment',
+      amount: 450.555, // needs rounding to 450.56
+      currency: 'GHS',
+      date: '2026-10-12',
+      department: 'Facilities & Logistics',
+      status: 'completed',
+    },
+    setFinances,
+    setAccounts,
+    setBudgets
+  );
+
+  assert.equal(rec.amount, 450.56, 'Amount should be rounded to two decimal places');
+  assert.equal(accounts[0].current_balance, 4549.44, 'Account balance should be 5000 - 450.56 = 4549.44');
+  assert.equal(budgets[0].spent_amount, 1450.56, 'Budget spent amount should be 1000 + 450.56 = 1450.56');
+});

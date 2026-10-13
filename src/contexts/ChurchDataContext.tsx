@@ -133,6 +133,7 @@ import {
   recordChurchFinance as recordChurchFinanceRecord,
   updateChurchFinance as updateChurchFinanceRecord,
   deleteChurchFinance as deleteChurchFinanceRecord,
+  voidChurchFinance as voidChurchFinanceRecord,
   transferBetweenAccounts as transferBetweenAccountsRecord,
   addDepartmentBudget as addDepartmentBudgetRecord,
   updateDepartmentBudget as updateDepartmentBudgetRecord,
@@ -275,6 +276,7 @@ interface ChurchDataContextType {
   recordChurchFinance: (record: Omit<ChurchFinanceRecord, 'id' | 'created_at' | 'updated_at'>) => ChurchFinanceRecord;
   updateChurchFinance: (id: string, updates: Partial<ChurchFinanceRecord>) => void;
   deleteChurchFinance: (id: string) => void;
+  voidChurchFinance: (id: string, reason: string) => void;
   transferBetweenAccounts: (fromAccountId: string, toAccountId: string, amount: number, notes?: string) => { success: boolean; message: string };
   departmentBudgets: DepartmentBudget[];
   updateDepartmentBudget: (id: string, updates: Partial<DepartmentBudget>) => void;
@@ -527,10 +529,6 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (saved !== null) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          if (parsed.some((f: any) => typeof f?.id === 'string' && f.id.startsWith('cfin-'))) {
-            localStorage.removeItem('gwcc_churchFinances');
-            return [];
-          }
           return parsed;
         }
       }
@@ -546,10 +544,6 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (saved !== null) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          if (parsed.some((b: any) => typeof b?.id === 'string' && b.id.startsWith('bgt-'))) {
-            localStorage.removeItem('gwcc_departmentBudgets');
-            return [];
-          }
           return parsed;
         }
       }
@@ -1561,14 +1555,19 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   const recordChurchFinance = (data: Omit<ChurchFinanceRecord, 'id' | 'created_at' | 'updated_at'>): ChurchFinanceRecord =>
-    recordChurchFinanceRecord(data, setChurchFinances, setChurchAccounts, logAction, dbSyncUpsert);
+    recordChurchFinanceRecord(data, setChurchFinances, setChurchAccounts, setDepartmentBudgets, logAction, dbSyncUpsert);
 
   const updateChurchFinance = (id: string, updates: Partial<ChurchFinanceRecord>) => {
-    updateChurchFinanceRecord(id, updates, setChurchFinances, logAction, dbSyncUpsert);
+    updateChurchFinanceRecord(id, updates, setChurchFinances, setChurchAccounts, setDepartmentBudgets, logAction, dbSyncUpsert);
   };
 
   const deleteChurchFinance = (id: string) => {
-    deleteChurchFinanceRecord(id, setChurchFinances, logAction, dbSyncDelete);
+    deleteChurchFinanceRecord(id, setChurchFinances, setChurchAccounts, setDepartmentBudgets, logAction, dbSyncDelete, dbSyncUpsert);
+  };
+
+  const voidChurchFinance = (id: string, reason: string) => {
+    const userSignature = currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat';
+    voidChurchFinanceRecord(id, reason, userSignature, setChurchFinances, setChurchAccounts, setDepartmentBudgets, logAction, dbSyncUpsert);
   };
 
   const transferBetweenAccounts = (fromAccountId: string, toAccountId: string, amount: number, notes?: string) =>
@@ -1910,6 +1909,20 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         );
       }
 
+      // Update Welfare department budget if present
+      setDepartmentBudgets((prevBudgets) =>
+        prevBudgets.map((b) => {
+          if (b.department.toLowerCase().includes('welfare') || b.department.toLowerCase().includes('benevolence')) {
+            return {
+              ...b,
+              spent_amount: b.spent_amount + amountToDisburse,
+              updated_at: new Date().toISOString(),
+            };
+          }
+          return b;
+        })
+      );
+
       logAction(
         'RECORD_CHURCH_EXPENSE',
         'Church Finance',
@@ -2205,6 +2218,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       recordChurchFinance,
       updateChurchFinance,
       deleteChurchFinance,
+      voidChurchFinance,
       transferBetweenAccounts,
       departmentBudgets,
       addDepartmentBudget,

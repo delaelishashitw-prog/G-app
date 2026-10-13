@@ -255,8 +255,9 @@ export function recordChurchFinance(
   data: Omit<ChurchFinanceRecord, 'id' | 'created_at' | 'updated_at'>,
   setChurchFinances: Dispatch<SetStateAction<ChurchFinanceRecord[]>>,
   setChurchAccounts: Dispatch<SetStateAction<ChurchAccount[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void
+  setDepartmentBudgets?: Dispatch<SetStateAction<DepartmentBudget[]>>,
+  logAction?: (action: string, module: string, details: string, recordId?: string) => void,
+  dbSyncUpsert?: (table: string, record: unknown) => void
 ): ChurchFinanceRecord {
   let approver = data.approved_by?.trim();
   if (
@@ -269,11 +270,14 @@ export function recordChurchFinance(
     approver = 'Prophet Elisha K. Richard';
   }
 
+  const numAmount = Math.round((Number(data.amount) || 0) * 100) / 100;
+
   const newRecord: ChurchFinanceRecord = {
     ...data,
     approved_by: approver,
-    amount: Number(data.amount) || 0,
+    amount: numAmount,
     id: `cfin-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    status: data.status || 'completed',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -281,17 +285,19 @@ export function recordChurchFinance(
   setChurchFinances((prev) => [newRecord, ...prev]);
 
   // If linked to an account, adjust holding account balance automatically
-  if (data.account_id) {
+  if (data.account_id && newRecord.status !== 'voided') {
     setChurchAccounts((prevAccounts) =>
       prevAccounts.map((acc) => {
         if (acc.id === data.account_id) {
-          const delta = data.transaction_type === 'income' || data.transaction_type === 'grant' ? data.amount : -data.amount;
+          const delta = data.transaction_type === 'income' || data.transaction_type === 'grant' ? numAmount : -numAmount;
           const updatedAcc = {
             ...acc,
             current_balance: Math.max(0, acc.current_balance + delta),
             updated_at: new Date().toISOString(),
           };
-          dbSyncUpsert('church_accounts', updatedAcc);
+          if (dbSyncUpsert) {
+            dbSyncUpsert('church_accounts', updatedAcc);
+          }
           return updatedAcc;
         }
         return acc;
@@ -299,13 +305,38 @@ export function recordChurchFinance(
     );
   }
 
-  logAction(
-    'RECORD_CHURCH_FINANCE',
-    'Church Finance',
-    `Recorded ${data.transaction_type.toUpperCase()}: ${data.title} (GH₵ ${data.amount.toFixed(2)}) on ${data.account_name}`,
-    newRecord.id
-  );
-  dbSyncUpsert('church_finances', newRecord);
+  // Update matching department budget if applicable
+  if (
+    setDepartmentBudgets &&
+    (data.transaction_type === 'expense' || data.transaction_type === 'disbursement') &&
+    data.department &&
+    newRecord.status !== 'voided'
+  ) {
+    setDepartmentBudgets((prevBudgets) =>
+      prevBudgets.map((b) => {
+        if (b.department.toLowerCase() === data.department!.toLowerCase()) {
+          return {
+            ...b,
+            spent_amount: b.spent_amount + numAmount,
+            updated_at: new Date().toISOString(),
+          };
+        }
+        return b;
+      })
+    );
+  }
+
+  if (logAction) {
+    logAction(
+      'RECORD_CHURCH_FINANCE',
+      'Church Finance',
+      `Recorded ${data.transaction_type.toUpperCase()}: ${data.title} (GH₵ ${numAmount.toFixed(2)}) on ${data.account_name}`,
+      newRecord.id
+    );
+  }
+  if (dbSyncUpsert) {
+    dbSyncUpsert('church_finances', newRecord);
+  }
   return newRecord;
 }
 
@@ -313,6 +344,8 @@ export function updateChurchFinance(
   id: string,
   updates: Partial<ChurchFinanceRecord>,
   setChurchFinances: Dispatch<SetStateAction<ChurchFinanceRecord[]>>,
+  setChurchAccounts: Dispatch<SetStateAction<ChurchAccount[]>>,
+  setDepartmentBudgets: Dispatch<SetStateAction<DepartmentBudget[]>>,
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
   dbSyncUpsert: (table: string, record: unknown) => void
 ) {
@@ -330,38 +363,262 @@ export function updateChurchFinance(
     }
   }
 
-  setChurchFinances((prev) =>
-    prev.map((item) => {
-      if (item.id === id) {
-        const updated = {
-          ...item,
-          ...sanitizedUpdates,
-          amount: sanitizedUpdates.amount !== undefined ? Number(sanitizedUpdates.amount) : item.amount,
-          updated_at: new Date().toISOString(),
-        };
-        logAction(
-          'UPDATE_CHURCH_FINANCE',
-          'Church Finance',
-          `Updated transaction ${updated.title} (GH₵ ${updated.amount.toFixed(2)})`,
-          id
-        );
-        dbSyncUpsert('church_finances', updated);
-        return updated;
+  setChurchFinances((prevFinances) => {
+    const existing = prevFinances.find((item) => item.id === id);
+    if (!existing) return prevFinances;
+
+    const oldAmount = existing.amount;
+    const newAmount = sanitizedUpdates.amount !== undefined
+      ? Math.round((Number(sanitizedUpdates.amount) || 0) * 100) / 100
+      : oldAmount;
+
+    const oldAccountId = existing.account_id;
+    const newAccountId = sanitizedUpdates.account_id !== undefined ? sanitizedUpdates.account_id : oldAccountId;
+
+    const oldType = existing.transaction_type;
+    const newType = sanitizedUpdates.transaction_type !== undefined ? sanitizedUpdates.transaction_type : oldType;
+
+    const oldDepartment = existing.department;
+    const newDepartment = sanitizedUpdates.department !== undefined ? sanitizedUpdates.department : oldDepartment;
+
+    const isExistingActive = existing.status !== 'voided';
+    const isNewActive = (sanitizedUpdates.status || existing.status) !== 'voided';
+
+    // Update holding account balances if active
+    if (isExistingActive && isNewActive) {
+      setChurchAccounts((prevAccounts) => {
+        let updatedAccounts = [...prevAccounts];
+
+        // 1. If account stayed the same
+        if (oldAccountId && oldAccountId === newAccountId) {
+          const oldEffect = oldType === 'income' || oldType === 'grant' ? oldAmount : -oldAmount;
+          const newEffect = newType === 'income' || newType === 'grant' ? newAmount : -newAmount;
+          const diff = newEffect - oldEffect;
+
+          if (diff !== 0) {
+            updatedAccounts = updatedAccounts.map((acc) => {
+              if (acc.id === oldAccountId) {
+                const u = {
+                  ...acc,
+                  current_balance: Math.max(0, acc.current_balance + diff),
+                  updated_at: new Date().toISOString(),
+                };
+                dbSyncUpsert('church_accounts', u);
+                return u;
+              }
+              return acc;
+            });
+          }
+        } else {
+          // Account changed: reverse old, apply new
+          if (oldAccountId) {
+            const oldReversal = oldType === 'income' || oldType === 'grant' ? -oldAmount : oldAmount;
+            updatedAccounts = updatedAccounts.map((acc) => {
+              if (acc.id === oldAccountId) {
+                const u = {
+                  ...acc,
+                  current_balance: Math.max(0, acc.current_balance + oldReversal),
+                  updated_at: new Date().toISOString(),
+                };
+                dbSyncUpsert('church_accounts', u);
+                return u;
+              }
+              return acc;
+            });
+          }
+          if (newAccountId) {
+            const newEffect = newType === 'income' || newType === 'grant' ? newAmount : -newAmount;
+            updatedAccounts = updatedAccounts.map((acc) => {
+              if (acc.id === newAccountId) {
+                const u = {
+                  ...acc,
+                  current_balance: Math.max(0, acc.current_balance + newEffect),
+                  updated_at: new Date().toISOString(),
+                };
+                dbSyncUpsert('church_accounts', u);
+                return u;
+              }
+              return acc;
+            });
+          }
+        }
+        return updatedAccounts;
+      });
+
+      // Update Department Budget if an expense amount or department changed
+      if ((oldType === 'expense' || oldType === 'disbursement') && (newType === 'expense' || newType === 'disbursement')) {
+        setDepartmentBudgets((prevBudgets) => {
+          return prevBudgets.map((b) => {
+            const isOldMatch = oldDepartment && b.department.toLowerCase() === oldDepartment.toLowerCase();
+            const isNewMatch = newDepartment && b.department.toLowerCase() === newDepartment.toLowerCase();
+
+            if (isOldMatch && isNewMatch) {
+              const diff = newAmount - oldAmount;
+              return { ...b, spent_amount: Math.max(0, b.spent_amount + diff), updated_at: new Date().toISOString() };
+            }
+            if (isOldMatch) {
+              return { ...b, spent_amount: Math.max(0, b.spent_amount - oldAmount), updated_at: new Date().toISOString() };
+            }
+            if (isNewMatch) {
+              return { ...b, spent_amount: b.spent_amount + newAmount, updated_at: new Date().toISOString() };
+            }
+            return b;
+          });
+        });
       }
-      return item;
-    })
-  );
+    }
+
+    const updatedRecord: ChurchFinanceRecord = {
+      ...existing,
+      ...sanitizedUpdates,
+      amount: newAmount,
+      updated_at: new Date().toISOString(),
+    };
+
+    logAction(
+      'UPDATE_CHURCH_FINANCE',
+      'Church Finance',
+      `Updated transaction ${updatedRecord.title} (GH₵ ${updatedRecord.amount.toFixed(2)}) on ${updatedRecord.account_name}`,
+      id
+    );
+    dbSyncUpsert('church_finances', updatedRecord);
+
+    return prevFinances.map((f) => (f.id === id ? updatedRecord : f));
+  });
+}
+
+export function voidChurchFinance(
+  id: string,
+  voidReason: string,
+  voidedBy: string,
+  setChurchFinances: Dispatch<SetStateAction<ChurchFinanceRecord[]>>,
+  setChurchAccounts: Dispatch<SetStateAction<ChurchAccount[]>>,
+  setDepartmentBudgets: Dispatch<SetStateAction<DepartmentBudget[]>>,
+  logAction: (action: string, module: string, details: string, recordId?: string) => void,
+  dbSyncUpsert: (table: string, record: unknown) => void
+) {
+  setChurchFinances((prevFinances) => {
+    const target = prevFinances.find((f) => f.id === id);
+    if (!target) return prevFinances;
+
+    // If already voided, do not double-reverse
+    if (target.status === 'voided') return prevFinances;
+
+    // Reverse holding account balance
+    if (target.account_id) {
+      setChurchAccounts((prevAccounts) =>
+        prevAccounts.map((acc) => {
+          if (acc.id === target.account_id) {
+            // Reversing an expense gives money back; reversing income removes money
+            const isInc = target.transaction_type === 'income' || target.transaction_type === 'grant';
+            const reversalDelta = isInc ? -target.amount : target.amount;
+            const updatedAcc = {
+              ...acc,
+              current_balance: Math.max(0, acc.current_balance + reversalDelta),
+              updated_at: new Date().toISOString(),
+            };
+            dbSyncUpsert('church_accounts', updatedAcc);
+            return updatedAcc;
+          }
+          return acc;
+        })
+      );
+    }
+
+    // Reverse department budget spent amount if it was an expense
+    if (
+      (target.transaction_type === 'expense' || target.transaction_type === 'disbursement') &&
+      target.department
+    ) {
+      setDepartmentBudgets((prevBudgets) =>
+        prevBudgets.map((b) => {
+          if (b.department.toLowerCase() === target.department!.toLowerCase()) {
+            return {
+              ...b,
+              spent_amount: Math.max(0, b.spent_amount - target.amount),
+              updated_at: new Date().toISOString(),
+            };
+          }
+          return b;
+        })
+      );
+    }
+
+    const voidedRecord: ChurchFinanceRecord = {
+      ...target,
+      status: 'voided',
+      void_reason: voidReason.trim() || 'Voided by administrative authority',
+      voided_by: voidedBy.trim() || 'Church Finance Office',
+      updated_at: new Date().toISOString(),
+    };
+
+    logAction(
+      'VOID_CHURCH_FINANCE',
+      'Church Finance',
+      `Voided transaction #${id} "${target.title}" (GH₵ ${target.amount.toFixed(2)}). Reason: ${voidReason}`,
+      id
+    );
+    dbSyncUpsert('church_finances', voidedRecord);
+
+    return prevFinances.map((f) => (f.id === id ? voidedRecord : f));
+  });
 }
 
 export function deleteChurchFinance(
   id: string,
   setChurchFinances: Dispatch<SetStateAction<ChurchFinanceRecord[]>>,
+  setChurchAccounts: Dispatch<SetStateAction<ChurchAccount[]>>,
+  setDepartmentBudgets: Dispatch<SetStateAction<DepartmentBudget[]>>,
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncDelete: (table: string, id: string) => void
+  dbSyncDelete: (table: string, id: string) => void,
+  dbSyncUpsert: (table: string, record: unknown) => void
 ) {
-  setChurchFinances((prev) => prev.filter((f) => f.id !== id));
-  logAction('DELETE_CHURCH_FINANCE', 'Church Finance', `Deleted church finance record ${id}`, id);
-  dbSyncDelete('church_finances', id);
+  setChurchFinances((prevFinances) => {
+    const target = prevFinances.find((f) => f.id === id);
+
+    // If active (not voided), reverse its balance impact on holding accounts
+    if (target && target.status !== 'voided' && target.account_id) {
+      setChurchAccounts((prevAccounts) =>
+        prevAccounts.map((acc) => {
+          if (acc.id === target.account_id) {
+            const isInc = target.transaction_type === 'income' || target.transaction_type === 'grant';
+            const reversalDelta = isInc ? -target.amount : target.amount;
+            const updatedAcc = {
+              ...acc,
+              current_balance: Math.max(0, acc.current_balance + reversalDelta),
+              updated_at: new Date().toISOString(),
+            };
+            dbSyncUpsert('church_accounts', updatedAcc);
+            return updatedAcc;
+          }
+          return acc;
+        })
+      );
+
+      // Also reverse department budget if applicable
+      if (
+        (target.transaction_type === 'expense' || target.transaction_type === 'disbursement') &&
+        target.department
+      ) {
+        setDepartmentBudgets((prevBudgets) =>
+          prevBudgets.map((b) => {
+            if (b.department.toLowerCase() === target.department!.toLowerCase()) {
+              return {
+                ...b,
+                spent_amount: Math.max(0, b.spent_amount - target.amount),
+                updated_at: new Date().toISOString(),
+              };
+            }
+            return b;
+          })
+        );
+      }
+    }
+
+    logAction('DELETE_CHURCH_FINANCE', 'Church Finance', `Deleted church finance record ${id} ("${target?.title || ''}")`, id);
+    dbSyncDelete('church_finances', id);
+    return prevFinances.filter((f) => f.id !== id);
+  });
 }
 
 // -----------------------------------------------------------------------------
@@ -380,7 +637,8 @@ export function transferBetweenAccounts(
   if (fromAccountId === toAccountId) {
     return { success: false, message: 'Source and destination accounts must be different.' };
   }
-  if (amount <= 0) {
+  const cleanAmount = Math.round((Number(amount) || 0) * 100) / 100;
+  if (cleanAmount <= 0) {
     return { success: false, message: 'Transfer amount must be greater than zero.' };
   }
 
@@ -393,7 +651,7 @@ export function transferBetweenAccounts(
     const toAcc = prev.find((a) => a.id === toAccountId);
 
     if (!fromAcc || !toAcc) return prev;
-    if (fromAcc.current_balance < amount) {
+    if (fromAcc.current_balance < cleanAmount) {
       return prev; // Not enough balance
     }
 
@@ -403,12 +661,12 @@ export function transferBetweenAccounts(
 
     const updatedFrom = {
       ...fromAcc,
-      current_balance: fromAcc.current_balance - amount,
+      current_balance: Math.max(0, fromAcc.current_balance - cleanAmount),
       updated_at: new Date().toISOString(),
     };
     const updatedTo = {
       ...toAcc,
-      current_balance: toAcc.current_balance + amount,
+      current_balance: toAcc.current_balance + cleanAmount,
       updated_at: new Date().toISOString(),
     };
 
@@ -426,16 +684,18 @@ export function transferBetweenAccounts(
     return { success: false, message: 'Transfer failed: Insufficient balance or invalid account.' };
   }
 
-  // Create an audit ledger record in church_finances
+  // Create an audit ledger record in church_finances capturing both legs
   const transferRecord: ChurchFinanceRecord = {
     id: `cfin-transfer-${Date.now()}`,
     transaction_type: 'transfer',
     account_id: fromAccountId,
     account_name: fromAccName,
+    to_account_id: toAccountId,
+    to_account_name: toAccName,
     category: 'Internal Transfer',
     title: `Transfer to ${toAccName}`,
     recipient_or_vendor: toAccName,
-    amount: amount,
+    amount: cleanAmount,
     currency: 'GHS',
     date: new Date().toISOString().split('T')[0],
     payment_method: 'internal_transfer',
@@ -455,11 +715,11 @@ export function transferBetweenAccounts(
   logAction(
     'ACCOUNT_TRANSFER',
     'Church Finance',
-    `Transferred GH₵ ${amount.toFixed(2)} from ${fromAccName} to ${toAccName}`,
+    `Transferred GH₵ ${cleanAmount.toFixed(2)} from ${fromAccName} to ${toAccName}`,
     transferRecord.id
   );
 
-  return { success: true, message: `Successfully transferred GH₵ ${amount.toFixed(2)} from ${fromAccName} to ${toAccName}.` };
+  return { success: true, message: `Successfully transferred GH₵ ${cleanAmount.toFixed(2)} from ${fromAccName} to ${toAccName}.` };
 }
 
 // -----------------------------------------------------------------------------

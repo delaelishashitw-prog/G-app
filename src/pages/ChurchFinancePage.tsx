@@ -40,7 +40,13 @@ import {
   Coins,
   RotateCcw,
   Trash2,
+  Edit3,
+  Ban,
+  ArrowUpDown,
+  ChevronLeft,
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import {
   ResponsiveContainer,
   BarChart,
@@ -81,6 +87,19 @@ import {
 // Modals
 import { PaymentVoucherModal } from '../components/finance/PaymentVoucherModal';
 import { DepartmentBudgetModal } from '../components/finance/DepartmentBudgetModal';
+import { EditChurchFinanceModal } from '../components/finance/EditChurchFinanceModal';
+import { VoidChurchFinanceModal } from '../components/finance/VoidChurchFinanceModal';
+
+export const DATE_FILTER_LABELS: Record<ChurchFinanceDateFilter, string> = {
+  all: 'All Time',
+  today: 'Today',
+  this_week: 'This Week',
+  last_week: 'Last Week',
+  this_month: 'This Month',
+  last_month: 'Last Month',
+  this_year: 'This Year',
+  custom: 'Custom Range',
+};
 
 export type ChurchFinanceDateFilter =
   | 'all'
@@ -182,6 +201,7 @@ export const ChurchFinancePage: React.FC = () => {
     updateChurchFinance,
     deleteChurchFinance,
     transferBetweenAccounts,
+    voidChurchFinance,
     addDepartmentBudget,
     updateDepartmentBudget,
     resetChurchFinanceData,
@@ -201,6 +221,12 @@ export const ChurchFinancePage: React.FC = () => {
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('all');
   const [selectedDepartmentFilter, setSelectedDepartmentFilter] = useState('all');
 
+  // Pagination & Sorting for Ledger
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [sortColumn, setSortColumn] = useState<'date' | 'amount' | 'reference_no' | 'title'>('date');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
   // Modals
   const [showRecordIncomeModal, setShowRecordIncomeModal] = useState(false);
   const [showRecordExpenseModal, setShowRecordExpenseModal] = useState(false);
@@ -212,6 +238,12 @@ export const ChurchFinancePage: React.FC = () => {
   const [selectedEditBudget, setSelectedEditBudget] = useState<any | null>(null);
   const [selectedVoucherRecord, setSelectedVoucherRecord] = useState<ChurchFinanceRecord | null>(null);
   const [editingFinanceRecord, setEditingFinanceRecord] = useState<ChurchFinanceRecord | null>(null);
+  const [voidingFinanceRecord, setVoidingFinanceRecord] = useState<ChurchFinanceRecord | null>(null);
+  const [deletingFinanceRecord, setDeletingFinanceRecord] = useState<ChurchFinanceRecord | null>(null);
+
+  // Form Submitting States
+  const [isSubmittingIncome, setIsSubmittingIncome] = useState(false);
+  const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
 
   // Ledger Filter: All, Income Only, Expense Only
   const [ledgerTypeFilter, setLedgerTypeFilter] = useState<'all' | 'income' | 'expense'>('all');
@@ -294,12 +326,23 @@ export const ChurchFinancePage: React.FC = () => {
     return true;
   };
 
-  // Filtered Finances
+  // Filtered Finances with Two-Sided Transfer Support and Dynamic Sorting
   const filteredFinances = useMemo(() => {
+    const selectedAcc = selectedAccountFilter !== 'all' ? churchAccounts.find((a) => a.id === selectedAccountFilter) : null;
+    const selectedAccName = selectedAcc ? selectedAcc.name.toLowerCase() : '';
+
     return churchFinances
       .filter((item) => {
         if (!isDateMatchingFilter(item.date)) return false;
-        if (selectedAccountFilter !== 'all' && item.account_id !== selectedAccountFilter) return false;
+
+        if (selectedAccountFilter !== 'all') {
+          const isDirectSource = item.account_id === selectedAccountFilter;
+          const isDirectDest = item.to_account_id === selectedAccountFilter;
+          const isTransferMatch = item.transaction_type === 'transfer' &&
+            Boolean(selectedAccName && (item.recipient_or_vendor?.toLowerCase() === selectedAccName || item.notes?.toLowerCase().includes(selectedAccName)));
+          if (!isDirectSource && !isDirectDest && !isTransferMatch) return false;
+        }
+
         if (selectedCategoryFilter !== 'all' && item.category !== selectedCategoryFilter) return false;
         if (selectedDepartmentFilter !== 'all' && item.department !== selectedDepartmentFilter) return false;
 
@@ -310,46 +353,60 @@ export const ChurchFinancePage: React.FC = () => {
           const refNo = (item.reference_no || '').toLowerCase();
           const notes = (item.notes || '').toLowerCase();
           const desc = (item.description || '').toLowerCase();
+          const voidRes = (item.void_reason || '').toLowerCase();
           return (
             title.includes(q) ||
             recipient.includes(q) ||
             refNo.includes(q) ||
             notes.includes(q) ||
-            desc.includes(q)
+            desc.includes(q) ||
+            voidRes.includes(q)
           );
         }
         return true;
       })
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [churchFinances, dateFilter, customStartDate, customEndDate, selectedAccountFilter, selectedCategoryFilter, selectedDepartmentFilter, searchQuery]);
+      .sort((a, b) => {
+        let comp = 0;
+        if (sortColumn === 'date') {
+          comp = new Date(b.date).getTime() - new Date(a.date).getTime();
+        } else if (sortColumn === 'amount') {
+          comp = b.amount - a.amount;
+        } else if (sortColumn === 'reference_no') {
+          comp = (a.reference_no || '').localeCompare(b.reference_no || '');
+        } else if (sortColumn === 'title') {
+          comp = a.title.localeCompare(b.title);
+        }
+        return sortDirection === 'desc' ? comp : -comp;
+      });
+  }, [churchFinances, dateFilter, customStartDate, customEndDate, selectedAccountFilter, selectedCategoryFilter, selectedDepartmentFilter, searchQuery, sortColumn, sortDirection, churchAccounts]);
 
-  // Total Available Liquidity across all accounts
+  // Total Available Liquidity across all accounts (Point-in-time active treasury)
   const totalLiquidity = useMemo(() => {
     return churchAccounts
       .filter((a) => a.is_active)
       .reduce((sum, a) => sum + (Number(a.current_balance) || 0), 0);
   }, [churchAccounts]);
 
-  // Total Institutional Church Income in Filtered Period
+  // Total Institutional Church Income in Filtered Period (Excluding Voided & Transfers)
   const totalChurchIncome = useMemo(() => {
     return filteredFinances
-      .filter((f) => f.transaction_type === 'income' || f.transaction_type === 'grant')
+      .filter((f) => f.status !== 'voided' && (f.transaction_type === 'income' || f.transaction_type === 'grant'))
       .reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
   }, [filteredFinances]);
 
   const churchIncomeCount = useMemo(() => {
-    return filteredFinances.filter((f) => f.transaction_type === 'income' || f.transaction_type === 'grant').length;
+    return filteredFinances.filter((f) => f.status !== 'voided' && (f.transaction_type === 'income' || f.transaction_type === 'grant')).length;
   }, [filteredFinances]);
 
-  // Operational Burn / Expenditures in Filtered Period
+  // Operational Burn / Expenditures in Filtered Period (Excluding Voided & Transfers)
   const totalExpenditures = useMemo(() => {
     return filteredFinances
-      .filter((f) => f.transaction_type === 'expense' || f.transaction_type === 'disbursement')
+      .filter((f) => f.status !== 'voided' && (f.transaction_type === 'expense' || f.transaction_type === 'disbursement'))
       .reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
   }, [filteredFinances]);
 
   const expendituresCount = useMemo(() => {
-    return filteredFinances.filter((f) => f.transaction_type === 'expense' || f.transaction_type === 'disbursement').length;
+    return filteredFinances.filter((f) => f.status !== 'voided' && (f.transaction_type === 'expense' || f.transaction_type === 'disbursement')).length;
   }, [filteredFinances]);
 
   // Net Operating Cash Flow (Surplus / Deficit)
@@ -365,6 +422,26 @@ export const ChurchFinancePage: React.FC = () => {
     }
     return filteredFinances;
   }, [filteredFinances, ledgerTypeFilter]);
+
+  // Pagination Slice
+  const totalPages = Math.max(1, Math.ceil(displayedFinances.length / pageSize));
+  const validPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  const paginatedFinances = useMemo(() => {
+    const start = (validPage - 1) * pageSize;
+    return displayedFinances.slice(start, start + pageSize);
+  }, [displayedFinances, validPage, pageSize]);
+
+  // Toggle Column Sort
+  const handleSort = (column: 'date' | 'amount' | 'reference_no' | 'title') => {
+    if (sortColumn === column) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(column);
+      setSortDirection('desc');
+    }
+    setCurrentPage(1);
+  };
 
   // Department Budget Utilization Aggregates
   const totalAllocatedBudget = useMemo(() => {
@@ -417,11 +494,14 @@ export const ChurchFinancePage: React.FC = () => {
   // Handle Save Expenditure
   const handleSaveExpense = (e: React.FormEvent) => {
     e.preventDefault();
-    const amountNum = parseFloat(formAmount);
-    if (isNaN(amountNum) || amountNum <= 0) {
+    if (isSubmittingExpense) return;
+
+    const parsedAmt = parseFloat(formAmount);
+    if (isNaN(parsedAmt) || parsedAmt <= 0) {
       error('Invalid Amount', 'Please provide a valid expenditure amount.');
       return;
     }
+    const amountNum = Math.round(parsedAmt * 100) / 100;
 
     if (churchAccounts.length === 0) {
       error('No Holding Account', 'Please add a church account before recording an expenditure.');
@@ -433,39 +513,36 @@ export const ChurchFinancePage: React.FC = () => {
 
     const voucherId = formReferenceNo.trim() || `VOUCH-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
 
-    const newRec = recordChurchFinance({
-      transaction_type: formTransactionType,
-      account_id: selectedAcc?.id,
-      account_name: accName,
-      category: formCategory,
-      title: formTitle.trim(),
-      recipient_or_vendor: formRecipient.trim() || 'General Vendor',
-      amount: amountNum,
-      currency: 'GHS',
-      date: formDate || todayISO(),
-      payment_method: formPaymentMethod,
-      reference_no: voucherId,
-      department: formDepartment,
-      approved_by: formApprovedBy.trim() || 'Prophet Elisha K. Richard',
-      notes: formNotes.trim() || undefined,
-      recorded_by: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat',
-      status: 'completed',
-    });
-
-    // Also update department budget spent if matched
-    const matchedBudget = departmentBudgets.find((b) => b.department.toLowerCase() === formDepartment.toLowerCase());
-    if (matchedBudget) {
-      updateDepartmentBudget(matchedBudget.id, {
-        spent_amount: matchedBudget.spent_amount + amountNum,
+    setIsSubmittingExpense(true);
+    try {
+      const newRec = recordChurchFinance({
+        transaction_type: formTransactionType,
+        account_id: selectedAcc?.id,
+        account_name: accName,
+        category: formCategory,
+        title: formTitle.trim(),
+        recipient_or_vendor: formRecipient.trim() || 'General Vendor',
+        amount: amountNum,
+        currency: 'GHS',
+        date: formDate || todayISO(),
+        payment_method: formPaymentMethod,
+        reference_no: voucherId,
+        department: formDepartment,
+        approved_by: formApprovedBy.trim() || 'Prophet Elisha K. Richard',
+        notes: formNotes.trim() || undefined,
+        recorded_by: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat',
+        status: 'completed',
       });
+
+      success('Expenditure Recorded', `Disbursed ${formatGHS(amountNum)} from ${accName}.`);
+      setShowRecordExpenseModal(false);
+      resetExpenseForm();
+
+      // Offer voucher preview
+      setSelectedVoucherRecord(newRec);
+    } finally {
+      setIsSubmittingExpense(false);
     }
-
-    success('Expenditure Recorded', `Disbursed ${formatGHS(amountNum)} from ${accName}.`);
-    setShowRecordExpenseModal(false);
-    resetExpenseForm();
-
-    // Offer voucher preview
-    setSelectedVoucherRecord(newRec);
   };
 
   const resetExpenseForm = () => {
@@ -486,11 +563,14 @@ export const ChurchFinancePage: React.FC = () => {
   // Handle Save Church Income
   const handleSaveIncome = (e: React.FormEvent) => {
     e.preventDefault();
-    const amountNum = parseFloat(incomeAmount);
-    if (isNaN(amountNum) || amountNum <= 0) {
+    if (isSubmittingIncome) return;
+
+    const parsedAmt = parseFloat(incomeAmount);
+    if (isNaN(parsedAmt) || parsedAmt <= 0) {
       error('Invalid Amount', 'Please provide a valid income amount.');
       return;
     }
+    const amountNum = Math.round(parsedAmt * 100) / 100;
 
     if (churchAccounts.length === 0) {
       error('No Holding Account', 'Please add a church account before recording income.');
@@ -501,31 +581,36 @@ export const ChurchFinancePage: React.FC = () => {
     const accName = selectedAcc ? selectedAcc.name : 'Main Operations Account';
     const refId = incomeReferenceNo.trim() || `INC-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
 
-    const newRec = recordChurchFinance({
-      transaction_type: 'income',
-      account_id: selectedAcc?.id,
-      account_name: accName,
-      category: incomeCategory,
-      title: incomeTitle.trim(),
-      recipient_or_vendor: incomeSource.trim() || 'Church Treasury Deposit',
-      amount: amountNum,
-      currency: 'GHS',
-      date: incomeDate || todayISO(),
-      payment_method: incomePaymentMethod as any,
-      reference_no: refId,
-      department: incomeDepartment,
-      approved_by: incomeReceivedBy.trim() || settings.senior_pastor || 'Prophet Elisha K. Richard',
-      notes: incomeNotes.trim() || undefined,
-      recorded_by: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat',
-      status: 'completed',
-    });
+    setIsSubmittingIncome(true);
+    try {
+      const newRec = recordChurchFinance({
+        transaction_type: 'income',
+        account_id: selectedAcc?.id,
+        account_name: accName,
+        category: incomeCategory,
+        title: incomeTitle.trim(),
+        recipient_or_vendor: incomeSource.trim() || 'Church Treasury Deposit',
+        amount: amountNum,
+        currency: 'GHS',
+        date: incomeDate || todayISO(),
+        payment_method: incomePaymentMethod as any,
+        reference_no: refId,
+        department: incomeDepartment,
+        approved_by: incomeReceivedBy.trim() || settings.senior_pastor || 'Prophet Elisha K. Richard',
+        notes: incomeNotes.trim() || undefined,
+        recorded_by: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat',
+        status: 'completed',
+      });
 
-    success('Church Income Recorded', `Recorded ${formatGHS(amountNum)} credited to ${accName}.`);
-    setShowRecordIncomeModal(false);
-    resetIncomeForm();
+      success('Church Income Recorded', `Recorded ${formatGHS(amountNum)} credited to ${accName}.`);
+      setShowRecordIncomeModal(false);
+      resetIncomeForm();
 
-    // Offer receipt preview
-    setSelectedVoucherRecord(newRec);
+      // Offer receipt preview
+      setSelectedVoucherRecord(newRec);
+    } finally {
+      setIsSubmittingIncome(false);
+    }
   };
 
   const resetIncomeForm = (targetAccountId?: string) => {
@@ -685,6 +770,119 @@ export const ChurchFinancePage: React.FC = () => {
     link.click();
     document.body.removeChild(link);
     success('Export Successful', `Exported ${filteredFinances.length} financial transactions.`);
+  };
+
+  // Professional PDF Export
+  const handleExportFinancePDF = () => {
+    if (filteredFinances.length === 0) {
+      info('No Records', 'No transactions found for the selected period.');
+      return;
+    }
+
+    const doc = new jsPDF({ orientation: 'landscape', format: 'a4' });
+    const periodLabel = dateFilter === 'custom'
+      ? `${customStartDate || 'Start'} to ${customEndDate || 'End'}`
+      : DATE_FILTER_LABELS[dateFilter];
+
+    // Header
+    doc.setFontSize(16);
+    doc.setTextColor(15, 23, 42);
+    doc.text('GREATER WORKS CITY CHURCH (GWCC)', 14, 16);
+
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Joma New Site, Off Ablekuma-Joma Highway, Accra, Ghana | "Exceeding Abundantly Above All We Ask or Think"', 14, 22);
+    doc.text(`OFFICIAL CHURCH FINANCIAL STATEMENT & TREASURY LEDGER • REPORTING PERIOD: ${periodLabel.toUpperCase()}`, 14, 27);
+
+    // Summary box
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(14, 31, 269, 18, 2, 2, 'FD');
+
+    doc.setFontSize(8);
+    doc.setTextColor(71, 85, 105);
+    doc.text('TOTAL TREASURY LIQUIDITY', 20, 38);
+    doc.text('PERIOD CHURCH INCOME', 90, 38);
+    doc.text('PERIOD DISBURSEMENTS', 160, 38);
+    doc.text('NET OPERATING CASH FLOW', 230, 38);
+
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text(`GH₵ ${totalLiquidity.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 20, 45);
+    doc.setTextColor(5, 150, 105);
+    doc.text(`GH₵ ${totalChurchIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 90, 45);
+    doc.setTextColor(225, 29, 72);
+    doc.text(`GH₵ ${totalExpenditures.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 160, 45);
+    doc.setTextColor(netCashFlow >= 0 ? 13 : 217, netCashFlow >= 0 ? 148 : 119, netCashFlow >= 0 ? 136 : 6);
+    doc.text(`${netCashFlow >= 0 ? '+' : '-'}GH₵ ${Math.abs(netCashFlow).toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 230, 45);
+
+    // Table
+    const tableData = filteredFinances.map((item) => [
+      item.date,
+      item.status === 'voided'
+        ? 'VOIDED'
+        : (item.transaction_type === 'income' || item.transaction_type === 'grant')
+        ? 'Income'
+        : item.transaction_type === 'transfer'
+        ? 'Transfer'
+        : 'Expense',
+      item.reference_no || '—',
+      item.title,
+      item.recipient_or_vendor || (item.transaction_type === 'income' ? 'Church Treasury' : 'Authorized Payee'),
+      item.account_name,
+      item.category,
+      `${(item.transaction_type === 'income' || item.transaction_type === 'grant') ? '+' : '-'} GH₵ ${item.amount.toFixed(2)}${item.status === 'voided' ? ' (VOID)' : ''}`,
+      item.approved_by || settings.senior_pastor || 'Senior Pastor',
+    ]);
+
+    autoTable(doc, {
+      startY: 53,
+      head: [['Date', 'Type', 'Voucher #', 'Title / Purpose', 'Payer / Payee', 'Account', 'Category', 'Amount (GHS)', 'Authorized By']],
+      body: tableData,
+      theme: 'grid',
+      headStyles: {
+        fillColor: [225, 29, 72],
+        textColor: 255,
+        fontSize: 8,
+        fontStyle: 'bold',
+      },
+      bodyStyles: {
+        fontSize: 7.5,
+        textColor: 30,
+      },
+      alternateRowStyles: {
+        fillColor: [250, 250, 250],
+      },
+      styles: {
+        overflow: 'linebreak',
+        cellPadding: 2,
+      },
+      margin: { left: 14, right: 14 },
+      didDrawPage: () => {
+        const str = `Page ${doc.getNumberOfPages()} • Generated on ${new Date().toLocaleDateString('en-GB')} by ${currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Church Accounts'} • Greater Works City Church`;
+        doc.setFontSize(7);
+        doc.setTextColor(150);
+        doc.text(str, 14, doc.internal.pageSize.height - 8);
+      },
+    });
+
+    doc.save(`GWCC_Financial_Statement_${dateFilter}_${todayISO()}.pdf`);
+    success('PDF Generated', `Exported official financial statement (${filteredFinances.length} records).`);
+  };
+
+  const handleUpdateFinance = (updates: Partial<ChurchFinanceRecord>) => {
+    if (!editingFinanceRecord) return;
+    updateChurchFinance(editingFinanceRecord.id, updates);
+    success('Transaction Updated', `Successfully updated "${updates.title || editingFinanceRecord.title}".`);
+    setEditingFinanceRecord(null);
+  };
+
+  const handleVoidFinance = (reason: string) => {
+    if (!voidingFinanceRecord) return;
+    voidChurchFinance(voidingFinanceRecord.id, reason);
+    success('Transaction Voided', `Transaction #${voidingFinanceRecord.id} has been voided and account balance reversed.`);
+    setVoidingFinanceRecord(null);
   };
 
   return (
@@ -1262,7 +1460,9 @@ export const ChurchFinancePage: React.FC = () => {
                       </td>
                     </tr>
                   ) : (
-                    displayedFinances.map((item) => {
+                    paginatedFinances.map((item) => {
+                      const isVoid = item.status === 'voided';
+                      const isTransfer = item.transaction_type === 'transfer';
                       const isInc = item.transaction_type === 'income' || item.transaction_type === 'grant';
                       const badgeColor = isInc
                         ? INCOME_COLORS[item.category] || '#059669'
@@ -1271,13 +1471,30 @@ export const ChurchFinancePage: React.FC = () => {
                       return (
                         <tr
                           key={item.id}
-                          className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                          className={`transition-colors ${
+                            isVoid
+                              ? 'bg-slate-50/50 dark:bg-slate-900/60 opacity-60 line-through decoration-slate-400'
+                              : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
+                          }`}
                         >
                           <td className="py-3 px-4 whitespace-nowrap text-slate-500 dark:text-slate-400 font-medium text-xs">
                             {item.date}
                           </td>
-                          <td className="py-3 px-4 whitespace-nowrap">
-                            {isInc ? (
+                          <td className="py-3 px-4 whitespace-nowrap no-underline">
+                            {isVoid ? (
+                              <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
+                                title={`Voided by: ${item.voided_by || 'Church Finance'}. Reason: ${item.void_reason || 'Administrative void'}`}
+                              >
+                                <Ban className="w-3 h-3" />
+                                VOIDED
+                              </span>
+                            ) : isTransfer ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300">
+                                <ArrowRightLeft className="w-3 h-3" />
+                                Transfer
+                              </span>
+                            ) : isInc ? (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                                 <ArrowDownLeft className="w-3 h-3" />
                                 Income
@@ -1289,7 +1506,7 @@ export const ChurchFinancePage: React.FC = () => {
                               </span>
                             )}
                           </td>
-                          <td className={`py-3 px-4 whitespace-nowrap font-mono text-xs font-bold ${isInc ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}`}>
+                          <td className={`py-3 px-4 whitespace-nowrap font-mono text-xs font-bold ${isVoid ? 'text-slate-400' : isInc ? 'text-emerald-700 dark:text-emerald-400' : isTransfer ? 'text-purple-700 dark:text-purple-400' : 'text-rose-700 dark:text-rose-400'}`}>
                             {item.reference_no || '—'}
                           </td>
                           <td className="py-3 px-4">
@@ -1299,14 +1516,21 @@ export const ChurchFinancePage: React.FC = () => {
                             {item.department && (
                               <div className="text-[10px] text-slate-400 font-medium">{item.department}</div>
                             )}
+                            {isVoid && item.void_reason && (
+                              <div className="text-[10px] text-rose-600 dark:text-rose-400 font-medium italic mt-0.5 no-underline">
+                                Reason: {item.void_reason} (by {item.voided_by || 'Finance Secretariat'})
+                              </div>
+                            )}
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap text-xs text-slate-700 dark:text-slate-300">
-                            {item.recipient_or_vendor || (isInc ? 'Church Treasury' : 'Authorized Payee')}
+                            {isTransfer
+                              ? `To: ${item.to_account_name || item.recipient_or_vendor || 'Destination'}`
+                              : item.recipient_or_vendor || (isInc ? 'Church Treasury' : 'Authorized Payee')}
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap text-xs text-slate-600 dark:text-slate-400">
                             {item.account_name}
                           </td>
-                          <td className="py-3 px-4 whitespace-nowrap">
+                          <td className="py-3 px-4 whitespace-nowrap no-underline">
                             <span
                               className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold text-white"
                               style={{ backgroundColor: badgeColor }}
@@ -1314,13 +1538,27 @@ export const ChurchFinancePage: React.FC = () => {
                               {item.category}
                             </span>
                           </td>
-                          <td className={`py-3 px-4 text-right font-extrabold whitespace-nowrap ${isInc ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-white'}`}>
-                            {isInc ? `+ GH₵ ${item.amount.toFixed(2)}` : `- GH₵ ${item.amount.toFixed(2)}`}
+                          <td className={`py-3 px-4 text-right font-extrabold whitespace-nowrap ${
+                            isVoid
+                              ? 'text-slate-400'
+                              : isTransfer
+                              ? 'text-purple-600 dark:text-purple-400'
+                              : isInc
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : 'text-slate-900 dark:text-white'
+                          }`}>
+                            {isVoid
+                              ? `GH₵ ${item.amount.toFixed(2)} (VOID)`
+                              : isTransfer
+                              ? `GH₵ ${item.amount.toFixed(2)}`
+                              : isInc
+                              ? `+ GH₵ ${item.amount.toFixed(2)}`
+                              : `- GH₵ ${item.amount.toFixed(2)}`}
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap text-xs text-slate-600 dark:text-slate-400">
                             {item.approved_by || settings.senior_pastor}
                           </td>
-                          <td className="py-3 px-4 text-center whitespace-nowrap">
+                          <td className="py-3 px-4 text-center whitespace-nowrap no-underline">
                             <div className="flex items-center justify-center gap-1">
                               <button
                                 onClick={() => setSelectedVoucherRecord(item)}
@@ -1333,18 +1571,34 @@ export const ChurchFinancePage: React.FC = () => {
                               >
                                 <Printer className="w-4 h-4" />
                               </button>
+
+                              {canAccess('finance') && !isVoid && !isTransfer && (
+                                <button
+                                  onClick={() => setEditingFinanceRecord(item)}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-all cursor-pointer"
+                                  title="Edit / Correct Transaction Details"
+                                >
+                                  <Edit3 className="w-4 h-4" />
+                                </button>
+                              )}
+
+                              {canAccess('finance') && !isVoid && (
+                                <button
+                                  onClick={() => setVoidingFinanceRecord(item)}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-all cursor-pointer"
+                                  title="Void Transaction (Reverses Balance with Audit Trail)"
+                                >
+                                  <Ban className="w-4 h-4" />
+                                </button>
+                              )}
+
                               {canAccess('finance') && (
                                 <button
-                                  onClick={() => {
-                                    if (confirm(`Delete ${isInc ? 'income' : 'expenditure'} entry "${item.title}" (GH₵ ${item.amount.toFixed(2)})?`)) {
-                                      deleteChurchFinance(item.id);
-                                      success('Deleted', `${isInc ? 'Income' : 'Expenditure'} record removed.`);
-                                    }
-                                  }}
+                                  onClick={() => setDeletingFinanceRecord(item)}
                                   className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-all cursor-pointer"
-                                  title="Delete"
+                                  title="Permanent Delete"
                                 >
-                                  <X className="w-4 h-4" />
+                                  <Trash2 className="w-4 h-4" />
                                 </button>
                               )}
                             </div>
@@ -1356,6 +1610,78 @@ export const ChurchFinancePage: React.FC = () => {
                 </tbody>
               </table>
             </div>
+
+            {/* Pagination Controls */}
+            {displayedFinances.length > 0 && (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 bg-slate-50 dark:bg-slate-800/40 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
+                <div className="flex items-center gap-2">
+                  <span>
+                    Showing {displayedFinances.length === 0 ? 0 : (validPage - 1) * pageSize + 1} to{' '}
+                    {Math.min(validPage * pageSize, displayedFinances.length)} of {displayedFinances.length} records
+                  </span>
+                  <span className="text-slate-300 dark:text-slate-700">|</span>
+                  <label className="flex items-center gap-1.5">
+                    <span>Per page:</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 font-medium"
+                    >
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={validPage <= 1}
+                    className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold cursor-pointer flex items-center gap-1"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <span>Prev</span>
+                  </button>
+
+                  <div className="flex items-center gap-1 px-1">
+                    {Array.from({ length: totalPages }, (_, i) => i + 1)
+                      .filter((p) => p === 1 || p === totalPages || Math.abs(p - validPage) <= 1)
+                      .map((p, idx, arr) => {
+                        const prev = arr[idx - 1];
+                        return (
+                          <React.Fragment key={p}>
+                            {prev && p - prev > 1 && <span className="px-1 text-slate-400">...</span>}
+                            <button
+                              onClick={() => setCurrentPage(p)}
+                              className={`w-7 h-7 rounded-lg font-bold text-xs transition-colors cursor-pointer ${
+                                validPage === p
+                                  ? 'bg-rose-600 text-white shadow-2xs'
+                                  : 'hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                              }`}
+                            >
+                              {p}
+                            </button>
+                          </React.Fragment>
+                        );
+                      })}
+                  </div>
+
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={validPage >= totalPages}
+                    className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold cursor-pointer flex items-center gap-1"
+                  >
+                    <span>Next</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1852,9 +2178,10 @@ export const ChurchFinancePage: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-xs transition-all cursor-pointer"
+                  disabled={isSubmittingIncome}
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs sm:text-sm font-bold shadow-xs transition-all cursor-pointer"
                 >
-                  Save & Issue Receipt
+                  {isSubmittingIncome ? 'Recording...' : 'Save & Issue Receipt'}
                 </button>
               </div>
             </form>
@@ -2064,9 +2391,10 @@ export const ChurchFinancePage: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs sm:text-sm font-bold shadow-xs transition-all cursor-pointer"
+                  disabled={isSubmittingExpense}
+                  className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs sm:text-sm font-bold shadow-xs transition-all cursor-pointer"
                 >
-                  Save & Issue Voucher
+                  {isSubmittingExpense ? 'Recording...' : 'Save & Issue Voucher'}
                 </button>
               </div>
             </form>
@@ -2360,6 +2688,93 @@ export const ChurchFinancePage: React.FC = () => {
             setSelectedEditBudget(null);
           }}
         />
+      )}
+
+      {/* EDIT CHURCH FINANCE MODAL */}
+      {editingFinanceRecord && (
+        <EditChurchFinanceModal
+          record={editingFinanceRecord}
+          churchAccounts={churchAccounts}
+          seniorPastor={settings.senior_pastor || 'Prophet Elisha K. Richard'}
+          onSave={handleUpdateFinance}
+          onClose={() => setEditingFinanceRecord(null)}
+        />
+      )}
+
+      {/* VOID CHURCH FINANCE MODAL */}
+      {voidingFinanceRecord && (
+        <VoidChurchFinanceModal
+          record={voidingFinanceRecord}
+          onVoid={handleVoidFinance}
+          onClose={() => setVoidingFinanceRecord(null)}
+        />
+      )}
+
+      {/* DELETE CONFIRMATION MODAL */}
+      {deletingFinanceRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-md w-full p-6 animate-in fade-in duration-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/60">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                    Delete Financial Record
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Permanent record removal
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setDeletingFinanceRecord(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              Are you sure you want to permanently delete this financial record?
+            </p>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-1 text-xs">
+              <div className="font-bold text-slate-900 dark:text-white">{deletingFinanceRecord.title}</div>
+              <div className="font-semibold text-rose-600">GH₵ {deletingFinanceRecord.amount.toFixed(2)} • {deletingFinanceRecord.account_name}</div>
+              <div className="text-slate-500">Ref: {deletingFinanceRecord.reference_no || '—'} • Date: {deletingFinanceRecord.date}</div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 text-amber-800 dark:text-amber-300 text-xs">
+              <p className="leading-relaxed">
+                <strong>Accounting Safeguard:</strong> Deleting an active record will automatically reverse its balance effect on {deletingFinanceRecord.account_name}. For official accounting compliance, consider <strong>Voiding</strong> instead to retain audit trail notes.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setDeletingFinanceRecord(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  deleteChurchFinance(deletingFinanceRecord.id);
+                  success('Record Deleted', `Removed "${deletingFinanceRecord.title}" and reversed balance impact.`);
+                  setDeletingFinanceRecord(null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Confirm Delete</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* START AFRESH MODAL */}
