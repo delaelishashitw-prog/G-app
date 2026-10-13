@@ -23,6 +23,7 @@ import {
   Compass,
   MessageCircle,
   ExternalLink,
+  UserCheck,
 } from 'lucide-react';
 import { Member, GenderType, MembershipStatus } from '../../types/database.types';
 import { useChurchData } from '../../contexts/ChurchDataContext';
@@ -91,7 +92,7 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
   onSave,
   editingMember,
 }) => {
-  const { ministries, smallGroups } = useChurchData();
+  const { members, ministries, smallGroups } = useChurchData();
 
   // Tab Navigation: 'personal' | 'contact' | 'church' | 'spiritual' | 'vocation'
   const [activeTab, setActiveTab] = useState<'personal' | 'contact' | 'church' | 'spiritual' | 'vocation'>('personal');
@@ -269,28 +270,83 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
     return `${years} yr${years > 1 ? 's' : ''}${remMonths > 0 ? ` ${remMonths} mo` : ''} in fellowship`;
   }, [formData.membership_date, formData.date_joined]);
 
+  // Check for shared phone number with another member in the church (family household sharing)
+  const sharedHouseholdMember = useMemo(() => {
+    const clean = (formData.phone || '').replace(/[^0-9]/g, '');
+    if (clean.length < 9) return null;
+    return members.find(
+      (m) => m.id !== editingMember?.id && (m.phone || '').replace(/[^0-9]/g, '') === clean
+    );
+  }, [formData.phone, members, editingMember]);
+
   if (!isOpen) return null;
 
   // Validation
   const validate = (): boolean => {
     const errors: { [key: string]: string } = {};
+    const todayStr = new Date().toISOString().split('T')[0];
+
     if (!formData.first_name?.trim()) errors.first_name = 'First name is required.';
     if (!formData.last_name?.trim()) errors.last_name = 'Last name / surname is required.';
-    if (!formData.phone?.trim() || formData.phone.trim() === '+233') {
-      errors.phone = 'Valid phone number is required (+233...).';
+
+    // Phone validation
+    const cleanPhoneDigits = (formData.phone || '').replace(/[^0-9]/g, '');
+    if (!formData.phone?.trim() || cleanPhoneDigits.length < 9) {
+      errors.phone = 'Valid Ghana phone number is required (min 9-10 digits, e.g. +233 24 123 4567).';
     }
+
+    // Date joined
     const dateJoined = formData.membership_date || formData.date_joined;
     if (!dateJoined?.trim()) {
       errors.membership_date = 'Date joined church is required.';
+    } else if (dateJoined > todayStr) {
+      errors.membership_date = 'Date joined cannot be in the future.';
+    }
+
+    // Date of Birth cannot be in the future
+    if (formData.date_of_birth && formData.date_of_birth > todayStr) {
+      errors.date_of_birth = 'Date of birth cannot be in the future.';
+    }
+
+    // Wedding anniversary cannot be in the future
+    if (formData.wedding_anniversary && formData.wedding_anniversary > todayStr) {
+      errors.wedding_anniversary = 'Wedding anniversary cannot be in the future.';
+    }
+
+    // Ghana Card (National ID) format and uniqueness
+    if (formData.national_id?.trim()) {
+      const cleanCard = formData.national_id.trim().toUpperCase();
+      const ghaRegex = /^GHA-\d{9}-\d$/;
+      if (!ghaRegex.test(cleanCard)) {
+        errors.national_id = 'Ghana Card must follow GHA-XXXXXXXXX-X format (e.g. GHA-712345678-1).';
+      } else {
+        const existingWithCard = members.find(
+          (m) => m.id !== editingMember?.id && m.national_id?.trim().toUpperCase() === cleanCard
+        );
+        if (existingWithCard) {
+          errors.national_id = `Ghana Card is already assigned to ${existingWithCard.first_name} ${existingWithCard.last_name}.`;
+        }
+      }
+    }
+
+    // Tithe number uniqueness
+    if (formData.tithe_number?.trim()) {
+      const cleanTithe = formData.tithe_number.trim().toUpperCase();
+      const existingWithTithe = members.find(
+        (m) => m.id !== editingMember?.id && m.tithe_number?.trim().toUpperCase() === cleanTithe
+      );
+      if (existingWithTithe) {
+        errors.tithe_number = `Tithe #${cleanTithe} is already assigned to ${existingWithTithe.first_name} ${existingWithTithe.last_name}.`;
+      }
     }
 
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) {
-      if (errors.first_name || errors.last_name) {
+      if (errors.first_name || errors.last_name || errors.date_of_birth || errors.national_id) {
         setActiveTab('personal');
       } else if (errors.phone) {
         setActiveTab('contact');
-      } else if (errors.membership_date) {
+      } else if (errors.membership_date || errors.tithe_number) {
         setActiveTab('church');
       }
       return false;
@@ -584,9 +640,17 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
                   <input
                     type="date"
                     value={formData.date_of_birth || ''}
-                    onChange={(e) => setFormData({ ...formData, date_of_birth: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500"
+                    onChange={(e) => {
+                      setFormData({ ...formData, date_of_birth: e.target.value });
+                      if (formErrors.date_of_birth) setFormErrors({ ...formErrors, date_of_birth: '' });
+                    }}
+                    className={`w-full px-3 py-2 border rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 ${
+                      formErrors.date_of_birth ? 'border-rose-400 bg-rose-50/40' : 'border-slate-300'
+                    }`}
                   />
+                  {formErrors.date_of_birth && (
+                    <span className="text-[10px] text-rose-600 block mt-0.5">{formErrors.date_of_birth}</span>
+                  )}
                   {ageBracket && (
                     <span className="text-[10px] text-slate-500 block mt-1">
                       Bracket: <strong>{ageBracket}</strong>
@@ -691,13 +755,22 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
                   <input
                     type="text"
                     value={formData.national_id || ''}
-                    onChange={(e) => setFormData({ ...formData, national_id: e.target.value.toUpperCase() })}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono text-xs uppercase"
+                    onChange={(e) => {
+                      setFormData({ ...formData, national_id: e.target.value.toUpperCase() });
+                      if (formErrors.national_id) setFormErrors({ ...formErrors, national_id: '' });
+                    }}
+                    className={`w-full px-3 py-2 border rounded-xl font-mono text-xs uppercase ${
+                      formErrors.national_id ? 'border-rose-400 bg-rose-50/40 text-rose-900' : 'border-slate-300'
+                    }`}
                     placeholder="GHA-712345678-9"
                   />
-                  <span className="text-[10px] text-slate-400 block mt-0.5">
-                    Official Ghanaian National ID card PIN
-                  </span>
+                  {formErrors.national_id ? (
+                    <span className="text-[10px] text-rose-600 font-bold block mt-0.5">{formErrors.national_id}</span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400 block mt-0.5">
+                      Official Ghanaian National ID card PIN (GHA-XXXXXXXXX-X)
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -769,6 +842,14 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
                   />
                   {formErrors.phone && (
                     <span className="text-[10px] text-rose-600 block mt-0.5">{formErrors.phone}</span>
+                  )}
+                  {sharedHouseholdMember && !formErrors.phone && (
+                    <div className="mt-1.5 p-1.5 rounded-lg bg-teal-50 border border-teal-200 text-teal-900 text-[11px] flex items-center gap-1.5">
+                      <UserCheck className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                      <span>
+                        Family line: shared with <strong>{sharedHouseholdMember.first_name} {sharedHouseholdMember.last_name}</strong>.
+                      </span>
+                    </div>
                   )}
                 </div>
 

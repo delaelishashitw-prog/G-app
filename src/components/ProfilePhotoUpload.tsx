@@ -8,27 +8,55 @@ export interface ProfilePhotoUploadProps {
   className?: string;
 }
 
-// Curated high-quality, professional portraits suitable for church congregation members
+// Curated high-quality SVG avatar presets that work 100% offline and in hermetic sandboxes
+const makeSvgAvatar = (bgGradient: [string, string], iconType: 'male' | 'female' | 'crown' | 'elder') => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <defs>
+      <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="${bgGradient[0]}" />
+        <stop offset="100%" stop-color="${bgGradient[1]}" />
+      </linearGradient>
+    </defs>
+    <rect width="100" height="100" rx="20" fill="url(#g)" />
+    ${iconType === 'female' 
+      ? `<circle cx="50" cy="38" r="18" fill="#FFFFFF" fill-opacity="0.9" />
+         <path d="M22 86 C22 66, 34 58, 50 58 C66 58, 78 66, 78 86 Z" fill="#FFFFFF" fill-opacity="0.9" />
+         <ellipse cx="50" cy="24" rx="20" ry="10" fill="${bgGradient[1]}" fill-opacity="0.4" />`
+      : iconType === 'crown'
+      ? `<circle cx="50" cy="40" r="18" fill="#FFFFFF" fill-opacity="0.9" />
+         <path d="M22 88 C22 68, 34 60, 50 60 C66 60, 78 68, 78 88 Z" fill="#FFFFFF" fill-opacity="0.9" />
+         <polygon points="38,18 44,26 50,16 56,26 62,18 60,30 40,30" fill="#FBBF24" />`
+      : iconType === 'elder'
+      ? `<circle cx="50" cy="38" r="18" fill="#FFFFFF" fill-opacity="0.9" />
+         <path d="M22 88 C22 68, 34 60, 50 60 C66 60, 78 68, 78 88 Z" fill="#FFFFFF" fill-opacity="0.9" />
+         <path d="M42 42 Q50 50 58 42" stroke="${bgGradient[1]}" stroke-width="3" fill="none" stroke-linecap="round" />`
+      : `<circle cx="50" cy="38" r="18" fill="#FFFFFF" fill-opacity="0.9" />
+         <path d="M22 88 C22 68, 34 60, 50 60 C66 60, 78 68, 78 88 Z" fill="#FFFFFF" fill-opacity="0.9" />`
+    }
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+};
+
 const AVATAR_PRESETS = [
   {
-    name: 'Ghanaian Professional (Male)',
-    url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80',
+    name: 'Brother / Congregant (Navy)',
+    url: makeSvgAvatar(['#0f766e', '#042f2e'], 'male'),
   },
   {
-    name: 'Ghanaian Professional (Female)',
-    url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80',
+    name: 'Sister / Deaconess (Teal & Rose)',
+    url: makeSvgAvatar(['#be185d', '#831843'], 'female'),
   },
   {
-    name: 'Youth Leader (Male)',
-    url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&auto=format&fit=crop&q=80',
+    name: 'Youth Leader (Sky & Indigo)',
+    url: makeSvgAvatar(['#0284c7', '#1e3a8a'], 'male'),
   },
   {
-    name: 'Choir / Deaconess (Female)',
-    url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=200&auto=format&fit=crop&q=80',
+    name: 'Ministry Leader / Pastor (Gold & Purple)',
+    url: makeSvgAvatar(['#7e22ce', '#3b0764'], 'crown'),
   },
   {
-    name: 'Elder / Board Member',
-    url: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=200&auto=format&fit=crop&q=80',
+    name: 'Presbyter / Elder (Slate & Emerald)',
+    url: makeSvgAvatar(['#065f46', '#022c22'], 'elder'),
   },
 ];
 
@@ -44,7 +72,7 @@ export const ProfilePhotoUpload: React.FC<ProfilePhotoUploadProps> = ({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Compress & resize image to max 400x400 for efficient local storage storage
+  // Compress & resize image to max 256x256 at quality 0.8 to protect local storage quota
   const processImageFile = (file: File) => {
     setUploadError(null);
 
@@ -67,7 +95,7 @@ export const ProfilePhotoUpload: React.FC<ProfilePhotoUploadProps> = ({
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_DIM = 400;
+        const MAX_DIM = 256;
         let width = img.width;
         let height = img.height;
 
@@ -88,7 +116,7 @@ export const ProfilePhotoUpload: React.FC<ProfilePhotoUploadProps> = ({
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
-          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
           onChange(compressedDataUrl);
         } else {
           onChange(result);

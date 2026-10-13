@@ -38,16 +38,16 @@ export default function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider>
-        <AuthProvider>
-          <ChurchDataProvider>
-            <ToastProvider>
-              <OfflineConnectivityBanner />
-              <BrowserRouter>
-              <Suspense fallback={<LoadingFallback />}>
-                <Routes>
-                  <Route path="/login" element={<LoginPage />} />
-                  <Route path="/portal" element={<MemberPortalPage />} />
-                  <Route path="/member-portal" element={<MemberPortalPage />} />
+        <BrowserRouter>
+          <AuthProvider>
+            <ChurchDataProvider>
+              <ToastProvider>
+                <OfflineConnectivityBanner />
+                <Suspense fallback={<LoadingFallback />}>
+                  <Routes>
+                    <Route path="/login" element={<LoginPage />} />
+                    <Route path="/portal" element={<MemberPortalPage />} />
+                    <Route path="/member-portal" element={<MemberPortalPage />} />
                   <Route path="/" element={<AppLayout />}>
                     <Route index element={<DashboardPage />} />
                     <Route path="members" element={<MembersPage />} />
@@ -75,10 +75,10 @@ export default function App() {
                   </Route>
                 </Routes>
               </Suspense>
-            </BrowserRouter>
-          </ToastProvider>
-        </ChurchDataProvider>
-      </AuthProvider>
+            </ToastProvider>
+          </ChurchDataProvider>
+        </AuthProvider>
+      </BrowserRouter>
     </ThemeProvider>
   </ErrorBoundary>
   );

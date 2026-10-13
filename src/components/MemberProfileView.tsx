@@ -36,6 +36,7 @@ import {
   Lock,
 } from 'lucide-react';
 import { Member, Ministry, SmallGroup } from '../types/database.types';
+import { useAuth } from '../contexts/AuthContext';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useToast } from '../contexts/ToastContext';
 import { formatGHS } from '../lib/currencyUtils';
@@ -86,10 +87,52 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
     counselingSessions,
   } = useChurchData();
   const { success, info, error } = useToast();
+  const { canAccess, currentRole } = useAuth();
+
+  const canViewGiving =
+    canAccess('giving') ||
+    currentRole === 'super_admin' ||
+    currentRole === 'senior_pastor' ||
+    currentRole === 'finance_officer';
+
+  const canViewPastoral =
+    canAccess('pastoral_care') ||
+    currentRole === 'super_admin' ||
+    currentRole === 'senior_pastor' ||
+    currentRole === 'pastor';
+
+  const canManageMembers =
+    currentRole === 'super_admin' ||
+    currentRole === 'senior_pastor' ||
+    currentRole === 'administrator' ||
+    currentRole === 'data_entry';
+
+  const canArchive =
+    currentRole === 'super_admin' ||
+    currentRole === 'senior_pastor' ||
+    currentRole === 'administrator';
+
+  const completedMilestonesCount = [
+    member.salvation_status,
+    member.baptism_status,
+    member.holy_spirit_baptism,
+    member.membership_class_completed,
+    Boolean(member.leadership_position),
+  ].filter(Boolean).length;
 
   const [activeTab, setActiveTab] = useState<
     'overview' | 'attendance' | 'giving' | 'pledges' | 'ministries' | 'pastoral'
   >('overview');
+
+  // If role does not permit giving/pastoral and user lands on them, fallback to overview
+  React.useEffect(() => {
+    if (!canViewGiving && (activeTab === 'giving' || activeTab === 'pledges')) {
+      setActiveTab('overview');
+    }
+    if (!canViewPastoral && activeTab === 'pastoral') {
+      setActiveTab('overview');
+    }
+  }, [canViewGiving, canViewPastoral, activeTab]);
   const [copiedId, setCopiedId] = useState(false);
   const [whatsappMenuOpen, setWhatsappMenuOpen] = useState(false);
 
@@ -353,52 +396,58 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
                   <Heart className="w-3.5 h-3.5 text-rose-500" />
                   <span>Birthday Blessing Greeting</span>
                 </a>
-                <a
-                  href={`https://wa.me/${ghanaPhone}?text=${encodeURIComponent(whatsappMessages.tithe)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => setWhatsappMenuOpen(false)}
-                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 font-medium"
-                >
-                  <Coins className="w-3.5 h-3.5 text-amber-500" />
-                  <span>Tithe Appreciation Note</span>
-                </a>
+                {canViewGiving && (
+                  <a
+                    href={`https://wa.me/${ghanaPhone}?text=${encodeURIComponent(whatsappMessages.tithe)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setWhatsappMenuOpen(false)}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-slate-700 font-medium"
+                  >
+                    <Coins className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Tithe Appreciation Note</span>
+                  </a>
+                )}
               </div>
             )}
           </div>
 
           {/* Edit Member */}
-          <button
-            type="button"
-            onClick={() => onEdit(member)}
-            className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-xs"
-          >
-            <Edit2 className="w-3.5 h-3.5" />
-            <span>Edit Member</span>
-          </button>
+          {canManageMembers && (
+            <button
+              type="button"
+              onClick={() => onEdit(member)}
+              className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-xs"
+            >
+              <Edit2 className="w-3.5 h-3.5" />
+              <span>Edit Member</span>
+            </button>
+          )}
 
           {/* Restore or Archive Member */}
-          {member.is_archived ? (
-            <button
-              type="button"
-              onClick={handleRestoreMember}
-              disabled={isRestoring}
-              className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-xs cursor-pointer disabled:opacity-50"
-              title="Restore this member to active registry"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>{isRestoring ? 'Restoring...' : 'Restore Member'}</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleOpenArchiveModal}
-              className="px-3 py-1.5 text-xs font-semibold text-rose-700 hover:text-rose-900 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
-              title="Archive member from active congregation"
-            >
-              <Archive className="w-3.5 h-3.5 text-rose-600" />
-              <span>Archive</span>
-            </button>
+          {canArchive && (
+            member.is_archived ? (
+              <button
+                type="button"
+                onClick={handleRestoreMember}
+                disabled={isRestoring}
+                className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-xs cursor-pointer disabled:opacity-50"
+                title="Restore this member to active registry"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>{isRestoring ? 'Restoring...' : 'Restore Member'}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleOpenArchiveModal}
+                className="px-3 py-1.5 text-xs font-semibold text-rose-700 hover:text-rose-900 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                title="Archive member from active congregation"
+              >
+                <Archive className="w-3.5 h-3.5 text-rose-600" />
+                <span>Archive</span>
+              </button>
+            )
           )}
         </div>
       </div>
@@ -484,7 +533,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
 
                 {member.tithe_number && (
                   <span className="font-mono font-bold px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 shadow-xs">
-                    Tithe #{member.tithe_number}
+                    Tithe #{canViewGiving ? member.tithe_number : '••••'}
                   </span>
                 )}
 
@@ -722,27 +771,42 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
         </div>
       </div>
 
-      {/* 4 Key Metric Cards for this Member */}
+      {/* 4 Key Metric Cards for this Member (Role & Privacy Conscious) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
-            <span>Cumulative Giving</span>
-            <Coins className="w-4 h-4 text-emerald-600" />
+        {canViewGiving ? (
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+            <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
+              <span>Cumulative Giving</span>
+              <Coins className="w-4 h-4 text-emerald-600" />
+            </div>
+            <div className="text-xl font-black text-slate-900 font-mono tabular-nums">
+              {formatGHS(totalMemberGiving)}
+            </div>
+            <p className="text-[11px] text-slate-400">
+              {memberGiving.length} recorded contributions
+            </p>
           </div>
-          <div className="text-xl font-black text-slate-900 font-mono">
-            {formatGHS(totalMemberGiving)}
+        ) : (
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+            <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
+              <span>Ministry Placement</span>
+              <Users className="w-4 h-4 text-teal-600" />
+            </div>
+            <div className="text-base font-bold text-slate-900 truncate">
+              {member.ministry_name || ministry?.name || 'General Assembly'}
+            </div>
+            <p className="text-[11px] text-teal-700 font-semibold truncate">
+              {member.leadership_position || 'Active Congregant'}
+            </p>
           </div>
-          <p className="text-[11px] text-slate-400">
-            {memberGiving.length} recorded contributions
-          </p>
-        </div>
+        )}
 
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
           <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
             <span>Service Attendance</span>
             <CheckCircle2 className="w-4 h-4 text-teal-600" />
           </div>
-          <div className="text-xl font-black text-slate-900">
+          <div className="text-xl font-black text-slate-900 tabular-nums">
             {memberAttendance.length} <span className="text-xs font-normal text-slate-400">Services</span>
           </div>
           <p className="text-[11px] text-teal-700 font-semibold">
@@ -750,31 +814,62 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
           </p>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
-            <span>Pledges Committed</span>
-            <Award className="w-4 h-4 text-amber-600" />
+        {canViewGiving ? (
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+            <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
+              <span>Pledges Committed</span>
+              <Award className="w-4 h-4 text-amber-600" />
+            </div>
+            <div className="text-xl font-black text-slate-900 font-mono tabular-nums">
+              {formatGHS(totalPledged)}
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Paid: <span className="text-emerald-700 font-bold tabular-nums">{formatGHS(totalPledgePaid)}</span>
+            </p>
           </div>
-          <div className="text-xl font-black text-slate-900 font-mono">
-            {formatGHS(totalPledged)}
+        ) : (
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+            <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
+              <span>Cell Fellowship</span>
+              <Heart className="w-4 h-4 text-rose-500" />
+            </div>
+            <div className="text-base font-bold text-slate-900 truncate">
+              {member.small_group_name || smallGroup?.name || 'No Cell Group'}
+            </div>
+            <p className="text-[11px] text-slate-400">
+              {member.small_group_name ? 'Household Cell Network' : 'Ready for Cell Assignment'}
+            </p>
           </div>
-          <p className="text-[11px] text-slate-500">
-            Paid: <span className="text-emerald-700 font-bold">{formatGHS(totalPledgePaid)}</span>
-          </p>
-        </div>
+        )}
 
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
-            <span>Pastoral Follow-Up</span>
-            <Heart className="w-4 h-4 text-purple-600" />
+        {canViewPastoral ? (
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+            <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
+              <span>Pastoral Shepherding</span>
+              <Heart className="w-4 h-4 text-purple-600" />
+            </div>
+            <div className="text-xl font-black text-slate-900 tabular-nums">
+              {memberPastoral.length + memberVisitations.length + memberCounseling.length}{' '}
+              <span className="text-xs font-normal text-slate-400">Care Logs</span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              {memberPastoral[0] ? `Last: ${memberPastoral[0].care_type.replace(/_/g, ' ')}` : 'No pastoral care logs'}
+            </p>
           </div>
-          <div className="text-xl font-black text-slate-900">
-            {memberPastoral.length} <span className="text-xs font-normal text-slate-400">Care Logs</span>
+        ) : (
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+            <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
+              <span>Spiritual Milestones</span>
+              <Sparkles className="w-4 h-4 text-amber-500" />
+            </div>
+            <div className="text-xl font-black text-slate-900 tabular-nums">
+              {completedMilestonesCount} <span className="text-xs font-normal text-slate-400">of 5 Steps</span>
+            </div>
+            <p className="text-[11px] text-emerald-700 font-semibold">
+              {member.baptism_status ? 'Immersion Certified' : 'Awaiting Water Baptism'}
+            </p>
           </div>
-          <p className="text-[11px] text-slate-400">
-            {memberPastoral[0] ? `Last: ${memberPastoral[0].care_type.replace(/_/g, ' ')}` : 'No pastoral care logs'}
-          </p>
-        </div>
+        )}
       </div>
 
       {/* Tabbed Details Container */}
@@ -782,18 +877,21 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
         {/* Tab Headers */}
         <div className="flex border-b border-slate-200 bg-slate-50/80 px-6 overflow-x-auto text-xs font-semibold text-slate-600 gap-6">
           {[
-            { id: 'overview', label: 'Overview & Family' },
-            { id: 'attendance', label: `Attendance History (${memberAttendance.length})` },
-            { id: 'giving', label: `Financial Giving (${memberGiving.length})` },
-            { id: 'pledges', label: `Pledges & Projects (${memberPledges.length})` },
-            { id: 'ministries', label: 'Ministries & Fellowship' },
+            { id: 'overview', label: 'Overview & Family', show: true },
+            { id: 'attendance', label: `Attendance History (${memberAttendance.length})`, show: true },
+            { id: 'giving', label: `Financial Giving (${memberGiving.length})`, show: canViewGiving },
+            { id: 'pledges', label: `Pledges & Projects (${memberPledges.length})`, show: canViewGiving },
+            { id: 'ministries', label: 'Ministries & Fellowship', show: true },
             {
               id: 'pastoral',
               label: `Pastoral Care & Shepherding (${
                 memberPastoral.length + memberVisitations.length + memberCounseling.length
               })`,
+              show: canViewPastoral,
             },
-          ].map((tab) => (
+          ]
+            .filter((tab) => tab.show)
+            .map((tab) => (
             <button
               key={tab.id}
               type="button"
@@ -846,7 +944,9 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
                     <div className="flex justify-between py-1 border-b border-slate-100">
                       <span className="text-slate-500">Ghana Card (National ID)</span>
                       <span className="font-mono font-bold text-teal-800 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
-                        {member.national_id}
+                        {canManageMembers || canViewPastoral
+                          ? member.national_id
+                          : member.national_id.replace(/\d{4}-\d$/i, '••••-•')}
                       </span>
                     </div>
                   )}

@@ -1302,25 +1302,37 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     });
   };
 
-  // Helper to generate the next member ID.
+  // Helper to generate the next member ID matching canonical GWCC-XXXX convention.
   const generateMemberId = () => {
     const numbers = members.map((m) => {
-      const match = m.member_id.match(/MEMBER-(\d+)/);
+      const match = m.member_id.match(/GWCC-(\d+)/i) || m.member_id.match(/MEMBER-(\d+)/i);
       return match ? parseInt(match[1], 10) : 0;
     });
     const maxNum = numbers.length > 0 ? Math.max(...numbers) : 0;
-    return `MEMBER-${String(maxNum + 1).padStart(6, '0')}`;
+    let nextNum = maxNum + 1;
+    let candidate = `GWCC-${String(nextNum).padStart(4, '0')}`;
+    while (members.some((m) => m.member_id.toUpperCase() === candidate.toUpperCase())) {
+      nextNum++;
+      candidate = `GWCC-${String(nextNum).padStart(4, '0')}`;
+    }
+    return candidate;
   };
 
   // Helper to generate next Tithe Number: T-1049
   const generateTitheNumber = () => {
     const numbers = members.map((m) => {
       if (!m.tithe_number) return 1000;
-      const match = m.tithe_number.match(/T-(\d+)/);
+      const match = m.tithe_number.match(/T-(\d+)/i);
       return match ? parseInt(match[1], 10) : 1000;
     });
     const maxNum = numbers.length > 0 ? Math.max(...numbers) : 1000;
-    return `T-${maxNum + 1}`;
+    let nextNum = maxNum + 1;
+    let candidate = `T-${nextNum}`;
+    while (members.some((m) => m.tithe_number?.toUpperCase() === candidate.toUpperCase())) {
+      nextNum++;
+      candidate = `T-${nextNum}`;
+    }
+    return candidate;
   };
 
   // MEMBER OPERATIONS

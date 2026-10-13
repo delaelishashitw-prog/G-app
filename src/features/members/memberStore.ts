@@ -11,11 +11,17 @@ export function addMember(
   generateTitheNumber: () => string
 ): Member {
   const now = new Date().toISOString();
+  // Ensure non-colliding tithe number
+  let finalTithe = data.tithe_number?.trim();
+  if (!finalTithe) {
+    finalTithe = generateTitheNumber();
+  }
+
   const newMember: Member = {
     ...data,
     id: `mem-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     member_id: generateMemberId(),
-    tithe_number: data.tithe_number || generateTitheNumber(),
+    tithe_number: finalTithe,
     created_at: now,
     updated_at: now,
   };

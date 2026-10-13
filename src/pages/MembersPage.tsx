@@ -23,6 +23,9 @@ import {
   AlertTriangle,
   ExternalLink,
   ChevronRight,
+  ChevronLeft,
+  ChevronsLeft,
+  ChevronsRight,
   LayoutGrid,
   List,
   MessageSquare,
@@ -44,7 +47,7 @@ import {
   Printer,
   FileSpreadsheet,
 } from 'lucide-react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -65,6 +68,38 @@ import {
   areSpouseMatch,
   getMemberAgeGroup,
 } from '../lib/familyUtils';
+
+export const MemberAvatar: React.FC<{
+  photoUrl?: string;
+  firstName: string;
+  lastName: string;
+  className?: string;
+  fallbackClassName?: string;
+}> = ({ photoUrl, firstName, lastName, className = '', fallbackClassName = '' }) => {
+  const [hasError, setHasError] = React.useState(false);
+
+  React.useEffect(() => {
+    setHasError(false);
+  }, [photoUrl]);
+
+  if (photoUrl && !hasError) {
+    return (
+      <img
+        src={photoUrl}
+        alt={`${firstName} ${lastName}`}
+        onError={() => setHasError(true)}
+        className={className}
+      />
+    );
+  }
+
+  return (
+    <div className={fallbackClassName}>
+      {(firstName?.[0] || 'M').toUpperCase()}
+      {(lastName?.[0] || 'C').toUpperCase()}
+    </div>
+  );
+};
 
 export const MembersPage: React.FC = () => {
   const {
@@ -106,8 +141,45 @@ export const MembersPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { memberId } = useParams<{ memberId?: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Role Permissions
+  const canGive =
+    canAccess('giving') ||
+    currentRole === 'super_admin' ||
+    currentRole === 'senior_pastor' ||
+    currentRole === 'finance_officer';
+
+  const canArchive =
+    currentRole === 'super_admin' ||
+    currentRole === 'senior_pastor' ||
+    currentRole === 'administrator';
+
+  const canExportSensitive =
+    currentRole === 'super_admin' ||
+    currentRole === 'senior_pastor' ||
+    currentRole === 'administrator';
+
+  const canManageMembers =
+    canAccess('members') &&
+    (currentRole === 'super_admin' ||
+      currentRole === 'senior_pastor' ||
+      currentRole === 'administrator' ||
+      currentRole === 'data_entry');
+
+  // Initialize filters from URL or default
+  const urlQ = searchParams.get('q') || '';
+  const urlStatus = searchParams.get('status') || 'all';
+  const urlMinistry = searchParams.get('ministry') || 'all';
+  const urlCell = searchParams.get('cell') || 'all';
+  const urlGender = searchParams.get('gender') || 'all';
+  const urlPage = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+  const urlView = (searchParams.get('view') as 'cards' | 'table' | 'families') || null;
 
   const [viewMode, setViewMode] = useState<'cards' | 'table' | 'families'>(() => {
+    if (urlView === 'cards' || urlView === 'table' || urlView === 'families') {
+      return urlView;
+    }
     try {
       return (localStorage.getItem('gwcc_member_view_mode') as 'cards' | 'table' | 'families') || 'cards';
     } catch {
@@ -125,15 +197,62 @@ export const MembersPage: React.FC = () => {
   };
 
   // Search & Filter state
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [ministryFilter, setMinistryFilter] = useState<string>('all');
-  const [genderFilter, setGenderFilter] = useState<string>('all');
+  const [searchInput, setSearchInput] = useState(urlQ);
+  const [searchTerm, setSearchTerm] = useState(urlQ);
+  const [statusFilter, setStatusFilter] = useState<string>(urlStatus);
+  const [ministryFilter, setMinistryFilter] = useState<string>(urlMinistry);
+  const [smallGroupFilter, setSmallGroupFilter] = useState<string>(urlCell);
+  const [genderFilter, setGenderFilter] = useState<string>(urlGender);
   const [sortOrder, setSortOrder] = useState<'name-asc' | 'name-desc' | 'member-id' | 'date-joined' | 'tithe-number'>('name-asc');
   const [birthdayFilterActive, setBirthdayFilterActive] = useState(false);
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(urlPage);
+  const [pageSize, setPageSize] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem('gwcc_member_page_size');
+      return stored ? parseInt(stored, 10) : 24;
+    } catch {
+      return 24;
+    }
+  });
+
+  const handleSetPageSize = (size: number) => {
+    setPageSize(size);
+    setCurrentPage(1);
+    try {
+      localStorage.setItem('gwcc_member_page_size', String(size));
+    } catch {}
+  };
+
+  // Debounce search input to eliminate typing latency
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchTerm(searchInput);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  // Sync state to URL search parameters for link sharing & persistence
+  React.useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (searchTerm.trim()) params.set('q', searchTerm.trim()); else params.delete('q');
+    if (statusFilter !== 'all') params.set('status', statusFilter); else params.delete('status');
+    if (ministryFilter !== 'all') params.set('ministry', ministryFilter); else params.delete('ministry');
+    if (smallGroupFilter !== 'all') params.set('cell', smallGroupFilter); else params.delete('cell');
+    if (genderFilter !== 'all') params.set('gender', genderFilter); else params.delete('gender');
+    if (currentPage > 1) params.set('page', String(currentPage)); else params.delete('page');
+    if (viewMode !== 'cards') params.set('view', viewMode); else params.delete('view');
+    setSearchParams(params, { replace: true });
+  }, [searchTerm, statusFilter, ministryFilter, smallGroupFilter, genderFilter, currentPage, viewMode]);
+
   // Multi-select batch state
   const [batchSelectedIds, setBatchSelectedIds] = useState<Set<string>>(new Set());
+
+  // Reset page when filters change
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, ministryFilter, smallGroupFilter, genderFilter, birthdayFilterActive, sortOrder]);
 
   // Selected Member & Modals
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
@@ -237,12 +356,18 @@ export const MembersPage: React.FC = () => {
 
   const handleSelectMember = (member: Member) => {
     setSelectedMember(member);
-    navigate(`/members/${member.id}`);
+    navigate({
+      pathname: `/members/${member.id}`,
+      search: location.search,
+    });
   };
 
   const handleBackToList = () => {
     setSelectedMember(null);
-    navigate('/members');
+    navigate({
+      pathname: '/members',
+      search: location.search,
+    });
   };
 
   const handleConfirmArchiveMember = async () => {
@@ -331,16 +456,42 @@ export const MembersPage: React.FC = () => {
 
       // Search term
       const term = searchTerm.toLowerCase().trim();
-      const matchesSearch =
-        !term ||
-        (m.first_name || '').toLowerCase().includes(term) ||
-        (m.last_name || '').toLowerCase().includes(term) ||
-        (m.member_id || '').toLowerCase().includes(term) ||
-        (m.tithe_number && m.tithe_number.toLowerCase().includes(term)) ||
-        (m.phone && m.phone.includes(term)) ||
-        (m.email && m.email.toLowerCase().includes(term)) ||
-        (m.gps_address && m.gps_address.toLowerCase().includes(term)) ||
-        (m.leadership_position && m.leadership_position.toLowerCase().includes(term));
+      let matchesSearch = true;
+      if (term) {
+        const fullName = `${m.first_name || ''} ${m.middle_name || ''} ${m.last_name || ''}`.toLowerCase();
+        const reversedFullName = `${m.last_name || ''} ${m.first_name || ''}`.toLowerCase();
+        const cleanMemberPhone = (m.phone || '').replace(/[^0-9]/g, '');
+        const localMemberPhone = cleanMemberPhone.startsWith('233') ? '0' + cleanMemberPhone.slice(3) : cleanMemberPhone;
+        const cleanSearchDigits = term.replace(/[^0-9]/g, '');
+
+        const tokens = term.split(/\s+/).filter(Boolean);
+        const cleanMemberIdDigits = (m.member_id || '').replace(/[^0-9]/g, '');
+        const matchesTokens = tokens.every(
+          (t) =>
+            fullName.includes(t) ||
+            reversedFullName.includes(t) ||
+            (m.member_id || '').toLowerCase().includes(t) ||
+            (cleanSearchDigits.length > 0 && cleanMemberIdDigits.endsWith(cleanSearchDigits)) ||
+            (m.tithe_number && m.tithe_number.toLowerCase().includes(t)) ||
+            (m.email && m.email.toLowerCase().includes(t)) ||
+            (m.gps_address && m.gps_address.toLowerCase().includes(t)) ||
+            (m.national_id && m.national_id.toLowerCase().includes(t)) ||
+            (m.leadership_position && m.leadership_position.toLowerCase().includes(t)) ||
+            (m.ministry_name && m.ministry_name.toLowerCase().includes(t)) ||
+            (m.small_group_name && m.small_group_name.toLowerCase().includes(t)) ||
+            (m.residential_address && m.residential_address.toLowerCase().includes(t)) ||
+            (m.landmark && m.landmark.toLowerCase().includes(t)) ||
+            (m.city && m.city.toLowerCase().includes(t)) ||
+            (m.hometown && m.hometown.toLowerCase().includes(t))
+        );
+
+        const matchesPhone =
+          (m.phone && m.phone.toLowerCase().includes(term)) ||
+          (cleanSearchDigits.length >= 3 &&
+            (cleanMemberPhone.includes(cleanSearchDigits) || localMemberPhone.includes(cleanSearchDigits)));
+
+        matchesSearch = matchesTokens || matchesPhone;
+      }
 
       // Status
       let matchesStatus = true;
@@ -359,9 +510,10 @@ export const MembersPage: React.FC = () => {
       }
 
       const matchesMinistry = ministryFilter === 'all' || m.ministry_id === ministryFilter;
+      const matchesSmallGroup = smallGroupFilter === 'all' || m.small_group_id === smallGroupFilter;
       const matchesGender = genderFilter === 'all' || m.gender === genderFilter;
 
-      return matchesSearch && matchesStatus && matchesMinistry && matchesGender;
+      return matchesSearch && matchesStatus && matchesMinistry && matchesSmallGroup && matchesGender;
     });
 
     // Sorting
@@ -390,11 +542,20 @@ export const MembersPage: React.FC = () => {
     searchTerm,
     statusFilter,
     ministryFilter,
+    smallGroupFilter,
     genderFilter,
     sortOrder,
     birthdayFilterActive,
     currentMonth,
   ]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredMembers.length / pageSize));
+
+  // Paginated slice for cards and table views
+  const paginatedMembers = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredMembers.slice(start, start + pageSize);
+  }, [filteredMembers, currentPage, pageSize]);
 
   // Cluster members into Household & Family Units
   const households = useMemo(() => {
@@ -493,7 +654,9 @@ export const MembersPage: React.FC = () => {
       m.marital_status || 'single',
       m.spouse_name || '',
       m.number_of_children ?? '',
-      m.national_id || '',
+      canExportSensitive
+        ? (m.national_id || '')
+        : (m.national_id ? `${m.national_id.slice(0, 4)}••••${m.national_id.slice(-2)}` : ''),
       m.hometown || '',
       m.region_of_origin || '',
       m.residential_address || '',
@@ -718,6 +881,88 @@ export const MembersPage: React.FC = () => {
       >
         {member.status.replace('_', ' ')}
       </span>
+    );
+  };
+
+  // Accessible Pagination Bar Controls
+  const renderPaginationControls = () => {
+    if (filteredMembers.length <= pageSize && currentPage === 1) {
+      return null;
+    }
+
+    const startItem = filteredMembers.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+    const endItem = Math.min(currentPage * pageSize, filteredMembers.length);
+
+    return (
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-3 text-slate-500 font-medium">
+          <span>
+            Showing <strong className="text-slate-800">{startItem}</strong> to{' '}
+            <strong className="text-slate-800">{endItem}</strong> of{' '}
+            <strong className="text-slate-800">{filteredMembers.length}</strong> members
+          </span>
+
+          <span className="text-slate-300">•</span>
+
+          <div className="flex items-center gap-1.5">
+            <span>Per page:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => handleSetPageSize(Number(e.target.value))}
+              className="py-1 px-2 border border-slate-200 rounded-lg bg-slate-50 text-slate-700 font-semibold"
+            >
+              <option value={12}>12</option>
+              <option value={24}>24</option>
+              <option value={48}>48</option>
+              <option value={96}>96</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            disabled={currentPage <= 1}
+            onClick={() => setCurrentPage(1)}
+            className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            title="First page"
+          >
+            <ChevronsLeft className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            disabled={currentPage <= 1}
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            title="Previous page"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+
+          <span className="px-3 py-1 font-bold text-slate-700">
+            Page {currentPage} of {totalPages}
+          </span>
+
+          <button
+            type="button"
+            disabled={currentPage >= totalPages}
+            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            title="Next page"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            disabled={currentPage >= totalPages}
+            onClick={() => setCurrentPage(totalPages)}
+            className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            title="Last page"
+          >
+            <ChevronsRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
     );
   };
 
@@ -1064,17 +1309,30 @@ export const MembersPage: React.FC = () => {
             </div>
 
             {/* Search, Sorting, and Secondary Select Filters */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-              {/* Search bar */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              {/* Search bar with instant clear */}
               <div className="lg:col-span-2 relative">
                 <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
                 <input
                   type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
                   placeholder="Search name, GWCC-ID, Tithe #, phone, GPS..."
-                  className="w-full pl-10 pr-3 py-2.5 text-xs sm:text-sm border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-teal-600 font-medium"
+                  className="w-full pl-10 pr-9 py-2.5 text-xs sm:text-sm border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-teal-600 font-medium"
                 />
+                {searchInput && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchInput('');
+                      setSearchTerm('');
+                    }}
+                    className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 p-0.5 rounded-full cursor-pointer"
+                    title="Clear search"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
 
               {/* Sort Order */}
@@ -1108,6 +1366,22 @@ export const MembersPage: React.FC = () => {
                 </select>
               </div>
 
+              {/* Cell Group / Fellowship Filter */}
+              <div>
+                <select
+                  value={smallGroupFilter}
+                  onChange={(e) => setSmallGroupFilter(e.target.value)}
+                  className="w-full py-2.5 px-3 text-xs sm:text-sm border border-slate-200 rounded-xl bg-slate-50 focus:bg-white text-slate-700 font-medium"
+                >
+                  <option value="all">All Cell Groups</option>
+                  {smallGroups.map((grp) => (
+                    <option key={grp.id} value={grp.id}>
+                      {grp.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               {/* Gender Filter */}
               <div>
                 <select
@@ -1128,7 +1402,7 @@ export const MembersPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleSelectAllVisible}
-                  className="font-bold text-teal-800 hover:underline flex items-center gap-1"
+                  className="font-bold text-teal-800 hover:underline flex items-center gap-1 cursor-pointer"
                 >
                   <Check className="w-3.5 h-3.5" />
                   <span>
@@ -1139,7 +1413,8 @@ export const MembersPage: React.FC = () => {
                 </button>
                 <span className="text-slate-300">•</span>
                 <span>
-                  Showing <strong>{filteredMembers.length}</strong> of {members.length} members
+                  Showing <strong className="font-mono tabular-nums">{filteredMembers.length}</strong> of{' '}
+                  <strong className="font-mono tabular-nums">{members.length}</strong> members
                 </span>
                 {birthdayFilterActive && (
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-pink-100 text-pink-800 border border-pink-200">
@@ -1148,16 +1423,19 @@ export const MembersPage: React.FC = () => {
                 )}
               </div>
 
-              {(searchTerm || statusFilter !== 'all' || ministryFilter !== 'all' || genderFilter !== 'all' || birthdayFilterActive) && (
+              {(searchInput || searchTerm || statusFilter !== 'all' || ministryFilter !== 'all' || smallGroupFilter !== 'all' || genderFilter !== 'all' || birthdayFilterActive) && (
                 <button
                   onClick={() => {
+                    setSearchInput('');
                     setSearchTerm('');
                     setStatusFilter('all');
                     setMinistryFilter('all');
+                    setSmallGroupFilter('all');
                     setGenderFilter('all');
                     setBirthdayFilterActive(false);
+                    setCurrentPage(1);
                   }}
-                  className="text-teal-700 hover:underline font-semibold"
+                  className="text-teal-700 hover:underline font-semibold cursor-pointer"
                 >
                   Reset Filters
                 </button>
@@ -1178,32 +1456,36 @@ export const MembersPage: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setIsBulkOperationsOpen(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
-                  title="Batch assign ministry, cell group, status, or Foundation School"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-emerald-200" />
-                  <span>Bulk Operations ({batchSelectedIds.size})</span>
-                </button>
+                {canManageMembers && (
+                  <button
+                    onClick={() => setIsBulkOperationsOpen(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+                    title="Batch assign ministry, cell group, status, or Foundation School"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-200" />
+                    <span>Bulk Operations ({batchSelectedIds.size})</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => setIsPrintDirectoryOpen(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold transition border border-slate-700"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold transition border border-slate-700 cursor-pointer"
                   title="Print directory of selected members"
                 >
                   <Printer className="w-3.5 h-3.5 text-slate-300" />
                   <span>Print Selected</span>
                 </button>
 
-                <button
-                  onClick={handleBatchArchive}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
-                  title="Archive selected members"
-                >
-                  <Archive className="w-3.5 h-3.5" />
-                  <span>Archive Selected ({batchSelectedIds.size})</span>
-                </button>
+                {canArchive && (
+                  <button
+                    onClick={handleBatchArchive}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+                    title="Archive selected members"
+                  >
+                    <Archive className="w-3.5 h-3.5" />
+                    <span>Archive Selected ({batchSelectedIds.size})</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => handleExportCSV(true)}
@@ -1237,7 +1519,7 @@ export const MembersPage: React.FC = () => {
           ) : viewMode === 'cards' ? (
             /* CARD VIEW GRID */
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {filteredMembers.map((member) => {
+              {paginatedMembers.map((member) => {
                 const ministry = ministries.find((m) => m.id === member.ministry_id);
                 const smallGroup = smallGroups.find((g) => g.id === member.small_group_id);
                 const isSelected = batchSelectedIds.has(member.id);
@@ -1450,7 +1732,7 @@ export const MembersPage: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filteredMembers.map((member) => {
+                    {paginatedMembers.map((member) => {
                       const isSelected = batchSelectedIds.has(member.id);
 
                       return (
@@ -1796,6 +2078,9 @@ export const MembersPage: React.FC = () => {
               </div>
             </div>
           ) : null}
+
+          {/* Pagination Controls for Cards and Table views */}
+          {viewMode !== 'families' && filteredMembers.length > 0 && renderPaginationControls()}
         </>
       )}
 
