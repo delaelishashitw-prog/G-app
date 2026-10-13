@@ -137,37 +137,72 @@ export function disburseWelfareClaim(
     disbursement_channel?: string;
     disbursement_voucher_no: string;
     amount_approved: number;
+    amount_paid?: number;
     pastoral_notes?: string;
+    finance_account_id?: string;
+    finance_account_name?: string;
+    recorded_by?: string;
   },
   setWelfareClaims: Dispatch<SetStateAction<WelfareClaim[]>>,
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
   dbSyncUpsert?: (table: string, record: any) => Promise<void> | void
 ) {
   const now = new Date().toISOString().split('T')[0];
+  const paymentAmount = details.amount_paid !== undefined ? details.amount_paid : details.amount_approved;
+
   setWelfareClaims((prev) =>
     prev.map((claim) => {
       if (claim.id !== id) return claim;
 
+      const currentDisbursed = claim.amount_disbursed || 0;
+      const newTotalDisbursed = currentDisbursed + paymentAmount;
+      const approvedTarget = details.amount_approved || claim.amount_approved || claim.amount_requested;
+      const isFullyPaid = newTotalDisbursed >= approvedTarget;
+
+      const newDisbursementRecord = {
+        id: `disb-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        claim_id: claim.id,
+        amount: paymentAmount,
+        date: now,
+        payment_method: details.disbursement_method,
+        payment_channel: details.disbursement_channel,
+        voucher_no: details.disbursement_voucher_no,
+        notes: details.pastoral_notes,
+        disbursed_by: details.recorded_by,
+        finance_account_id: details.finance_account_id,
+        finance_account_name: details.finance_account_name,
+        created_at: new Date().toISOString(),
+      };
+
+      const updatedDisbursements = [...(claim.disbursements || []), newDisbursementRecord];
+
       const updated: WelfareClaim = {
         ...claim,
-        status: 'disbursed',
-        amount_approved: details.amount_approved,
+        status: isFullyPaid ? 'disbursed' : 'approved',
+        amount_approved: approvedTarget,
+        amount_disbursed: newTotalDisbursed,
         disbursement_date: now,
         disbursement_method: details.disbursement_method,
         disbursement_channel: details.disbursement_channel,
         disbursement_voucher_no: details.disbursement_voucher_no,
+        finance_account_id: details.finance_account_id || claim.finance_account_id,
+        finance_account_name: details.finance_account_name || claim.finance_account_name,
         pastoral_notes: details.pastoral_notes || claim.pastoral_notes,
+        disbursements: updatedDisbursements,
         updated_at: new Date().toISOString(),
       };
+
       if (dbSyncUpsert) {
         dbSyncUpsert('welfare_claims', updated);
       }
+
       logAction(
         'DISBURSE_WELFARE_CLAIM',
         'Welfare',
-        `Disbursed benevolence payment of GH₵ ${details.amount_approved.toFixed(2)} to ${claim.member_name} (Voucher ${details.disbursement_voucher_no})`,
+        `Disbursed GH₵ ${paymentAmount.toFixed(2)} to ${claim.member_name} (${isFullyPaid ? 'Fully Disbursed' : `Partial Payment, GH₵ ${(approvedTarget - newTotalDisbursed).toFixed(2)} remaining`}) - Voucher ${details.disbursement_voucher_no}`,
         id
       );
+
       return updated;
     })
   );

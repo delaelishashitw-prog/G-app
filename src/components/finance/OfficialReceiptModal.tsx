@@ -123,6 +123,23 @@ Thank you for your generous stewardship!`;
             </div>
           </div>
 
+          {/* Voided Warning Banner */}
+          {record.status === 'voided' && (
+            <div className="p-3 bg-rose-50 border-2 border-dashed border-rose-500 rounded-xl text-rose-950 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-1 shadow-xs">
+              <div className="flex items-center gap-2 font-bold">
+                <span className="px-2 py-0.5 bg-rose-600 text-white rounded text-[10px] tracking-widest uppercase font-black">
+                  VOID / CANCELLED
+                </span>
+                <span>Transaction voided from official accounting records</span>
+              </div>
+              {record.void_reason && (
+                <div className="text-rose-700 text-[11px] italic font-medium">
+                  Reason: {record.void_reason}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Details Table */}
           <div className="rounded-xl border border-slate-200 overflow-hidden bg-slate-50/60 divide-y divide-slate-200 text-xs">
             <div className="p-3 sm:px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1">

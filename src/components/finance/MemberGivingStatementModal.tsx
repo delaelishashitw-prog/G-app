@@ -35,10 +35,15 @@ export const MemberGivingStatementModal: React.FC<MemberGivingStatementModalProp
     return Array.from(set).sort().reverse();
   }, [givingRecords]);
 
-  // Filter records belonging to this member for selected year
+  // Filter records belonging to this member for selected year (excluding voided)
   const memberRecords = useMemo(() => {
     return givingRecords
-      .filter((g) => g.member_id === member.id && normalizeDateStr(g.date).startsWith(selectedYear))
+      .filter(
+        (g) =>
+          g.member_id === member.id &&
+          normalizeDateStr(g.date).startsWith(selectedYear) &&
+          g.status !== 'voided'
+      )
       .sort((a, b) => {
         const dateA = normalizeDateStr(a.date);
         const dateB = normalizeDateStr(b.date);

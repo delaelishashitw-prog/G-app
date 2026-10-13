@@ -267,6 +267,11 @@ export interface GivingRecord {
   reference_number?: string;
   service_id?: string;
   service_name?: string;
+  pledge_id?: string;
+  pledge_campaign_name?: string;
+  status?: 'completed' | 'voided';
+  voided_by?: string;
+  void_reason?: string;
   notes?: string;
   recorded_by?: string;
   created_at: string;
@@ -540,6 +545,7 @@ export interface ChurchSettings {
 export type WelfareClaimCategory =
   | 'bereavement'
   | 'hospital_medical'
+  | 'food_nutrition'
   | 'childbirth_naming'
   | 'wedding_marriage'
   | 'education_welfare'
@@ -551,6 +557,8 @@ export type WelfareClaimStatus =
   | 'approved'
   | 'disbursed'
   | 'declined';
+
+export type BeneficiaryType = 'member' | 'external_community';
 
 export interface WelfareContribution {
   id: string;
@@ -568,19 +576,41 @@ export interface WelfareContribution {
   created_at: string;
 }
 
+export interface WelfareDisbursementPayment {
+  id: string;
+  claim_id: string;
+  amount: number;
+  date: string;
+  payment_method: PaymentMethod;
+  payment_channel?: string;
+  voucher_no: string;
+  notes?: string;
+  disbursed_by?: string;
+  finance_account_id?: string;
+  finance_account_name?: string;
+  finance_transaction_id?: string;
+  created_at: string;
+}
+
 export interface WelfareClaim {
   id: string;
   claim_number: string;
+  beneficiary_type?: BeneficiaryType;
   member_id: string;
   member_name: string;
   member_phone?: string;
+  beneficiary_community?: string;
+  contact_address?: string;
   category: WelfareClaimCategory;
   title: string;
   description: string;
   amount_requested: number;
   amount_approved?: number;
+  amount_disbursed?: number;
   status: WelfareClaimStatus;
   emergency_level: 'normal' | 'urgent' | 'critical';
+  case_owner?: string;
+  confidential_pastoral_notes?: string;
   date_submitted: string;
   date_reviewed?: string;
   reviewed_by?: string;
@@ -589,6 +619,9 @@ export interface WelfareClaim {
   disbursement_method?: PaymentMethod;
   disbursement_channel?: string;
   disbursement_voucher_no?: string;
+  finance_account_id?: string;
+  finance_account_name?: string;
+  disbursements?: WelfareDisbursementPayment[];
   supporting_documents?: string;
   created_at: string;
   updated_at?: string;

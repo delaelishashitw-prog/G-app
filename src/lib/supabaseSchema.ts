@@ -815,13 +815,17 @@ CREATE TABLE IF NOT EXISTS public.welfare_contributions (
 CREATE TABLE IF NOT EXISTS public.welfare_claims (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   claim_number VARCHAR(50) UNIQUE NOT NULL,
+  beneficiary_type VARCHAR(50) DEFAULT 'member',
   member_id TEXT NOT NULL,
   member_name VARCHAR(150) NOT NULL,
   member_phone VARCHAR(50),
+  beneficiary_community VARCHAR(150),
+  contact_address TEXT,
   category VARCHAR(50) NOT NULL CHECK (
     category IN (
       'bereavement',
       'hospital_medical',
+      'food_nutrition',
       'childbirth_naming',
       'wedding_marriage',
       'education_welfare',
@@ -832,12 +836,15 @@ CREATE TABLE IF NOT EXISTS public.welfare_claims (
   description TEXT NOT NULL,
   amount_requested DECIMAL(14,2) NOT NULL DEFAULT 0.00 CHECK (amount_requested >= 0),
   amount_approved DECIMAL(14,2) DEFAULT 0.00 CHECK (amount_approved IS NULL OR amount_approved >= 0),
+  amount_disbursed DECIMAL(14,2) DEFAULT 0.00 CHECK (amount_disbursed IS NULL OR amount_disbursed >= 0),
   status VARCHAR(30) NOT NULL DEFAULT 'pending' CHECK (
     status IN ('pending', 'under_review', 'approved', 'disbursed', 'declined')
   ),
   emergency_level VARCHAR(20) NOT NULL DEFAULT 'normal' CHECK (
     emergency_level IN ('normal', 'urgent', 'critical')
   ),
+  case_owner VARCHAR(150),
+  confidential_pastoral_notes TEXT,
   date_submitted DATE NOT NULL DEFAULT CURRENT_DATE,
   date_reviewed DATE,
   reviewed_by VARCHAR(150),
@@ -846,10 +853,25 @@ CREATE TABLE IF NOT EXISTS public.welfare_claims (
   disbursement_method VARCHAR(50),
   disbursement_channel VARCHAR(100),
   disbursement_voucher_no VARCHAR(100),
+  finance_account_id TEXT,
+  finance_account_name VARCHAR(150),
+  disbursements JSONB DEFAULT '[]'::jsonb,
   supporting_documents TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Idempotent column migrations for existing welfare_claims tables
+ALTER TABLE public.welfare_claims DROP CONSTRAINT IF EXISTS welfare_claims_category_check;
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS beneficiary_type VARCHAR(50) DEFAULT 'member';
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS beneficiary_community VARCHAR(150);
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS contact_address TEXT;
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS amount_disbursed DECIMAL(14,2) DEFAULT 0.00;
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS case_owner VARCHAR(150);
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS confidential_pastoral_notes TEXT;
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS finance_account_id TEXT;
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS finance_account_name VARCHAR(150);
+ALTER TABLE public.welfare_claims ADD COLUMN IF NOT EXISTS disbursements JSONB DEFAULT '[]'::jsonb;
 
 -- 3.19 AUDIT TRAIL LOGS
 CREATE TABLE IF NOT EXISTS public.audit_logs (

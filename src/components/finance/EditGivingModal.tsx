@@ -38,6 +38,8 @@ export const EditGivingModal: React.FC<EditGivingModalProps> = ({
     reference_number: record.reference_number || '',
     service_name: record.service_name || '',
     notes: record.notes || '',
+    status: record.status || 'completed',
+    void_reason: record.void_reason || '',
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -84,6 +86,8 @@ export const EditGivingModal: React.FC<EditGivingModalProps> = ({
       reference_number: form.reference_number || undefined,
       service_name: form.service_name || undefined,
       notes: form.notes || undefined,
+      status: form.status,
+      void_reason: form.status === 'voided' ? (form.void_reason || 'Marked void during edit') : undefined,
     });
   };
 
@@ -390,6 +394,50 @@ export const EditGivingModal: React.FC<EditGivingModalProps> = ({
               className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
               placeholder="e.g. September Tithe"
             />
+          </div>
+
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+            <label className="block font-semibold text-slate-700">Accounting Record Status</label>
+            <div className="flex items-center gap-4 text-xs">
+              <label className="flex items-center gap-1.5 cursor-pointer font-medium text-slate-800">
+                <input
+                  type="radio"
+                  name="record_status"
+                  value="completed"
+                  checked={form.status === 'completed'}
+                  onChange={() => setForm({ ...form, status: 'completed' })}
+                  className="text-emerald-600 focus:ring-emerald-500"
+                />
+                <span className="text-emerald-700 font-bold">Active / Completed</span>
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer font-medium text-slate-800">
+                <input
+                  type="radio"
+                  name="record_status"
+                  value="voided"
+                  checked={form.status === 'voided'}
+                  onChange={() => setForm({ ...form, status: 'voided' })}
+                  className="text-rose-600 focus:ring-rose-500"
+                />
+                <span className="text-rose-700 font-bold">Voided / Cancelled</span>
+              </label>
+            </div>
+
+            {form.status === 'voided' && (
+              <div className="pt-2 border-t border-slate-200">
+                <label className="block text-[11px] font-bold text-rose-700 mb-1">
+                  Reason for Voiding *
+                </label>
+                <input
+                  type="text"
+                  required={form.status === 'voided'}
+                  value={form.void_reason}
+                  onChange={(e) => setForm({ ...form, void_reason: e.target.value })}
+                  placeholder="e.g. Duplicate MoMo notification, Entry error, Reversal"
+                  className="w-full px-3 py-1.5 border border-rose-300 rounded-lg text-xs bg-rose-50/50"
+                />
+              </div>
+            )}
           </div>
 
           <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">

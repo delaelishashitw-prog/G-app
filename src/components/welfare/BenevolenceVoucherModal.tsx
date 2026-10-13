@@ -16,32 +16,44 @@ export const BenevolenceVoucherModal: React.FC<BenevolenceVoucherModalProps> = (
   isOpen,
   onClose,
 }) => {
-  const { settings, disburseWelfareClaim } = useChurchData();
-  const { success } = useToast();
+  const { settings, disburseWelfareClaim, churchAccounts } = useChurchData();
+  const { success, error: toastError } = useToast();
+
+  const activeAccounts = churchAccounts.filter((a) => a.is_active);
+  const defaultAccount = activeAccounts[0];
 
   const defaultVoucherNo = claim?.disbursement_voucher_no || `WPV-${new Date().getFullYear()}-${String(Math.floor(100 + Math.random() * 900))}`;
-  const defaultAmount = claim?.amount_approved || claim?.amount_requested || 0;
+  const totalApproved = claim?.amount_approved || claim?.amount_requested || 0;
+  const alreadyDisbursed = claim?.amount_disbursed || 0;
+  const remainingCommitment = Math.max(0, totalApproved - alreadyDisbursed);
 
   const [voucherNo, setVoucherNo] = useState(defaultVoucherNo);
-  const [approvedAmount, setApprovedAmount] = useState(String(defaultAmount));
+  const [approvedAmount, setApprovedAmount] = useState(String(totalApproved));
+  const [amountToPay, setAmountToPay] = useState(String(remainingCommitment > 0 ? remainingCommitment : totalApproved));
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(claim?.disbursement_method || 'mobile_money');
   const [paymentChannel, setPaymentChannel] = useState(claim?.disbursement_channel || 'MTN Mobile Money');
   const [recipientPhone, setRecipientPhone] = useState(claim?.member_phone || '+233 24 ');
+  const [selectedAccountId, setSelectedAccountId] = useState(defaultAccount?.id || '');
+  const [syncFinance, setSyncFinance] = useState(true);
   const [notes, setNotes] = useState(claim?.pastoral_notes || 'Approved relief assistance under GWCC Welfare Constitution Article 4.');
-  const [isFinalized, setIsFinalized] = useState(claim?.status === 'disbursed');
+  const [isFinalized, setIsFinalized] = useState(claim?.status === 'disbursed' && remainingCommitment <= 0);
 
   // Synchronize state when claim changes
   useEffect(() => {
     if (claim) {
       const vNo = claim.disbursement_voucher_no || `WPV-${new Date().getFullYear()}-${String(Math.floor(100 + Math.random() * 900))}`;
-      const amt = claim.amount_approved || claim.amount_requested || 0;
+      const totalApp = claim.amount_approved || claim.amount_requested || 0;
+      const disbursed = claim.amount_disbursed || 0;
+      const remaining = Math.max(0, totalApp - disbursed);
+
       setVoucherNo(vNo);
-      setApprovedAmount(String(amt));
+      setApprovedAmount(String(totalApp));
+      setAmountToPay(String(remaining > 0 ? remaining : totalApp));
       setPaymentMethod(claim.disbursement_method || 'mobile_money');
       setPaymentChannel(claim.disbursement_channel || 'MTN Mobile Money');
       setRecipientPhone(claim.member_phone || '+233 24 ');
       setNotes(claim.pastoral_notes || 'Approved relief assistance under GWCC Welfare Constitution Article 4.');
-      setIsFinalized(claim.status === 'disbursed');
+      setIsFinalized(claim.status === 'disbursed' && remaining <= 0);
     }
   }, [claim]);
 
@@ -49,16 +61,37 @@ export const BenevolenceVoucherModal: React.FC<BenevolenceVoucherModalProps> = (
   if (!isOpen || !claim) return null;
 
   const handleConfirmDisbursement = () => {
-    const num = parseFloat(approvedAmount);
+    const numPay = parseFloat(amountToPay);
+    const numApp = parseFloat(approvedAmount);
+
+    if (isNaN(numPay) || numPay <= 0) {
+      toastError('Validation Error', 'Please enter a valid disbursement amount greater than GH₵ 0.00');
+      return;
+    }
+
+    const selectedAcc = activeAccounts.find((a) => a.id === selectedAccountId);
+
     disburseWelfareClaim(claim.id, {
       disbursement_method: paymentMethod,
       disbursement_channel: paymentChannel,
       disbursement_voucher_no: voucherNo,
-      amount_approved: isNaN(num) ? claim.amount_requested : num,
+      amount_approved: isNaN(numApp) ? claim.amount_requested : numApp,
+      amount_paid: numPay,
       pastoral_notes: notes,
+      finance_account_id: selectedAcc?.id,
+      finance_account_name: selectedAcc?.name,
+      sync_with_church_finance: syncFinance,
     });
-    setIsFinalized(true);
-    success('Relief Voucher Authorized', `Voucher ${voucherNo} recorded for ${claim.member_name}`);
+
+    const newRemaining = Math.max(0, (isNaN(numApp) ? claim.amount_requested : numApp) - (alreadyDisbursed + numPay));
+    if (newRemaining <= 0) {
+      setIsFinalized(true);
+    }
+
+    success(
+      'Benevolence Disbursement Recorded',
+      `Paid GH₵ ${numPay.toFixed(2)} to ${claim.member_name} (Voucher ${voucherNo})${newRemaining > 0 ? ` · GH₵ ${newRemaining.toFixed(2)} remaining` : ' · Fully Completed'}`
+    );
   };
 
   const handlePrint = () => {
@@ -110,13 +143,22 @@ export const BenevolenceVoucherModal: React.FC<BenevolenceVoucherModalProps> = (
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 font-medium mb-1">Approved Amount (GH₵)</label>
+                  <label className="block text-slate-600 font-medium mb-1">
+                    Amount to Disburse (GH₵)
+                  </label>
                   <input
                     type="number"
-                    value={approvedAmount}
-                    onChange={(e) => setApprovedAmount(e.target.value)}
+                    step="0.01"
+                    min="1"
+                    value={amountToPay}
+                    onChange={(e) => setAmountToPay(e.target.value)}
                     className="w-full rounded-lg border border-slate-300 p-2 font-bold text-emerald-800 bg-white"
                   />
+                  {alreadyDisbursed > 0 && (
+                    <span className="text-[10px] text-slate-500 mt-0.5 block">
+                      Already paid: GH₵ {alreadyDisbursed.toFixed(2)} / Approved: GH₵ {totalApproved.toFixed(2)}
+                    </span>
+                  )}
                 </div>
                 <div>
                   <label className="block text-slate-600 font-medium mb-1">Disbursement Channel</label>
@@ -128,19 +170,63 @@ export const BenevolenceVoucherModal: React.FC<BenevolenceVoucherModalProps> = (
                     <option value="MTN Mobile Money">MTN Mobile Money</option>
                     <option value="Telecel Cash">Telecel Cash</option>
                     <option value="Cash at Sanctuary Desk">Cash at Sanctuary Desk</option>
-                    <option value="GCB Bank Wire">GCB Bank Transfer</option>
+                    <option value="GCB Bank Transfer">GCB Bank Transfer</option>
+                    <option value="Ecobank Cheque">Ecobank Cheque</option>
                   </select>
                 </div>
               </div>
 
-              <div className="flex justify-end pt-1">
+              {/* Finance Account & Sync Options */}
+              <div className="pt-2 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <label className="block text-slate-600 font-medium mb-1">Disbursing Treasury Account</label>
+                  <select
+                    value={selectedAccountId}
+                    onChange={(e) => setSelectedAccountId(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 p-2 text-slate-900 bg-white font-medium"
+                  >
+                    {activeAccounts.length === 0 ? (
+                      <option value="">Main Church Treasury</option>
+                    ) : (
+                      activeAccounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.name} ({acc.bank_or_provider}) — Bal: GH₵ {acc.current_balance.toFixed(2)}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+                <div className="flex items-center gap-2 pt-5">
+                  <input
+                    type="checkbox"
+                    id="syncFinance"
+                    checked={syncFinance}
+                    onChange={(e) => setSyncFinance(e.target.checked)}
+                    className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500"
+                  />
+                  <label htmlFor="syncFinance" className="text-slate-700 font-medium cursor-pointer">
+                    Sync transaction with Church Finance module
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+                <div className="text-[11px] text-slate-500">
+                  {remainingCommitment > 0 ? (
+                    <span>
+                      Remaining grant commitment: <strong className="text-slate-800">GH₵ {remainingCommitment.toFixed(2)}</strong>
+                    </span>
+                  ) : (
+                    <span className="text-emerald-700 font-semibold">Grant fully funded and committed</span>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={handleConfirmDisbursement}
                   className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs rounded-xl transition flex items-center gap-1.5 shadow-xs"
                 >
                   <Check className="w-4 h-4" />
-                  Authorize & Finalize Disbursement
+                  Authorize & Finalize Payment
                 </button>
               </div>
             </div>
@@ -230,12 +316,22 @@ export const BenevolenceVoucherModal: React.FC<BenevolenceVoucherModalProps> = (
                   </tr>
                   <tr className="bg-slate-50 font-bold">
                     <td colSpan={2} className="py-2.5 px-3 text-right uppercase text-[11px] text-slate-700">
-                      Total Disbursed Net Amount:
+                      Amount Authorized Under This Voucher:
                     </td>
                     <td className="py-2.5 px-3 text-right font-mono text-base text-emerald-800">
-                      GH₵ {parseFloat(approvedAmount).toFixed(2)}
+                      GH₵ {parseFloat(amountToPay).toFixed(2)}
                     </td>
                   </tr>
+                  {remainingCommitment > 0 && parseFloat(amountToPay) < remainingCommitment && (
+                    <tr className="bg-amber-50/50 text-[11px] font-semibold text-amber-900">
+                      <td colSpan={2} className="py-1.5 px-3 text-right">
+                        Remaining Commitment After This Payment:
+                      </td>
+                      <td className="py-1.5 px-3 text-right font-mono">
+                        GH₵ {(remainingCommitment - parseFloat(amountToPay)).toFixed(2)}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>

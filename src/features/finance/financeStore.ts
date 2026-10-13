@@ -79,6 +79,37 @@ export function deleteGiving(
   dbSyncDelete('giving', id);
 }
 
+export function voidGiving(
+  id: string,
+  voidReason: string,
+  voidedBy: string,
+  setGiving: Dispatch<SetStateAction<GivingRecord[]>>,
+  logAction: (action: string, module: string, details: string, recordId?: string) => void,
+  dbSyncUpsert: (table: string, record: unknown) => void
+) {
+  setGiving((prev) =>
+    prev.map((g) => {
+      if (g.id === id) {
+        const updated: GivingRecord = {
+          ...g,
+          status: 'voided',
+          void_reason: voidReason,
+          voided_by: voidedBy,
+        };
+        logAction(
+          'VOID_GIVING',
+          'Finance',
+          `Voided giving entry #${id} (GH₵ ${g.amount.toFixed(2)}) for ${g.member_name || g.donor_name || 'Anonymous'}. Reason: ${voidReason}`,
+          id
+        );
+        dbSyncUpsert('giving', updated);
+        return updated;
+      }
+      return g;
+    })
+  );
+}
+
 export function recordExpense(
   data: Omit<ExpenseRecord, 'id' | 'created_at'>,
   setExpenses: Dispatch<SetStateAction<ExpenseRecord[]>>,

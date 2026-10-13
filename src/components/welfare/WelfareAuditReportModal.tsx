@@ -24,6 +24,7 @@ export const WelfareAuditReportModal: React.FC<WelfareAuditReportModalProps> = (
   const categorySummary = [
     { key: 'bereavement', label: 'Bereavement Aid' },
     { key: 'hospital_medical', label: 'Medical & Surgery' },
+    { key: 'food_nutrition', label: 'Food & Nutrition Basket' },
     { key: 'emergency_relief', label: 'Emergency Relief' },
     { key: 'education_welfare', label: 'Education Subsidy' },
     { key: 'childbirth_naming', label: 'Childbirth & Naming' },

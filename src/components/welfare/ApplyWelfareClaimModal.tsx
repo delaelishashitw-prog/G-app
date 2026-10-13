@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { X, HeartHandshake, Check, AlertCircle, FileText, User } from 'lucide-react';
+import { X, HeartHandshake, Check, AlertCircle, FileText, User, Users, Globe, Phone, MapPin } from 'lucide-react';
 import { useChurchData } from '../../contexts/ChurchDataContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import { WelfareClaimCategory } from '../../types/database.types';
+import { WelfareClaimCategory, BeneficiaryType } from '../../types/database.types';
 
 interface ApplyWelfareClaimModalProps {
   isOpen: boolean;
@@ -16,6 +17,7 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
   preselectedMemberId,
 }) => {
   const { members, submitWelfareClaim, settings } = useChurchData();
+  const { currentUser } = useAuth();
   const { success, error: toastError } = useToast();
 
   const activeMembers = members.filter((m) => !m.is_archived);
@@ -23,13 +25,18 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
     ? activeMembers.find((m) => m.id === preselectedMemberId)
     : activeMembers[0];
 
+  const [beneficiaryType, setBeneficiaryType] = useState<BeneficiaryType>('member');
   const [memberId, setMemberId] = useState(defaultMember?.id || '');
+  const [externalName, setExternalName] = useState('');
+  const [externalPhone, setExternalPhone] = useState('');
+  const [externalCommunity, setExternalCommunity] = useState('');
   const [category, setCategory] = useState<WelfareClaimCategory>('bereavement');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [amountRequested, setAmountRequested] = useState('');
   const [emergencyLevel, setEmergencyLevel] = useState<'normal' | 'urgent' | 'critical'>('normal');
   const [supportingDocs, setSupportingDocs] = useState('');
+  const [confidentialNotes, setConfidentialNotes] = useState('');
 
   if (!isOpen) return null;
 
@@ -43,6 +50,11 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
       defaultTitle: 'Hospitalization & Emergency Medical Aid',
       suggestedAmount: '1200.00',
       hint: 'Medical treatment relief, prescription medication, or surgical copay.',
+    },
+    food_nutrition: {
+      defaultTitle: 'Food Basket & Nutritional Sustenance Relief',
+      suggestedAmount: '450.00',
+      hint: 'Essential dry food staples, rice, oil, or nutritional package for households facing hardship.',
     },
     childbirth_naming: {
       defaultTitle: 'Maternity Benevolence & Baby Blessing',
@@ -78,15 +90,33 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const mem = members.find((m) => m.id === memberId);
-    if (!mem) {
-      toastError('Validation Error', 'Please select a church member');
-      return;
+
+    let beneficiaryId = '';
+    let beneficiaryName = '';
+    let beneficiaryPhone = '';
+
+    if (beneficiaryType === 'member') {
+      const mem = members.find((m) => m.id === memberId);
+      if (!mem) {
+        toastError('Validation Error', 'Please select a church member');
+        return;
+      }
+      beneficiaryId = mem.id;
+      beneficiaryName = `${mem.first_name} ${mem.last_name}`;
+      beneficiaryPhone = mem.phone || '';
+    } else {
+      if (!externalName.trim()) {
+        toastError('Validation Error', 'Please enter the beneficiary full name');
+        return;
+      }
+      beneficiaryId = `ext-${Date.now()}`;
+      beneficiaryName = externalName.trim();
+      beneficiaryPhone = externalPhone.trim();
     }
 
     const numAmount = parseFloat(amountRequested);
     if (isNaN(numAmount) || numAmount <= 0) {
-      toastError('Validation Error', 'Please provide a valid requested amount');
+      toastError('Validation Error', 'Please provide a valid requested amount greater than GH₵ 0.00');
       return;
     }
 
@@ -96,22 +126,26 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
     }
 
     submitWelfareClaim({
-      member_id: mem.id,
-      member_name: `${mem.first_name} ${mem.last_name}`,
-      member_phone: mem.phone,
+      beneficiary_type: beneficiaryType,
+      member_id: beneficiaryId,
+      member_name: beneficiaryName,
+      member_phone: beneficiaryPhone || undefined,
+      beneficiary_community: beneficiaryType === 'external_community' ? (externalCommunity.trim() || 'Local Community') : undefined,
       category,
       title: title.trim(),
       description: description.trim(),
       amount_requested: numAmount,
       status: 'pending',
       emergency_level: emergencyLevel,
+      case_owner: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Welfare Committee',
+      confidential_pastoral_notes: confidentialNotes.trim() || undefined,
       date_submitted: new Date().toISOString().split('T')[0],
       supporting_documents: supportingDocs.trim() || undefined,
     });
 
     success(
-      'Benevolence Claim Submitted',
-      `Application logged for ${mem.first_name} ${mem.last_name} (GH₵ ${numAmount.toFixed(2)})`
+      'Benevolence Case Submitted',
+      `Application logged for ${beneficiaryName} (GH₵ ${numAmount.toFixed(2)})`
     );
     onClose();
   };
@@ -140,25 +174,106 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
-          {/* Member Selection */}
+          {/* Beneficiary Type Selector */}
           <div>
             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-              Applicant Member <span className="text-rose-500">*</span>
+              Beneficiary Type
             </label>
-            <select
-              value={memberId}
-              onChange={(e) => setMemberId(e.target.value)}
-              required
-              className="w-full text-sm rounded-xl border border-slate-300 py-2.5 px-3 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-medium"
-            >
-              <option value="">-- Choose Member --</option>
-              {activeMembers.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.first_name} {m.last_name} {m.tithe_number ? `(${m.tithe_number})` : ''} — {m.phone}
-                </option>
-              ))}
-            </select>
+            <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setBeneficiaryType('member')}
+                className={`py-2 px-3 text-xs font-bold rounded-lg transition flex items-center justify-center gap-1.5 ${
+                  beneficiaryType === 'member'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <User className="w-3.5 h-3.5" />
+                Church Member
+              </button>
+              <button
+                type="button"
+                onClick={() => setBeneficiaryType('external_community')}
+                className={`py-2 px-3 text-xs font-bold rounded-lg transition flex items-center justify-center gap-1.5 ${
+                  beneficiaryType === 'external_community'
+                    ? 'bg-white text-emerald-800 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Globe className="w-3.5 h-3.5" />
+                External / Community
+              </button>
+            </div>
           </div>
+
+          {/* Member Selection OR External Inputs */}
+          {beneficiaryType === 'member' ? (
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                Applicant Member <span className="text-rose-500">*</span>
+              </label>
+              <select
+                value={memberId}
+                onChange={(e) => setMemberId(e.target.value)}
+                required
+                className="w-full text-sm rounded-xl border border-slate-300 py-2.5 px-3 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-medium"
+              >
+                <option value="">-- Choose Member --</option>
+                {activeMembers.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.first_name} {m.last_name} {m.tithe_number ? `(${m.tithe_number})` : ''} — {m.phone}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 uppercase tracking-wider">
+                <Globe className="w-4 h-4 text-emerald-600" />
+                External Beneficiary Details
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    Beneficiary Full Name <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={externalName}
+                    onChange={(e) => setExternalName(e.target.value)}
+                    placeholder="e.g. Ama Darkoa (Widow)"
+                    required={beneficiaryType === 'external_community'}
+                    className="w-full text-xs rounded-lg border border-slate-300 p-2 text-slate-900 bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    Contact Phone Number
+                  </label>
+                  <input
+                    type="text"
+                    value={externalPhone}
+                    onChange={(e) => setExternalPhone(e.target.value)}
+                    placeholder="e.g. +233 24 123 4567"
+                    className="w-full text-xs rounded-lg border border-slate-300 p-2 text-slate-900 bg-white"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  Community / Locality / Suburb
+                </label>
+                <input
+                  type="text"
+                  value={externalCommunity}
+                  onChange={(e) => setExternalCommunity(e.target.value)}
+                  placeholder="e.g. Joma Village / Weija Junction"
+                  className="w-full text-xs rounded-lg border border-slate-300 p-2 text-slate-900 bg-white"
+                />
+              </div>
+            </div>
+          )}
 
           {/* Category & Urgency */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -173,6 +288,7 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
               >
                 <option value="bereavement">Bereavement & Funeral Aid</option>
                 <option value="hospital_medical">Medical & Hospital Treatment</option>
+                <option value="food_nutrition">Food Basket & Nutritional Sustenance</option>
                 <option value="childbirth_naming">Childbirth & Naming Blessing</option>
                 <option value="wedding_marriage">Holy Matrimony Support</option>
                 <option value="education_welfare">Educational Subsidy / Fees</option>
@@ -264,6 +380,21 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
               onChange={(e) => setSupportingDocs(e.target.value)}
               placeholder="e.g. Hospital admission card, Mortuary receipt, Funeral announcement poster"
               className="w-full text-sm rounded-xl border border-slate-300 py-2.5 px-3 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 text-xs"
+            />
+          </div>
+
+          {/* Confidential Pastoral Notes */}
+          <div>
+            <label className="block text-xs font-bold text-amber-800 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+              <span>Confidential Pastoral & Case Notes</span>
+              <span className="text-[10px] text-amber-600 font-normal lowercase">(restricted to pastors & administrators)</span>
+            </label>
+            <textarea
+              rows={2}
+              value={confidentialNotes}
+              onChange={(e) => setConfidentialNotes(e.target.value)}
+              placeholder="Discreet personal or family background details not disclosed in public reports..."
+              className="w-full text-xs rounded-xl border border-amber-200 bg-amber-50/40 p-2.5 text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
             />
           </div>
 

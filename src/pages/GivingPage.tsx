@@ -32,6 +32,7 @@ import {
   Layers,
   Building,
   X,
+  Ban,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -115,14 +116,51 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 export const GivingPage: React.FC = () => {
   const navigate = useNavigate();
-  const { giving, members, services, settings, recordGiving, updateGiving, deleteGiving } = useChurchData();
+  const {
+    giving,
+    members,
+    services,
+    settings,
+    recordGiving,
+    updateGiving,
+    deleteGiving,
+    voidGiving,
+    pledges,
+    campaigns,
+  } = useChurchData();
   const { canAccess, currentUser } = useAuth();
   const { success, error, info } = useToast();
+
+  // Role and Permission Evaluation
+  const isFinanceAdmin =
+    canAccess('finance') ||
+    canAccess('giving') ||
+    currentUser?.role === 'super_admin' ||
+    currentUser?.role === 'administrator' ||
+    currentUser?.role === 'finance_officer' ||
+    currentUser?.role === 'pastor';
+
+  // Identify linked member record for logged-in user
+  const currentMember = useMemo(() => {
+    if (!currentUser) return null;
+    return (
+      members.find(
+        (m) =>
+          m.id === currentUser.id ||
+          (currentUser.email && m.email && m.email.toLowerCase() === currentUser.email.toLowerCase()) ||
+          (currentUser.phone && m.phone && m.phone.includes(currentUser.phone.slice(-9)))
+      ) || null
+    );
+  }, [members, currentUser]);
+
+  // If user is a registered member and NOT a church finance officer/admin, scope to self view
+  const isMemberSelfView = !isFinanceAdmin && (currentUser?.role === 'member' || Boolean(currentMember));
 
   const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'tithers' | 'services'>('overview');
 
   // Filters
   const [dateFilter, setDateFilter] = useState<GivingDateFilterType>('this_month');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'voided'>('all');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -137,6 +175,8 @@ export const GivingPage: React.FC = () => {
   const [receiptRecord, setReceiptRecord] = useState<GivingRecord | null>(null);
   const [statementMember, setStatementMember] = useState<Member | null>(null);
   const [titherHistoryMember, setTitherHistoryMember] = useState<Member | null>(null);
+  const [voidingRecord, setVoidingRecord] = useState<GivingRecord | null>(null);
+  const [voidReason, setVoidReason] = useState('');
 
   // Single Giving Form State
   const [formMemberSearch, setFormMemberSearch] = useState('');
@@ -150,7 +190,9 @@ export const GivingPage: React.FC = () => {
   const [formPaymentChannel, setFormPaymentChannel] = useState('MTN MoMo');
   const [formReferenceNumber, setFormReferenceNumber] = useState('');
   const [formServiceId, setFormServiceId] = useState('');
+  const [formPledgeId, setFormPledgeId] = useState('');
   const [formNotes, setFormNotes] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Date Filtering Predicate
   const isDateMatchingFilter = (dateStr: string) => {
@@ -176,14 +218,39 @@ export const GivingPage: React.FC = () => {
     return true;
   };
 
+  // Base Giving Records - Scoped to individual member if isMemberSelfView
+  const baseGiving = useMemo(() => {
+    if (isMemberSelfView) {
+      return giving.filter((g) => {
+        if (currentMember && g.member_id === currentMember.id) return true;
+        if (currentMember?.tithe_number && g.tithe_number === currentMember.tithe_number) return true;
+        if (currentUser) {
+          const uFirst = (currentUser.first_name || '').toLowerCase();
+          const uLast = (currentUser.last_name || '').toLowerCase();
+          const memName = (g.member_name || g.donor_name || '').toLowerCase();
+          if (uFirst && memName.includes(uFirst) && (uLast ? memName.includes(uLast) : true)) return true;
+        }
+        return false;
+      });
+    }
+    return giving;
+  }, [giving, isMemberSelfView, currentMember, currentUser]);
+
   // Filtered Giving Records
   const filteredGiving = useMemo(() => {
-    return giving
+    return baseGiving
       .filter((item) => {
         if (!isDateMatchingFilter(item.date)) return false;
         if (selectedCategory !== 'all' && item.category !== selectedCategory) return false;
         if (selectedPaymentMethod !== 'all' && item.payment_method !== selectedPaymentMethod) return false;
         if (selectedService !== 'all' && item.service_name !== selectedService) return false;
+
+        // Transaction Status Filter
+        if (statusFilter !== 'all') {
+          const isVoid = item.status === 'voided';
+          if (statusFilter === 'voided' && !isVoid) return false;
+          if (statusFilter === 'completed' && isVoid) return false;
+        }
 
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase();
@@ -203,36 +270,56 @@ export const GivingPage: React.FC = () => {
         return true;
       })
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [giving, dateFilter, customStartDate, customEndDate, selectedCategory, selectedPaymentMethod, selectedService, searchQuery]);
+  }, [
+    baseGiving,
+    dateFilter,
+    statusFilter,
+    customStartDate,
+    customEndDate,
+    selectedCategory,
+    selectedPaymentMethod,
+    selectedService,
+    searchQuery,
+  ]);
 
-  // Aggregate Metrics for Active Period
+  // Aggregate Metrics for Active Period (Excluding Voided Records)
   const totalGivingAmount = useMemo(() => {
-    return filteredGiving.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+    return filteredGiving
+      .filter((item) => item.status !== 'voided')
+      .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   }, [filteredGiving]);
 
   const titheAmount = useMemo(() => {
     return filteredGiving
-      .filter((item) => item.category === 'Tithe')
+      .filter((item) => item.category === 'Tithe' && item.status !== 'voided')
       .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   }, [filteredGiving]);
 
   const offeringAmount = useMemo(() => {
     return filteredGiving
-      .filter((item) => item.category === 'Offering' || item.category === 'Special Offering')
+      .filter(
+        (item) =>
+          (item.category === 'Offering' || item.category === 'Special Offering') &&
+          item.status !== 'voided'
+      )
       .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   }, [filteredGiving]);
 
   const thanksgivingAndSeeds = useMemo(() => {
     return filteredGiving
-      .filter((item) => item.category === 'Thanksgiving' || item.category === 'Seed' || item.category === 'First Fruit')
+      .filter(
+        (item) =>
+          (item.category === 'Thanksgiving' || item.category === 'Seed' || item.category === 'First Fruit') &&
+          item.status !== 'voided'
+      )
       .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   }, [filteredGiving]);
 
-  // Active Tithers Count in Period
+  // Active Tithers Count in Period (Excluding Voided)
   const activeTithersCount = useMemo(() => {
     const tithers = new Set<string>();
     filteredGiving.forEach((item) => {
-      if (item.category === 'Tithe') {
+      if (item.category === 'Tithe' && item.status !== 'voided') {
         const id = item.member_id || item.tithe_number || item.member_name || item.donor_name;
         if (id) tithers.add(id);
       }
@@ -240,23 +327,29 @@ export const GivingPage: React.FC = () => {
     return tithers.size;
   }, [filteredGiving]);
 
-  // Average Giving per Giver
+  // Average Giving per Giver (Excluding Voided)
   const averageGivingPerGiver = useMemo(() => {
     const givers = new Set<string>();
     filteredGiving.forEach((item) => {
-      const id = item.member_id || item.donor_name || item.member_name;
-      if (id) givers.add(id);
+      if (item.status !== 'voided') {
+        const id = item.member_id || item.donor_name || item.member_name;
+        if (id) givers.add(id);
+      }
     });
     return givers.size > 0 ? totalGivingAmount / givers.size : 0;
   }, [filteredGiving, totalGivingAmount]);
 
-  // Monthly Series for Chart
+  // Monthly Series for Chart (Excluding Voided)
   const monthlyChartData = useMemo(() => {
     const months = buildRecentMonthSeries(new Date(), 6);
     return months.map((m) => {
-      const monthRecords = giving.filter((g) => isDateInMonth(g.date, m.key));
-      const tithes = monthRecords.filter((g) => g.category === 'Tithe').reduce((s, g) => s + (Number(g.amount) || 0), 0);
-      const offerings = monthRecords.filter((g) => g.category !== 'Tithe').reduce((s, g) => s + (Number(g.amount) || 0), 0);
+      const monthRecords = baseGiving.filter((g) => isDateInMonth(g.date, m.key) && g.status !== 'voided');
+      const tithes = monthRecords
+        .filter((g) => g.category === 'Tithe')
+        .reduce((s, g) => s + (Number(g.amount) || 0), 0);
+      const offerings = monthRecords
+        .filter((g) => g.category !== 'Tithe')
+        .reduce((s, g) => s + (Number(g.amount) || 0), 0);
       return {
         month: m.shortMonth,
         Tithe: tithes,
@@ -264,22 +357,26 @@ export const GivingPage: React.FC = () => {
         Total: tithes + offerings,
       };
     });
-  }, [giving]);
+  }, [baseGiving]);
 
-  // Category Breakdown for Pie Chart
+  // Category Breakdown for Pie Chart (Excluding Voided)
   const categoryPieData = useMemo(() => {
     const map: Record<string, number> = {};
     filteredGiving.forEach((item) => {
-      map[item.category] = (map[item.category] || 0) + (Number(item.amount) || 0);
+      if (item.status !== 'voided') {
+        map[item.category] = (map[item.category] || 0) + (Number(item.amount) || 0);
+      }
     });
-    return Object.entries(map).map(([name, value]) => ({
-      name,
-      value,
-      color: CATEGORY_COLORS[name] || '#64748b',
-    })).sort((a, b) => b.value - a.value);
+    return Object.entries(map)
+      .map(([name, value]) => ({
+        name,
+        value,
+        color: CATEGORY_COLORS[name] || '#64748b',
+      }))
+      .sort((a, b) => b.value - a.value);
   }, [filteredGiving]);
 
-  // Tithers Directory Data
+  // Tithers Directory Data (Excluding Voided)
   const tithersDirectory = useMemo(() => {
     const titherMap = new Map<string, { member: Member; totalTithe: number; count: number; lastDate: string }>();
 
@@ -290,9 +387,9 @@ export const GivingPage: React.FC = () => {
       }
     });
 
-    // Accumulate actual tithe records
+    // Accumulate actual tithe records (non-voided)
     giving.forEach((g) => {
-      if (g.category === 'Tithe') {
+      if (g.category === 'Tithe' && g.status !== 'voided') {
         let m = g.member_id ? members.find((x) => x.id === g.member_id) : undefined;
         if (!m && g.tithe_number) {
           m = members.find((x) => x.tithe_number?.trim().toLowerCase() === g.tithe_number?.trim().toLowerCase());
@@ -312,10 +409,14 @@ export const GivingPage: React.FC = () => {
     return Array.from(titherMap.values()).sort((a, b) => b.totalTithe - a.totalTithe);
   }, [members, giving]);
 
-  // Service Breakdown
+  // Service Breakdown (Excluding Voided)
   const serviceBreakdown = useMemo(() => {
-    const serviceMap = new Map<string, { serviceName: string; total: number; tithes: number; offerings: number; count: number }>();
+    const serviceMap = new Map<
+      string,
+      { serviceName: string; total: number; tithes: number; offerings: number; count: number }
+    >();
     filteredGiving.forEach((g) => {
+      if (g.status === 'voided') return;
       const sName = g.service_name || 'General / Midweek Service';
       const cur = serviceMap.get(sName) || { serviceName: sName, total: 0, tithes: 0, offerings: 0, count: 0 };
       const amt = Number(g.amount) || 0;
@@ -331,14 +432,45 @@ export const GivingPage: React.FC = () => {
     return Array.from(serviceMap.values()).sort((a, b) => b.total - a.total);
   }, [filteredGiving]);
 
+  // Confirm Voiding
+  const handleConfirmVoid = () => {
+    if (!voidingRecord) return;
+    if (!voidReason.trim()) {
+      error('Reason Required', 'Please provide a reason for voiding this giving entry.');
+      return;
+    }
+    voidGiving(voidingRecord.id, voidReason.trim());
+    success('Transaction Voided', `Record #${voidingRecord.id} has been voided and excluded from ledger totals.`);
+    setVoidingRecord(null);
+    setVoidReason('');
+  };
+
   // Handle Save Single Giving
   const handleSaveSingleGiving = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     const amountNum = parseFloat(formAmount);
     if (isNaN(amountNum) || amountNum <= 0) {
       error('Invalid Amount', 'Please provide a valid giving amount in Ghana Cedis.');
       return;
     }
+
+    // Duplicate Reference Check (prevent duplicate MoMo or Bank entries)
+    if (formReferenceNumber.trim()) {
+      const cleanRef = formReferenceNumber.trim().toLowerCase();
+      const duplicateRecord = giving.find(
+        (g) => g.status !== 'voided' && g.reference_number?.trim().toLowerCase() === cleanRef
+      );
+      if (duplicateRecord) {
+        const proceed = confirm(
+          `Warning: Reference number "${formReferenceNumber.trim()}" was already recorded for ${duplicateRecord.member_name || duplicateRecord.donor_name || 'a donor'} on ${duplicateRecord.date} (GH₵ ${duplicateRecord.amount.toFixed(2)}).\n\nDo you still wish to submit this transaction?`
+        );
+        if (!proceed) return;
+      }
+    }
+
+    setIsSubmitting(true);
 
     let member = formSelectedMemberId ? members.find((m) => m.id === formSelectedMemberId) : undefined;
     if (!member && formTitheNumber.trim()) {
@@ -346,6 +478,7 @@ export const GivingPage: React.FC = () => {
     }
 
     const selectedSrv = services.find((s) => s.id === formServiceId);
+    const selectedPledge = formPledgeId ? pledges.find((p) => p.id === formPledgeId) : undefined;
 
     const record = recordGiving({
       member_id: member?.id,
@@ -361,6 +494,9 @@ export const GivingPage: React.FC = () => {
       reference_number: formReferenceNumber.trim() || undefined,
       service_id: selectedSrv?.id,
       service_name: selectedSrv?.name || 'Sunday Service',
+      pledge_id: selectedPledge?.id,
+      pledge_campaign_name: selectedPledge?.campaign_name,
+      status: 'completed',
       notes: formNotes.trim() || undefined,
       recorded_by: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat',
     });
@@ -368,6 +504,7 @@ export const GivingPage: React.FC = () => {
     success('Giving Recorded', `Recorded ${formCategory} of ${formatGHS(amountNum)} successfully.`);
     setShowRecordModal(false);
     resetForm();
+    setIsSubmitting(false);
     // Prompt for official receipt
     setReceiptRecord(record);
   };
@@ -384,7 +521,9 @@ export const GivingPage: React.FC = () => {
     setFormPaymentChannel('MTN MoMo');
     setFormReferenceNumber('');
     setFormServiceId('');
+    setFormPledgeId('');
     setFormNotes('');
+    setIsSubmitting(false);
   };
 
   // CSV Export
@@ -443,57 +582,94 @@ export const GivingPage: React.FC = () => {
               <Coins className="w-5 h-5" />
             </span>
             <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
-              Member Giving & Stewardship
+              {isMemberSelfView
+                ? `My Giving & Stewardship • ${currentMember ? `${currentMember.first_name} ${currentMember.last_name}` : currentUser?.first_name || 'Member'}`
+                : 'Member Giving & Stewardship'}
             </h1>
           </div>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-            Congregational tithes, general offerings, first fruits, seeds, and official member statements.
+            {isMemberSelfView
+              ? 'Confidential view of your personal tithes, offerings, payment receipts, and certified statements.'
+              : 'Congregational tithes, general offerings, first fruits, seeds, and official member statements.'}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {canAccess('finance') && (
+          {isMemberSelfView ? (
+            <div className="flex items-center gap-2">
+              {currentMember && (
+                <button
+                  onClick={() => setStatementMember(currentMember)}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs sm:text-sm transition-all shadow-xs cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>My Annual Giving Statement</span>
+                </button>
+              )}
+            </div>
+          ) : (
             <>
+              {isFinanceAdmin && (
+                <>
+                  <button
+                    onClick={() => {
+                      resetForm();
+                      setShowRecordModal(true);
+                    }}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs sm:text-sm transition-all shadow-xs cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Record Member Giving</span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowBatchModal(true)}
+                    className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 dark:text-emerald-300 font-semibold text-xs sm:text-sm border border-emerald-200 dark:border-emerald-800/60 transition-all cursor-pointer"
+                  >
+                    <Layers className="w-4 h-4" />
+                    <span>Batch Sunday Entry</span>
+                  </button>
+                </>
+              )}
+
               <button
-                onClick={() => {
-                  resetForm();
-                  setShowRecordModal(true);
-                }}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs sm:text-sm transition-all shadow-xs cursor-pointer"
+                onClick={() => navigate('/church-finance')}
+                className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-700 transition-all cursor-pointer"
+                title="Go to Church Finance & Accounts"
               >
-                <Plus className="w-4 h-4" />
-                <span>Record Member Giving</span>
+                <Landmark className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                <span>Church Finance</span>
               </button>
 
               <button
-                onClick={() => setShowBatchModal(true)}
-                className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 dark:text-emerald-300 font-semibold text-xs sm:text-sm border border-emerald-200 dark:border-emerald-800/60 transition-all cursor-pointer"
+                onClick={handleExportCSV}
+                className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs sm:text-sm font-medium border border-slate-200 dark:border-slate-700 transition-all cursor-pointer"
+                title="Export CSV"
               >
-                <Layers className="w-4 h-4" />
-                <span>Batch Sunday Entry</span>
+                <Download className="w-4 h-4" />
+                <span className="hidden sm:inline">Export</span>
               </button>
             </>
           )}
-
-          <button
-            onClick={() => navigate('/church-finance')}
-            className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-700 transition-all cursor-pointer"
-            title="Go to Church Finance & Accounts"
-          >
-            <Landmark className="w-4 h-4 text-rose-600 dark:text-rose-400" />
-            <span>Church Finance</span>
-          </button>
-
-          <button
-            onClick={handleExportCSV}
-            className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs sm:text-sm font-medium border border-slate-200 dark:border-slate-700 transition-all cursor-pointer"
-            title="Export CSV"
-          >
-            <Download className="w-4 h-4" />
-            <span className="hidden sm:inline">Export</span>
-          </button>
         </div>
       </div>
+
+      {/* Privacy Notice for Individual Members */}
+      {isMemberSelfView && (
+        <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-emerald-900 dark:text-emerald-200 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>
+              <strong>Personal Stewardship View:</strong> You are securely accessing your private contributions and receipts only. Other members’ financial records remain protected.
+            </span>
+          </div>
+          {currentMember?.tithe_number && (
+            <div className="shrink-0 font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900 text-emerald-950 dark:text-emerald-100 border border-emerald-300 dark:border-emerald-700 text-[11px]">
+              Tithe Envelope #{currentMember.tithe_number}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Date Filter & Presets Ribbon */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3 sm:px-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs">
@@ -632,10 +808,14 @@ export const GivingPage: React.FC = () => {
       {/* Tabs Navigation */}
       <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-px overflow-x-auto scrollbar-none">
         {[
-          { id: 'overview', label: 'Giving Analytics', icon: BarChart3 },
-          { id: 'ledger', label: 'Giving Ledger', icon: Receipt },
-          { id: 'tithers', label: 'Tithers Directory', icon: ShieldCheck },
-          { id: 'services', label: 'Sunday Service Breakdown', icon: Building },
+          { id: 'overview', label: isMemberSelfView ? 'My Giving Summary' : 'Giving Analytics', icon: BarChart3 },
+          { id: 'ledger', label: isMemberSelfView ? 'My Contribution Ledger' : 'Giving Ledger', icon: Receipt },
+          ...(!isMemberSelfView
+            ? [
+                { id: 'tithers', label: 'Tithers Directory', icon: ShieldCheck },
+                { id: 'services', label: 'Sunday Service Breakdown', icon: Building },
+              ]
+            : []),
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -898,6 +1078,17 @@ export const GivingPage: React.FC = () => {
               <option value="cheque">Bank Cheque</option>
             </select>
 
+            {/* Transaction Status Filter */}
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 focus:outline-none"
+            >
+              <option value="all">All Statuses</option>
+              <option value="completed">Active / Completed</option>
+              <option value="voided">Voided / Cancelled</option>
+            </select>
+
             {/* Service Filter */}
             <select
               value={selectedService}
@@ -923,6 +1114,7 @@ export const GivingPage: React.FC = () => {
                     <th className="py-3 px-4">Member / Donor</th>
                     <th className="py-3 px-4">Category</th>
                     <th className="py-3 px-4 text-right">Amount (GH₵)</th>
+                    <th className="py-3 px-4">Status</th>
                     <th className="py-3 px-4">Method & Channel</th>
                     <th className="py-3 px-4">Service</th>
                     <th className="py-3 px-4">Reference</th>
@@ -932,44 +1124,81 @@ export const GivingPage: React.FC = () => {
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {filteredGiving.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="py-12 text-center text-slate-400">
+                      <td colSpan={9} className="py-12 text-center text-slate-400">
                         <Coins className="w-8 h-8 mx-auto mb-2 opacity-30" />
                         <p className="font-semibold">No giving records found</p>
-                        <p className="text-xs">Adjust your date filter or search query.</p>
+                        <p className="text-xs">Adjust your date filter, status, or search query.</p>
                       </td>
                     </tr>
                   ) : (
                     filteredGiving.map((record) => {
+                      const isVoided = record.status === 'voided';
                       const categoryColor = CATEGORY_COLORS[record.category] || '#64748b';
                       const displayName = record.member_name || record.donor_name || 'Anonymous Giver';
                       return (
                         <tr
                           key={record.id}
-                          className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                          className={`hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors ${
+                            isVoided ? 'bg-rose-50/30 dark:bg-rose-950/10 opacity-75' : ''
+                          }`}
                         >
                           <td className="py-3 px-4 whitespace-nowrap text-slate-500 dark:text-slate-400 font-medium text-xs">
                             {record.date}
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap">
                             <div className="font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
-                              <span>{displayName}</span>
+                              <span className={isVoided ? 'line-through text-slate-500' : ''}>{displayName}</span>
                               {record.tithe_number && (
                                 <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                                   #{record.tithe_number}
                                 </span>
                               )}
                             </div>
+                            {record.pledge_campaign_name && (
+                              <div className="text-[10px] text-teal-600 dark:text-teal-400 font-medium">
+                                Pledge: {record.pledge_campaign_name}
+                              </div>
+                            )}
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap">
                             <span
-                              className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold text-white"
+                              className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold text-white ${
+                                isVoided ? 'opacity-60' : ''
+                              }`}
                               style={{ backgroundColor: categoryColor }}
                             >
                               {record.category}
                             </span>
                           </td>
-                          <td className="py-3 px-4 text-right font-extrabold text-slate-900 dark:text-white whitespace-nowrap">
-                            GH₵ {record.amount.toFixed(2)}
+                          <td className="py-3 px-4 text-right whitespace-nowrap">
+                            <div
+                              className={`font-extrabold ${
+                                isVoided
+                                  ? 'line-through text-slate-400 dark:text-slate-500'
+                                  : 'text-slate-900 dark:text-white'
+                              }`}
+                            >
+                              GH₵ {record.amount.toFixed(2)}
+                            </div>
+                            {isVoided && record.void_reason && (
+                              <div className="text-[10px] text-rose-600 italic">
+                                Reason: {record.void_reason}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            {isVoided ? (
+                              <span
+                                className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-800"
+                                title={record.void_reason || 'Voided transaction'}
+                              >
+                                Voided
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                Completed
+                              </span>
+                            )}
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap">
                             <div className="text-xs text-slate-700 dark:text-slate-300 capitalize">
@@ -994,7 +1223,7 @@ export const GivingPage: React.FC = () => {
                               >
                                 <Printer className="w-4 h-4" />
                               </button>
-                              {canAccess('finance') && (
+                              {isFinanceAdmin && (
                                 <>
                                   <button
                                     onClick={() => setEditingRecord(record)}
@@ -1003,6 +1232,20 @@ export const GivingPage: React.FC = () => {
                                   >
                                     <FileText className="w-4 h-4" />
                                   </button>
+
+                                  {!isVoided && (
+                                    <button
+                                      onClick={() => {
+                                        setVoidingRecord(record);
+                                        setVoidReason('');
+                                      }}
+                                      className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-all cursor-pointer"
+                                      title="Void Transaction (Preserve Audit Trail)"
+                                    >
+                                      <Ban className="w-4 h-4" />
+                                    </button>
+                                  )}
+
                                   <button
                                     onClick={() => {
                                       if (confirm(`Delete giving entry for ${displayName} (GH₵ ${record.amount.toFixed(2)})?`)) {
@@ -1011,7 +1254,7 @@ export const GivingPage: React.FC = () => {
                                       }
                                     }}
                                     className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-all cursor-pointer"
-                                    title="Delete"
+                                    title="Delete from Database"
                                   >
                                     <X className="w-4 h-4" />
                                   </button>
@@ -1367,6 +1610,31 @@ export const GivingPage: React.FC = () => {
                 />
               </div>
 
+              {/* Optional Pledge Campaign Linkage */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Credit to Active Pledge Campaign (Optional)
+                </label>
+                <select
+                  value={formPledgeId}
+                  onChange={(e) => setFormPledgeId(e.target.value)}
+                  className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
+                >
+                  <option value="">-- Direct Giving (No Pledge Link) --</option>
+                  {pledges
+                    .filter(
+                      (p) =>
+                        p.status !== 'completed' &&
+                        (!formSelectedMemberId || p.member_id === formSelectedMemberId)
+                    )
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.campaign_name} • {p.member_name} (Remaining: GH₵ {p.balance.toFixed(2)})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Pastoral Notes / Prayer Point
@@ -1390,9 +1658,11 @@ export const GivingPage: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-xs transition-all cursor-pointer"
+                  disabled={isSubmitting}
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs sm:text-sm font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
                 >
-                  Save Giving Record
+                  {isSubmitting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{isSubmitting ? 'Saving...' : 'Save Giving Record'}</span>
                 </button>
               </div>
             </form>
@@ -1463,6 +1733,88 @@ export const GivingPage: React.FC = () => {
           }}
           onClose={() => setEditingRecord(null)}
         />
+      )}
+
+      {/* VOID GIVING RECORD MODAL */}
+      {voidingRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-md w-full p-6 my-8">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-4">
+              <div className="flex items-center gap-2 text-rose-600">
+                <AlertCircle className="w-5 h-5" />
+                <h3 className="font-bold text-slate-900 dark:text-white text-base">Void Giving Transaction</h3>
+              </div>
+              <button
+                onClick={() => {
+                  setVoidingRecord(null);
+                  setVoidReason('');
+                }}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 mb-4 leading-relaxed">
+              Voiding cancels this transaction on the general ledger and excludes it from total church income and certified statements, while preserving an immutable audit log.
+            </p>
+
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl mb-4 text-xs space-y-1">
+              <div>
+                <span className="text-slate-500">Record: </span>
+                <span className="font-bold text-slate-900 dark:text-white">
+                  {voidingRecord.member_name || voidingRecord.donor_name || 'Anonymous Giver'}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-500">Category & Amount: </span>
+                <span className="font-bold text-rose-600">
+                  {voidingRecord.category} • GH₵ {voidingRecord.amount.toFixed(2)}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-500">Date: </span>
+                <span className="font-mono text-slate-700 dark:text-slate-300">{voidingRecord.date}</span>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                  Reason for Voiding *
+                </label>
+                <textarea
+                  rows={3}
+                  required
+                  placeholder="e.g. Duplicate MTN MoMo callback, Incorrect envelope amount entered, Reversed transaction..."
+                  value={voidReason}
+                  onChange={(e) => setVoidReason(e.target.value)}
+                  className="w-full p-2.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVoidingRecord(null);
+                    setVoidReason('');
+                  }}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmVoid}
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+                >
+                  Confirm Void Record
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

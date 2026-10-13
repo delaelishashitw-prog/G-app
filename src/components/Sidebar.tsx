@@ -114,7 +114,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           name: 'Welfare & Relief',
           path: '/welfare',
           icon: HeartHandshake,
-          module: 'finance',
+          module: 'welfare',
           badge: pendingWelfareCount > 0 ? pendingWelfareCount : undefined,
           badgeColor: 'bg-emerald-600 text-white',
         },

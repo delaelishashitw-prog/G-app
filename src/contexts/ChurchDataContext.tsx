@@ -122,6 +122,7 @@ import {
 import {
   deleteExpense as deleteExpenseRecord,
   deleteGiving as deleteGivingRecord,
+  voidGiving as voidGivingRecord,
   recordExpense as recordExpenseRecord,
   recordGiving as recordGivingRecord,
   updateExpense as updateExpenseRecord,
@@ -259,6 +260,7 @@ interface ChurchDataContextType {
   recordGiving: (record: Omit<GivingRecord, 'id' | 'created_at'>) => GivingRecord;
   updateGiving: (id: string, updates: Partial<GivingRecord>) => void;
   deleteGiving: (id: string) => void;
+  voidGiving: (id: string, reason: string) => void;
   expenses: ExpenseRecord[];
   recordExpense: (record: Omit<ExpenseRecord, 'id' | 'created_at'>) => ExpenseRecord;
   updateExpense: (id: string, updates: Partial<ExpenseRecord>) => void;
@@ -368,7 +370,11 @@ interface ChurchDataContextType {
       disbursement_channel?: string;
       disbursement_voucher_no: string;
       amount_approved: number;
+      amount_paid?: number;
       pastoral_notes?: string;
+      finance_account_id?: string;
+      finance_account_name?: string;
+      sync_with_church_finance?: boolean;
     }
   ) => void;
 
@@ -1492,8 +1498,31 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   // FINANCE & GIVING
-  const recordGiving = (data: Omit<GivingRecord, 'id' | 'created_at'>): GivingRecord =>
-    recordGivingRecord(data, members, setGiving, logAction, dbSyncUpsert);
+  const recordGiving = (data: Omit<GivingRecord, 'id' | 'created_at'>): GivingRecord => {
+    const record = recordGivingRecord(data, members, setGiving, logAction, dbSyncUpsert);
+    if (data.pledge_id && data.amount > 0) {
+      setPledges((prev) =>
+        prev.map((p) => {
+          if (p.id === data.pledge_id) {
+            const newPaid = p.amount_paid + data.amount;
+            const newBalance = Math.max(0, p.amount_pledged - newPaid);
+            const newStatus = newBalance === 0 ? 'completed' : 'partially_paid';
+            const updated = {
+              ...p,
+              amount_paid: newPaid,
+              balance: newBalance,
+              status: newStatus as any,
+              updated_at: new Date().toISOString(),
+            };
+            dbSyncUpsert('pledges', updated);
+            return updated;
+          }
+          return p;
+        })
+      );
+    }
+    return record;
+  };
 
   const updateGiving = (id: string, updates: Partial<GivingRecord>) => {
     updateGivingRecord(id, updates, members, setGiving, logAction, dbSyncUpsert);
@@ -1501,6 +1530,11 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const deleteGiving = (id: string) => {
     deleteGivingRecord(id, setGiving, logAction, dbSyncDelete);
+  };
+
+  const voidGiving = (id: string, reason: string) => {
+    const actor = currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat';
+    voidGivingRecord(id, reason, actor, setGiving, logAction, dbSyncUpsert);
   };
 
   const recordExpense = (data: Omit<ExpenseRecord, 'id' | 'created_at'>): ExpenseRecord =>
@@ -1802,10 +1836,87 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       disbursement_channel?: string;
       disbursement_voucher_no: string;
       amount_approved: number;
+      amount_paid?: number;
       pastoral_notes?: string;
+      finance_account_id?: string;
+      finance_account_name?: string;
+      sync_with_church_finance?: boolean;
     }
   ) => {
-    disburseWelfareClaimRecord(id, details, setWelfareClaims, logAction, dbSyncUpsert);
+    const claim = welfareClaims.find((c) => c.id === id);
+    const amountToDisburse = details.amount_paid !== undefined ? details.amount_paid : details.amount_approved;
+
+    disburseWelfareClaimRecord(
+      id,
+      {
+        ...details,
+        recorded_by: `${currentUser.first_name} ${currentUser.last_name}`,
+      },
+      setWelfareClaims,
+      logAction,
+      dbSyncUpsert
+    );
+
+    // If sync with Church Finance is enabled, record as institutional Church Finance expense
+    if (details.sync_with_church_finance && amountToDisburse > 0 && claim) {
+      const today = new Date().toISOString().split('T')[0];
+      const accountName = details.finance_account_name || 'Main Operating Account';
+
+      const newExpenseRecord: ChurchFinanceRecord = {
+        id: `fin-welfare-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        transaction_type: 'disbursement',
+        account_id: details.finance_account_id,
+        account_name: accountName,
+        category: 'Benevolence & Welfare',
+        title: `Welfare Grant: ${claim.member_name} (${claim.category.replace('_', ' ')})`,
+        recipient_or_vendor: claim.member_name,
+        amount: amountToDisburse,
+        currency: 'GHS',
+        date: today,
+        payment_method: details.disbursement_method,
+        reference_no: details.disbursement_voucher_no,
+        department: 'Welfare & Pastoral Care',
+        description: `Benevolence voucher ${details.disbursement_voucher_no} disbursed for ${claim.title}. ${details.pastoral_notes || ''}`,
+        notes: `Beneficiary phone: ${claim.member_phone || 'N/A'}. Claim Ref: ${claim.claim_number}`,
+        approved_by: `${currentUser.first_name} ${currentUser.last_name}`,
+        recorded_by: `${currentUser.first_name} ${currentUser.last_name}`,
+        status: 'completed',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      setChurchFinances((prev) => [newExpenseRecord, ...prev]);
+      if (dbSyncUpsert) {
+        dbSyncUpsert('church_finances', newExpenseRecord);
+      }
+
+      // Debit account if account_id is present
+      if (details.finance_account_id) {
+        setChurchAccounts((prev) =>
+          prev.map((acc) => {
+            if (acc.id === details.finance_account_id) {
+              const updatedAcc = {
+                ...acc,
+                current_balance: Math.max(0, acc.current_balance - amountToDisburse),
+                updated_at: new Date().toISOString(),
+              };
+              if (dbSyncUpsert) {
+                dbSyncUpsert('church_accounts', updatedAcc);
+              }
+              return updatedAcc;
+            }
+            return acc;
+          })
+        );
+      }
+
+      logAction(
+        'RECORD_CHURCH_EXPENSE',
+        'Church Finance',
+        `Disbursed welfare benevolence of GH₵ ${amountToDisburse.toFixed(2)} from ${accountName} to ${claim.member_name} (Voucher ${details.disbursement_voucher_no})`,
+        newExpenseRecord.id
+      );
+    }
   };
 
   // CHILDREN'S MINISTRY SAFETY & PICKUP TAGS
@@ -2081,6 +2192,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       recordGiving,
       updateGiving,
       deleteGiving,
+      voidGiving,
       expenses,
       recordExpense,
       updateExpense,

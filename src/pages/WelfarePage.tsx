@@ -201,6 +201,7 @@ export const WelfarePage: React.FC = () => {
     const categories: { key: WelfareClaimCategory; label: string }[] = [
       { key: 'bereavement', label: 'Bereavement' },
       { key: 'hospital_medical', label: 'Medical & Surgery' },
+      { key: 'food_nutrition', label: 'Food & Nutrition' },
       { key: 'emergency_relief', label: 'Emergency Relief' },
       { key: 'education_welfare', label: 'Education Subsidy' },
       { key: 'childbirth_naming', label: 'Childbirth & Naming' },
@@ -371,6 +372,11 @@ export const WelfarePage: React.FC = () => {
         entitlement = 500.0;
         details = 'Child naming & dedication ceremony blessing.';
         requiredDocs = 'Maternity card or birth notification.';
+        break;
+      case 'food_nutrition':
+        entitlement = 450.0;
+        details = 'Emergency food parcel, dry staples, and nutritional sustenance aid.';
+        requiredDocs = 'Pastoral home visitation report or deacon recommendation.';
         break;
       case 'emergency_relief':
         entitlement = 1000.0;
@@ -611,6 +617,7 @@ export const WelfarePage: React.FC = () => {
                 <option value="ALL">All Categories</option>
                 <option value="bereavement">Bereavement Aid</option>
                 <option value="hospital_medical">Medical & Surgery</option>
+                <option value="food_nutrition">Food & Nutrition Relief</option>
                 <option value="childbirth_naming">Childbirth & Naming</option>
                 <option value="wedding_marriage">Holy Matrimony</option>
                 <option value="education_welfare">Education Subsidy</option>
@@ -748,8 +755,18 @@ export const WelfarePage: React.FC = () => {
                               </div>
                             </td>
                             <td className="py-3 px-4">
-                              <span className="font-bold text-slate-900 block">{claim.member_name}</span>
-                              <span className="text-[10px] text-slate-500">{claim.member_phone || 'No phone'}</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-slate-900 block">{claim.member_name}</span>
+                                {claim.beneficiary_type === 'external_community' && (
+                                  <span className="text-[9px] uppercase font-bold px-1 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-200">
+                                    Community
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-slate-500">
+                                {claim.member_phone || 'No phone'}
+                                {claim.beneficiary_community ? ` · ${claim.beneficiary_community}` : ''}
+                              </span>
                             </td>
                             <td className="py-3 px-4">
                               <span className="font-medium capitalize text-slate-800 block">
@@ -778,8 +795,21 @@ export const WelfarePage: React.FC = () => {
                             <td className="py-3 px-4 text-right font-mono font-bold text-slate-800">
                               GH₵ {claim.amount_requested.toFixed(2)}
                             </td>
-                            <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700">
-                              {claim.amount_approved ? `GH₵ ${claim.amount_approved.toFixed(2)}` : '—'}
+                            <td className="py-3 px-4 text-right font-mono">
+                              {claim.amount_approved ? (
+                                <div>
+                                  <span className="font-bold text-emerald-700 block">
+                                    GH₵ {claim.amount_approved.toFixed(2)}
+                                  </span>
+                                  {claim.amount_disbursed !== undefined && claim.amount_disbursed > 0 && (
+                                    <span className="text-[10px] text-blue-600 font-semibold block">
+                                      Disbursed: GH₵ {claim.amount_disbursed.toFixed(2)}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-slate-400">—</span>
+                              )}
                             </td>
                             <td className="py-3 px-4">
                               <span
@@ -815,19 +845,21 @@ export const WelfarePage: React.FC = () => {
                                     <Printer className="w-3.5 h-3.5" />
                                   </button>
                                 )}
-                                <button
-                                  onClick={() =>
-                                    setItemToDelete({
-                                      type: 'claim',
-                                      id: claim.id,
-                                      title: claim.claim_number,
-                                    })
-                                  }
-                                  title="Delete record"
-                                  className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg transition"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                                {canAccess('admin') && (
+                                  <button
+                                    onClick={() =>
+                                      setItemToDelete({
+                                        type: 'claim',
+                                        id: claim.id,
+                                        title: claim.claim_number,
+                                      })
+                                    }
+                                    title="Delete record (Admins only)"
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg transition"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -843,6 +875,11 @@ export const WelfarePage: React.FC = () => {
                                       <p className="text-slate-600 leading-relaxed bg-white p-2.5 rounded-lg border border-slate-200">
                                         {claim.description}
                                       </p>
+                                      {claim.case_owner && (
+                                        <p className="text-[11px] text-slate-500 mt-2">
+                                          Case Owner: <strong className="text-slate-800">{claim.case_owner}</strong>
+                                        </p>
+                                      )}
                                     </div>
                                     <div>
                                       <span className="font-bold text-slate-700 block mb-0.5">Pastoral Evaluation Notes</span>
@@ -870,8 +907,37 @@ export const WelfarePage: React.FC = () => {
                                         <span>Review Date:</span>
                                         <span>{claim.date_reviewed || '—'}</span>
                                       </div>
+                                      {claim.finance_account_name && (
+                                        <div className="flex justify-between text-slate-600 pt-1 border-t border-slate-100">
+                                          <span>Funding Account:</span>
+                                          <span className="font-medium text-emerald-800">{claim.finance_account_name}</span>
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
+
+                                  {/* Disbursement History Breakdown if multiple payments logged */}
+                                  {claim.disbursements && claim.disbursements.length > 0 && (
+                                    <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-1.5">
+                                      <span className="font-bold text-slate-800 uppercase tracking-wider text-[10px] block">
+                                        Disbursement Payment Installments ({claim.disbursements.length})
+                                      </span>
+                                      <div className="divide-y divide-slate-100 text-[11px]">
+                                        {claim.disbursements.map((d, dIdx) => (
+                                          <div key={d.id || dIdx} className="py-1 flex items-center justify-between">
+                                            <div>
+                                              <span className="font-mono font-semibold text-slate-800">{d.voucher_no}</span>
+                                              <span className="text-slate-400 ml-2">{d.date}</span>
+                                              <span className="text-slate-500 ml-2">({d.payment_channel || d.payment_method})</span>
+                                            </div>
+                                            <div className="font-mono font-bold text-emerald-800">
+                                              GH₵ {d.amount.toFixed(2)}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                               </td>
                             </tr>
