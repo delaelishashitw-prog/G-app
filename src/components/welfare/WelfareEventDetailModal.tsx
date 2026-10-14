@@ -56,6 +56,7 @@ export const WelfareEventDetailModal: React.FC<WelfareEventDetailModalProps> = (
     closeWelfareEvent,
     updateWelfareEvent,
     deleteEventContribution,
+    deleteWelfareEvent,
   } = useChurchData();
   const { currentUser } = useAuth();
   const { success, warning, error: toastError } = useToast();
@@ -64,6 +65,7 @@ export const WelfareEventDetailModal: React.FC<WelfareEventDetailModalProps> = (
   const [methodFilter, setMethodFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [isConfirmingClose, setIsConfirmingClose] = useState(false);
+  const [isConfirmingDeleteEvent, setIsConfirmingDeleteEvent] = useState(false);
   const [contributionToDelete, setContributionToDelete] = useState<WelfareEventContribution | null>(null);
 
   // Role permissions
@@ -431,8 +433,57 @@ export const WelfareEventDetailModal: React.FC<WelfareEventDetailModalProps> = (
                   Reopen Event
                 </button>
               )}
+
+              {isSuperAdminOrPastor && (
+                <button
+                  onClick={() => setIsConfirmingDeleteEvent(true)}
+                  className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl border border-rose-200 transition flex items-center gap-1.5"
+                  title="Delete event appeal"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete Event
+                </button>
+              )}
             </div>
           </div>
+
+          {/* Delete Event Confirmation Box */}
+          {isConfirmingDeleteEvent && (
+            <div className="p-4 bg-rose-50 rounded-xl border border-rose-200 text-rose-950 space-y-3">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <div className="text-xs space-y-1">
+                  <p className="font-bold text-rose-900">Are you sure you want to delete this event appeal?</p>
+                  <p className="text-rose-800">
+                    This will permanently delete "{event.title}" and any associated contribution records so you can start fresh.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setIsConfirmingDeleteEvent(false)}
+                  className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    const res = deleteWelfareEvent(event.id, true);
+                    if (res.success) {
+                      success('Event Deleted', res.message);
+                      onClose();
+                    } else {
+                      warning('Deletion Notice', res.message);
+                    }
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-2xs flex items-center gap-1"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Confirm Delete
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Close Event Confirmation Modal */}
           {isConfirmingClose && (

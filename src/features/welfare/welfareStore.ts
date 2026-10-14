@@ -314,7 +314,9 @@ export function deleteWelfareEvent(
   welfareEventContributions: WelfareEventContribution[],
   setWelfareEvents: Dispatch<SetStateAction<WelfareEvent[]>>,
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncDelete?: (table: string, id: string) => Promise<void> | void
+  dbSyncDelete?: (table: string, id: string) => Promise<void> | void,
+  force?: boolean,
+  setWelfareEventContributions?: Dispatch<SetStateAction<WelfareEventContribution[]>>
 ): { success: boolean; message: string } {
   const event = welfareEvents.find((e) => e.id === id);
   if (!event) return { success: false, message: 'Event not found' };
@@ -322,15 +324,18 @@ export function deleteWelfareEvent(
   const eventContributions = welfareEventContributions.filter((c) => c.event_id === id);
   const confirmedContributions = eventContributions.filter((c) => c.payment_status === 'confirmed');
 
-  if (confirmedContributions.length > 0) {
-    // If contributions have already been collected, do not delete; close or cancel instead
+  if (confirmedContributions.length > 0 && !force) {
+    // If contributions have already been collected, do not delete without explicit confirmation
     return {
       success: false,
-      message: `Cannot delete event with ${confirmedContributions.length} confirmed contribution(s). Change status to Closed or Cancelled instead to preserve financial records.`,
+      message: `Cannot delete event with ${confirmedContributions.length} confirmed contribution(s). Change status to Closed or Cancelled instead, or confirm force delete to remove all associated records.`,
     };
   }
 
   setWelfareEvents((prev) => prev.filter((e) => e.id !== id));
+  if (setWelfareEventContributions) {
+    setWelfareEventContributions((prev) => prev.filter((c) => c.event_id !== id));
+  }
   if (dbSyncDelete) {
     dbSyncDelete('welfare_events', id);
   }

@@ -396,7 +396,8 @@ interface ChurchDataContextType {
   createWelfareEvent: (event: Omit<WelfareEvent, 'id' | 'created_at' | 'updated_at'>) => WelfareEvent;
   updateWelfareEvent: (id: string, updates: Partial<WelfareEvent>) => WelfareEvent | undefined;
   closeWelfareEvent: (id: string) => WelfareEvent | undefined;
-  deleteWelfareEvent: (id: string) => { success: boolean; message: string };
+  deleteWelfareEvent: (id: string, force?: boolean) => { success: boolean; message: string };
+  clearAllWelfareEvents: () => { success: boolean; message: string };
   welfareEventContributions: WelfareEventContribution[];
   recordEventContribution: (
     data: Omit<WelfareEventContribution, 'id' | 'created_at' | 'updated_at'>,
@@ -623,12 +624,28 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const [welfareEvents, setWelfareEvents] = useState<WelfareEvent[]>(() => {
     const loaded = loadFromStorage<WelfareEvent[]>('welfareEvents', []);
-    return loaded && loaded.length > 0 ? loaded : sampleWelfareEvents;
+    const seedIds = new Set(['wevt-1', 'wevt-2', 'wevt-3', 'wevt-4', 'wevt-5', 'wevt-6', 'wevt-7']);
+    const nonSeed = (loaded || []).filter((e) => !seedIds.has(e.id));
+    if (loaded && loaded.length !== nonSeed.length) {
+      saveToStorage('welfareEvents', nonSeed);
+    }
+    return nonSeed;
   });
 
   const [welfareEventContributions, setWelfareEventContributions] = useState<WelfareEventContribution[]>(() => {
     const loaded = loadFromStorage<WelfareEventContribution[]>('welfareEventContributions', []);
-    return loaded && loaded.length > 0 ? loaded : sampleWelfareEventContributions;
+    const seedEventIds = new Set(['wevt-1', 'wevt-2', 'wevt-3', 'wevt-4', 'wevt-5', 'wevt-6', 'wevt-7']);
+    const seedContributionIds = new Set([
+      'wec-1', 'wec-2', 'wec-3', 'wec-4', 'wec-5', 'wec-6', 'wec-7',
+      'wec-8', 'wec-9', 'wec-10', 'wec-11', 'wec-12', 'wec-13',
+    ]);
+    const nonSeed = (loaded || []).filter(
+      (c) => !seedContributionIds.has(c.id) && !seedEventIds.has(c.event_id)
+    );
+    if (loaded && loaded.length !== nonSeed.length) {
+      saveToStorage('welfareEventContributions', nonSeed);
+    }
+    return nonSeed;
   });
 
   const [childCheckIns, setChildCheckIns] = useState<ChildCheckInRecord[]>(() => {
@@ -2016,15 +2033,26 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       dbSyncUpsert
     );
 
-  const deleteWelfareEvent = (id: string): { success: boolean; message: string } =>
+  const deleteWelfareEvent = (id: string, force?: boolean): { success: boolean; message: string } =>
     deleteWelfareEventRecord(
       id,
       welfareEvents,
       welfareEventContributions,
       setWelfareEvents,
       logAction,
-      dbSyncDelete
+      dbSyncDelete,
+      force,
+      setWelfareEventContributions
     );
+
+  const clearAllWelfareEvents = (): { success: boolean; message: string } => {
+    setWelfareEvents([]);
+    setWelfareEventContributions([]);
+    saveToStorage('welfareEvents', []);
+    saveToStorage('welfareEventContributions', []);
+    logAction('RESET_WELFARE_EVENTS', 'Welfare', 'Cleared all welfare events and contributions for a fresh start');
+    return { success: true, message: 'All welfare events cleared successfully. Ready for a fresh start.' };
+  };
 
   const recordEventContribution = (
     data: Omit<WelfareEventContribution, 'id' | 'created_at' | 'updated_at'>,
@@ -2429,6 +2457,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       updateWelfareEvent,
       closeWelfareEvent,
       deleteWelfareEvent,
+      clearAllWelfareEvents,
       welfareEventContributions,
       recordEventContribution,
       updateEventContribution,
