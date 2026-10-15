@@ -97,8 +97,8 @@ export const SettingsPage: React.FC = () => {
     e.preventDefault();
     setPasswordStatusMsg(null);
     const trimmed = newPasswordInput.trim();
-    if (trimmed.length < 6) {
-      setPasswordStatusMsg({ type: 'error', text: 'New password must contain at least 6 characters.' });
+    if (trimmed.length < 12) {
+      setPasswordStatusMsg({ type: 'error', text: 'New password must contain at least 12 characters.' });
       return;
     }
     if (trimmed !== confirmPasswordInput.trim()) {
@@ -1854,12 +1854,12 @@ export const SettingsPage: React.FC = () => {
                   <div className="p-2.5 bg-amber-100/70 rounded-xl border border-amber-200 text-[11px] text-amber-950 space-y-1">
                     <p className="font-semibold flex items-center gap-1.5">
                       <Sparkles className="w-3.5 h-3.5 text-amber-700" />
-                      30-Second Fix:
+                      Database upgrade:
                     </p>
                     <ol className="list-decimal list-inside space-y-0.5 text-amber-900/95 text-[11px]">
                       <li>Click <strong>"Copy Roster Permissions Fix"</strong> below.</li>
                       <li>Click <strong>"Open Supabase SQL Editor"</strong>, paste into the query window, and click <strong>Run</strong>.</li>
-                      <li>Click <strong>"Retry Roster Sync"</strong> — cloud sync will immediately complete!</li>
+                      <li>Click <strong>"Retry Roster Sync"</strong> — review the result and any pending changes.</li>
                     </ol>
                   </div>
 
@@ -1876,12 +1876,7 @@ export const SettingsPage: React.FC = () => {
                       </button>
                     </div>
                     <pre className="p-3 bg-slate-950 text-emerald-400 font-mono text-[10px] rounded-xl overflow-x-auto border border-slate-800 max-h-48 leading-relaxed">
-                      {showRosterSql ? SQL_FIX_ROSTER_SCHEMA : `-- Fix Roster Assignments Permissions & RLS in Supabase
-GRANT ALL ON TABLE public.roster_assignments TO anon, authenticated, service_role;
-ALTER TABLE public.roster_assignments ADD COLUMN IF NOT EXISTS announcement TEXT;
-ALTER TABLE public.roster_assignments ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "gwcc_policy_all_roster_assignments" ON public.roster_assignments;
-CREATE POLICY "gwcc_policy_all_roster_assignments" ON public.roster_assignments FOR ALL TO public USING (true) WITH CHECK (true);`}
+                      {showRosterSql ? SQL_FIX_ROSTER_SCHEMA : SQL_FIX_ROSTER_SCHEMA.split('\n').slice(0,8).join('\n')}
                     </pre>
                   </div>
 
@@ -2112,24 +2107,8 @@ CREATE POLICY "gwcc_policy_all_roster_assignments" ON public.roster_assignments 
                           </div>
                           <pre className="p-3 bg-slate-950 text-emerald-400 font-mono text-[10px] rounded-xl overflow-x-auto border border-slate-800 max-h-48 leading-relaxed">
                             {syncResult.text.includes('roster_assignments')
-                              ? (showRosterSql ? SQL_FIX_ROSTER_SCHEMA : `-- Fix Roster Assignments Permissions in Supabase
-GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON TABLE public.roster_assignments TO anon, authenticated, service_role;
-ALTER TABLE public.roster_assignments ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "gwcc_policy_all_roster_assignments" ON public.roster_assignments;
-CREATE POLICY "gwcc_policy_all_roster_assignments" ON public.roster_assignments FOR ALL TO public USING (true) WITH CHECK (true);`)
-                              : (showWelfareSql ? SQL_FIX_WELFARE_SCHEMA : `-- Fix Welfare Contributions & Claims RLS in Supabase
-ALTER TABLE public.welfare_contributions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.welfare_claims ENABLE ROW LEVEL SECURITY;
-
-GRANT ALL ON TABLE public.welfare_contributions TO anon, authenticated, service_role;
-GRANT ALL ON TABLE public.welfare_claims TO anon, authenticated, service_role;
-
-DROP POLICY IF EXISTS "gwcc_policy_all_welfare_contributions" ON public.welfare_contributions;
-DROP POLICY IF EXISTS "gwcc_policy_all_welfare_claims" ON public.welfare_claims;
-
-CREATE POLICY "gwcc_policy_all_welfare_contributions" ON public.welfare_contributions FOR ALL TO public USING (true) WITH CHECK (true);
-CREATE POLICY "gwcc_policy_all_welfare_claims" ON public.welfare_claims FOR ALL TO public USING (true) WITH CHECK (true);`)}
+                              ? (showRosterSql ? SQL_FIX_ROSTER_SCHEMA : SQL_FIX_ROSTER_SCHEMA.split('\n').slice(0,8).join('\n'))
+                              : (showWelfareSql ? SQL_FIX_WELFARE_SCHEMA : SQL_FIX_WELFARE_SCHEMA.split('\n').slice(0,8).join('\n'))}
                           </pre>
                         </div>
 
@@ -2376,32 +2355,7 @@ CREATE POLICY "gwcc_policy_all_welfare_claims" ON public.welfare_claims FOR ALL 
             </div>
           </div>
 
-          {/* Reset Clean Data */}
-          <div className="bg-white p-6 rounded-2xl border border-rose-200 shadow-xs space-y-3">
-            <div className="flex items-center gap-2 text-rose-800">
-              <AlertTriangle className="w-5 h-5 text-rose-600" />
-              <h3 className="font-bold text-base text-slate-900">Restore Clean Ghanaian Congregation Seed Records</h3>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              If your database has corrupted test records or you wish to start over with clean Greater Works City Church (Joma) assembly records, you can reset the state back to the original Ghanaian congregation seed data.
-            </p>
-
-            <div className="pt-2 flex items-center justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm('Are you sure you want to reset all records back to the initial Ghanaian seed data?')) {
-                    resetToDefaultData();
-                    toastSuccess('Reset Completed', 'Initial clean congregation seed data restored.');
-                  }
-                }}
-                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-xs"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Reset to Clean Seed Data</span>
-              </button>
-            </div>
-          </div>
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 text-sm text-slate-600">Production records are preserved. Export a backup before a migration. Sample-data resets are disabled.</div>
         </div>
       )}
 
@@ -2426,32 +2380,7 @@ CREATE POLICY "gwcc_policy_all_welfare_claims" ON public.welfare_claims FOR ALL 
                 </span>
               </div>
 
-              <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/60 space-y-2">
-                <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                  What is the Default Password?
-                </p>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-600 dark:text-slate-300">Initial Default Password:</span>
-                  <div className="flex items-center gap-2 font-mono text-base font-bold text-emerald-800 dark:text-emerald-400 bg-white dark:bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
-                    <span>Gwcc@2026</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText('Gwcc@2026');
-                        toastSuccess('Copied', 'Default password copied to clipboard');
-                      }}
-                      className="p-1 text-slate-400 hover:text-emerald-700 transition"
-                      title="Copy default password"
-                    >
-                      <Copy className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed pt-1">
-                  When new church staff accounts or administrator accounts are provisioned, the initial password defaults to{' '}
-                  <strong className="font-mono text-slate-700 dark:text-slate-300">Gwcc@2026</strong> unless a custom password is specified during creation.
-                </p>
-              </div>
+              <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl text-xs text-slate-600 dark:text-slate-300">There is no shared default password. An authorized super administrator sends an email invitation, and each staff member chooses a password of at least 12 characters. Existing staff access must be reviewed after the security upgrade.</div>
 
               {/* Change Current User Password Form */}
               <div className="pt-2 space-y-3">

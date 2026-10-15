@@ -1,3 +1,4 @@
+import { escapeHtml } from '../../lib/escapeHtml';
 import React, { useState } from 'react';
 import {
   X,
@@ -91,11 +92,12 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
+    printWindow.opener=null;
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Asset Tag - ${asset.asset_tag}</title>
+          <title>Asset Tag - ${escapeHtml(asset.asset_tag)}</title>
           <style>
             @page { size: 80mm 50mm; margin: 4mm; }
             body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 4mm; color: #0f172a; }
@@ -111,18 +113,16 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
           <div class="tag-card">
             <div class="church">Greater Works City Church</div>
             <div class="dept">PROPERTY OF GWCC • JOMA BRANCH</div>
-            <div class="tag-id">${asset.asset_tag}</div>
-            <div class="name">${asset.name}</div>
-            <div class="dept">Dept: ${asset.department} | Loc: ${asset.location}</div>
+            <div class="tag-id">${escapeHtml(asset.asset_tag)}</div>
+            <div class="name">${escapeHtml(asset.name)}</div>
+            <div class="dept">Dept: ${escapeHtml(asset.department)} | Loc: ${escapeHtml(asset.location)}</div>
             <div class="footer">DO NOT REMOVE OR TAMPER • LOGISTICS & INVENTORY REGISTRY</div>
           </div>
-          <script>
-            window.onload = function() { window.print(); window.close(); }
-          </script>
         </body>
       </html>
     `);
     printWindow.document.close();
+    printWindow.focus();printWindow.print();
   };
 
   return (

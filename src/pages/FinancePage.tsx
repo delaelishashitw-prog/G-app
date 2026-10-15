@@ -1,3 +1,4 @@
+import { isActiveTransaction } from '../lib/ledgerUtils';
 import React, { useState, useMemo } from 'react';
 import {
   Wallet,
@@ -136,7 +137,7 @@ const createDefaultDenominations = (): DenominationRow[] => [
 export const FinancePage: React.FC = () => {
   const { currentUser } = useAuth();
   const {
-    giving,
+    giving:allGiving,
     expenses,
     members,
     services,
@@ -151,6 +152,7 @@ export const FinancePage: React.FC = () => {
     lastRefreshedAt,
     refreshData,
   } = useChurchData();
+  const giving=useMemo(()=>allGiving.filter(isActiveTransaction),[allGiving]);
   const { success, info, warning, error } = useToast();
 
   const handleRefresh = async () => {

@@ -1,4 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { SyncOutbox, type Mutation, type SyncResult } from './syncOutbox';
+import { setCacheOwner, clearScopedCache } from './storageScope';
 import {
   Member,
   Visitor,
@@ -30,57 +32,20 @@ const STORAGE_KEY_URL = 'gwcc_supabase_url';
 const STORAGE_KEY_ANON = 'gwcc_supabase_anon_key';
 const VITE_ENV = typeof import.meta !== 'undefined' && import.meta && (import.meta as any).env ? (import.meta as any).env : {};
 
-export const DEFAULT_SUPABASE_URL = 'https://noskcrmvnancdyhvzfin.supabase.co';
-export const DEFAULT_SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vc2tjcm12bmFuY2R5aHZ6ZmluIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAzMDEwNTMsImV4cCI6MjEwNTg3NzA1M30.0zBwp0uW9hvpjTBI0hS6btOdEjD2lQh13TUf4EBpEHo';
-
-// Retrieve credentials from Vite env, LocalStorage, or default project configuration
+// Credentials are environment-specific. Never silently reconnect a different project.
+export const DEFAULT_SUPABASE_URL = '';
+export const DEFAULT_SUPABASE_ANON_KEY = '';
 export function getStoredSupabaseConfig(): { url: string; anonKey: string; source: 'env' | 'storage' | 'default' | 'none' } {
+  const envUrl = String(VITE_ENV.VITE_SUPABASE_URL || '').trim().replace(/\/+$/, '');
+  const envKey = String(VITE_ENV.VITE_SUPABASE_ANON_KEY || '').trim();
+  if (envUrl && envKey) return { url: envUrl, anonKey: envKey, source:'env' };
   try {
-    const isExplicitlyDisabled = localStorage.getItem('gwcc_supabase_disabled') === 'true';
-    if (isExplicitlyDisabled) {
-      return { url: '', anonKey: '', source: 'none' };
-    }
-
-    const savedUrl = (localStorage.getItem(STORAGE_KEY_URL) || '').trim().replace(/\/+$/, '');
-    const savedKey = (localStorage.getItem(STORAGE_KEY_ANON) || '').trim();
-
-    // If targeted at GWCC project or empty in storage, enforce the verified active credentials
-    if (!savedUrl || savedUrl.includes('noskcrmvnancdyhvzfin')) {
-      if (savedKey !== DEFAULT_SUPABASE_ANON_KEY || savedUrl !== DEFAULT_SUPABASE_URL) {
-        localStorage.setItem(STORAGE_KEY_URL, DEFAULT_SUPABASE_URL);
-        localStorage.setItem(STORAGE_KEY_ANON, DEFAULT_SUPABASE_ANON_KEY);
-      }
-      return { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY, source: 'default' };
-    }
-
-    // Other custom Supabase project
-    if (savedUrl && savedKey) {
-      return { url: savedUrl, anonKey: savedKey, source: 'storage' };
-    }
-  } catch {
-    // LocalStorage unavailable
-  }
-
-  const envUrl = (VITE_ENV.VITE_SUPABASE_URL || '').trim();
-  const envKey = (VITE_ENV.VITE_SUPABASE_ANON_KEY || '').trim();
-
-  if (
-    envUrl &&
-    envKey &&
-    envUrl !== 'YOUR_SUPABASE_URL' &&
-    envKey !== 'YOUR_SUPABASE_ANON_KEY' &&
-    !envUrl.includes('your-project-ref')
-  ) {
-    return { url: envUrl, anonKey: envKey, source: 'env' };
-  }
-
-  // Active default for Greater Works City Church live database
-  if (DEFAULT_SUPABASE_URL && DEFAULT_SUPABASE_ANON_KEY) {
-    return { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY, source: 'default' };
-  }
-
-  return { url: '', anonKey: '', source: 'none' };
+    if (localStorage.getItem('gwcc_supabase_disabled') === 'true') return {url:'',anonKey:'',source:'none'};
+    const url=(localStorage.getItem(STORAGE_KEY_URL)||'').trim().replace(/\/+$/, '');
+    const anonKey=(localStorage.getItem(STORAGE_KEY_ANON)||'').trim();
+    if (url && anonKey) return { url,anonKey,source:'storage' };
+  } catch {}
+  return {url:'',anonKey:'',source:'none'};
 }
 
 // Active singleton instance
@@ -149,17 +114,11 @@ export function saveSupabaseCredentials(url: string, anonKey: string): { success
     const cleanUrl = url.trim().replace(/\/+$/, '');
     let cleanKey = anonKey.trim();
 
+    let serverSecret=cleanKey.startsWith('sb_secret_');
+    try {serverSecret ||= JSON.parse(atob(cleanKey.split('.')[1]||'')).role==='service_role';}catch{}
+    if(serverSecret)return {success:false,message:'Use the public publishable/anon key. Server authentication keys must never be stored in the browser.'};
     if (!cleanUrl.startsWith('https://')) {
       return { success: false, message: 'Supabase URL must start with https://' };
-    }
-
-    // If connecting to the official GWCC project and the key is mismatched, use the verified key
-    if (cleanUrl.includes('noskcrmvnancdyhvzfin') && cleanKey !== DEFAULT_SUPABASE_ANON_KEY) {
-      cleanKey = DEFAULT_SUPABASE_ANON_KEY;
-    }
-
-    if (cleanKey.length < 20) {
-      return { success: false, message: 'Invalid Supabase Anon key provided.' };
     }
 
     localStorage.setItem(STORAGE_KEY_URL, cleanUrl);
@@ -276,7 +235,7 @@ export async function testSupabaseConnection(
 
   try {
     const testClient =
-      !customUrl && !customKey
+      ((!customUrl && !customKey)||(url===storedConfig.url && key===storedConfig.anonKey))
         ? getSupabaseClient()
         : createClient(url, key, {
             auth: {
@@ -314,6 +273,8 @@ export async function testSupabaseConnection(
         };
       }
 
+      if(isPermissionDeniedError(settingsError))return {success:true,latencyMs,message:'The project is reachable. Private data requires a verified, reviewed account; permissions have not been relaxed.'};
+
       // If invalid API key / JWT
       if (
         settingsError.message?.toLowerCase().includes('jwt') ||
@@ -337,7 +298,7 @@ export async function testSupabaseConnection(
     return {
       success: true,
       latencyMs,
-      message: `Successfully connected to Supabase in ${latencyMs}ms! All tables active.`,
+      message: `Successfully connected to Supabase in ${latencyMs}ms! The settings query succeeded.`,
       tablesStatus: 'ready',
     };
   } catch (err: any) {
@@ -360,6 +321,7 @@ export async function checkSupabaseTables(): Promise<{
   if (!client) return { ready: false, existing: [], missing: [] };
 
   const tablesToCheck = [
+    'church_accounts','church_finances','child_check_ins','gwcc_documents','roster_notifications',
     'members',
     'visitors',
     'services',
@@ -405,6 +367,8 @@ export async function checkSupabaseTables(): Promise<{
     }
   }
 
+  const release=await client.rpc('gwcc_release_status');
+  if(release.error || release.data?.migration!=='20261015000001')missing.push('security upgrade 20261015000001');
   return {
     ready: missing.length === 0,
     existing,
@@ -919,989 +883,149 @@ export interface ChurchAllData {
   welfareClaims?: WelfareClaim[];
   welfareEvents?: WelfareEvent[];
   welfareEventContributions?: WelfareEventContribution[];
+  childCheckIns?: any[];
+  assets?: any[];
+  departmentBudgets?: any[];
+  foundationCohorts?: any[];
+  foundationStudents?: any[];
+  pastoralVisitations?: any[];
+  counselingSessions?: any[];
+  intercessorySlots?: any[];
 }
 
-export async function pushAllDataToSupabase(
-  data: ChurchAllData,
-  onProgress?: (step: string, percent: number) => void
-): Promise<{ success: boolean; summary: Record<string, number>; errors: string[] }> {
-  const client = getSupabaseClient();
-  if (!client) {
-    return { success: false, summary: {}, errors: ['Supabase is not configured.'] };
+let syncOwner: string | null = null;
+let syncRole:string|null=null;
+let outbox: SyncOutbox | null = null;
+let atomicChanges:Mutation[]|null=null;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+const emit = (name: string, detail: unknown) => {
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(name,{ detail }));
+};
+
+export function setSyncIdentity(id: string | null,role:string|null=null) {
+  if(id===syncOwner && role===syncRole && outbox)return;
+  const previousRole=id?localStorage.getItem(`gwcc_cache_role_${id}`):null;
+  if(id && previousRole!==role){setCacheOwner(id);clearScopedCache();localStorage.setItem(`gwcc_cache_role_${id}`,role||'');}
+  syncRole=role;
+  syncOwner=id; setCacheOwner(id);
+  outbox=id && typeof localStorage !== 'undefined' ? new SyncOutbox(id,localStorage,detail=>emit('gwcc-sync-status',detail)) : null;
+  emit('gwcc-sync-status',getSyncStatus());
+}
+export function clearPrivateCache() {
+  clearScopedCache(); setSyncIdentity(null); emit('gwcc-cache-cleared',{});
+}
+export const getSyncStatus = (): SyncResult => outbox?.status || {success:true,pending:0};
+export const hasPendingChanges=(table:string)=>Boolean(outbox?.pendingChanges.some(change=>change.table===table));
+export const exportPendingChanges=()=>outbox?.exportPending()||'{}';
+export function discardPendingChanges(){outbox?.discardPending();emit('gwcc-reload-cloud',{});}
+export function withSyncTransaction<T>(work:()=>T):T {
+  if(atomicChanges)return work();
+  atomicChanges=[];
+  try {const value=work();const changes=atomicChanges;atomicChanges=null;if(changes.length){outbox?.enqueueMany(changes);if(flushTimer)clearTimeout(flushTimer);flushTimer=setTimeout(()=>void flushSyncOutbox(),100);}return value;}
+  catch(error){atomicChanges=null;throw error;}
+}
+export const mergePendingRecords = (table: string, rows: any[]) => outbox?.merge(table,rows) || rows;
+
+export async function flushSyncOutbox(): Promise<SyncResult> {
+  const client=getSupabaseClient(); const active=outbox; const owner=syncOwner;
+  if(!client || !active || !owner) return {success:false,pending:active?.status.pending || 0,error:'Please sign in to synchronize changes.'};
+  if(typeof navigator!=='undefined' && !navigator.onLine) return {...active.status,success:false,error:'Offline. Changes remain queued on this device.'};
+  const { data: {session} }=await client.auth.getSession();
+  if(!session || session.user.id!==owner) return {...active.status,success:false,error:'Please sign in again to synchronize these changes.'};
+  const config=getStoredSupabaseConfig();
+  const fixedClient=createClient(config.url,config.anonKey,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false},global:{headers:{Authorization:`Bearer ${session.access_token}`}}});
+  const transport={rpc:(name:string,args:any)=>owner===syncOwner?fixedClient.rpc(name,args):Promise.resolve({data:null,error:{message:'The signed-in account changed. Remaining changes were kept for their owner.'}})};
+  return active.flush(transport,records=>{
+    if(owner===syncOwner) emit('gwcc-sync-records',{owner,records});
+  });
+}
+function queue(change: Mutation): SyncResult {
+  if(!outbox) return {success:false,pending:0,error:'A verified staff session is required.'};
+  if(atomicChanges){atomicChanges.push(change);return {...outbox.status,success:false};}
+  try {
+    const result=outbox.enqueue(change);
+    if(flushTimer) clearTimeout(flushTimer);
+    flushTimer=setTimeout(()=>{flushTimer=null;void flushSyncOutbox();},100);
+    return result;
+  } catch(error) {
+    const result={success:false,pending:outbox.status.pending,error:`Device storage could not preserve this change: ${(error as Error).message}`};
+    emit('gwcc-sync-status',result); return result;
   }
+}
+export async function dbSyncUpsert(table: string, record: any): Promise<SyncResult> {
+  if(!record) return {success:false,pending:getSyncStatus().pending,error:'A record is required.'};
+  const sanitized={...sanitizeRecordForSupabase(table,record)};
+  if(!sanitized.id)return {success:false,pending:getSyncStatus().pending,error:'Record ID is required.'};
+  const expected=record._expected_updated_at;
+  delete sanitized._expected_updated_at; delete sanitized._sync_status;
+  return queue({table,operation:'upsert',id:String(sanitized.id),record:sanitized,expected_updated_at:expected});
+}
+export async function dbSyncDelete(table: string, id: string): Promise<SyncResult> {
+  return queue({table,operation:'delete',id});
+}
 
-  const errors: string[] = [];
-  const summary: Record<string, number> = {};
+export const SYNC_TABLES: Array<{table:string;key:keyof ChurchAllData;document?:boolean}> = [
+  ['settings','settings'],['members','members'],['visitors','visitors'],['services','services'],['attendance','attendance'],
+  ['headcounts','headcounts'],['giving','giving'],['church_accounts','churchAccounts'],['church_finances','churchFinances'],
+  ['pledge_campaigns','campaigns'],['pledges','pledges'],['expenses','expenses'],['ministries','ministries'],['small_groups','smallGroups'],
+  ['events','events'],['pastoral_care','pastoralCare'],['prayer_requests','prayerRequests'],['communications','communications'],
+  ['audit_logs','auditLogs'],['welfare_contributions','welfareContributions'],['welfare_claims','welfareClaims'],
+  ['welfare_events','welfareEvents'],['welfare_event_contributions','welfareEventContributions'],['roster_assignments','rosterAssignments'],
+  ['child_check_ins','childCheckIns'],
+].map(([table,key])=>({table,key:key as keyof ChurchAllData})).concat([
+  ['assets','assets'],['department_budgets','departmentBudgets'],['foundation_cohorts','foundationCohorts'],
+  ['foundation_students','foundationStudents'],['pastoral_visitations','pastoralVisitations'],
+  ['counseling_sessions','counselingSessions'],['intercessory_slots','intercessorySlots'],
+].map(([table,key])=>({table,key:key as keyof ChurchAllData,document:true})));
 
-  const steps = [
-    {
-      name: 'settings',
-      label: 'Church Settings',
-      run: async () => {
-        const { error } = await upsertSettingsWithFallback(client, data.settings);
-        if (error) throw error;
-        summary['settings'] = 1;
-      },
-    },
-    {
-      name: 'ministries',
-      label: 'Ministries',
-      run: async () => {
-        if (data.ministries.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.ministries.map((m) => ({
-          id: m.id,
-          name: m.name,
-          description: m.description || '',
-          leader_id: m.leader_id || null,
-          leader_name: m.leader_name || null,
-          assistant_leader_id: m.assistant_leader_id || null,
-          assistant_leader_name: m.assistant_leader_name || null,
-          meeting_schedule: m.meeting_schedule || '',
-          meeting_day: m.meeting_day || '',
-          meeting_time: m.meeting_time || '',
-          status: m.status || 'active',
-          member_count: Number(m.member_count) || 0,
-          created_at: (m as any).created_at || now,
-        }));
-        const { error } = await client.from('ministries').upsert(sanitized);
-        if (error) throw error;
-        summary['ministries'] = sanitized.length;
-      },
-    },
-    {
-      name: 'small_groups',
-      label: 'Small Groups / Cells',
-      run: async () => {
-        if (data.smallGroups.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.smallGroups.map((g) => ({
-          id: g.id,
-          name: g.name,
-          leader_id: g.leader_id || null,
-          leader_name: g.leader_name || null,
-          leader_phone: g.leader_phone || null,
-          assistant_leader_id: g.assistant_leader_id || null,
-          assistant_leader_name: g.assistant_leader_name || null,
-          meeting_location: g.meeting_location || 'Church Annex',
-          meeting_address: g.meeting_address || null,
-          zone: g.zone || null,
-          meeting_day: g.meeting_day || 'Wednesday',
-          meeting_time: g.meeting_time || '18:30',
-          notes: g.notes || '',
-          member_count: Number(g.member_count) || 0,
-          created_at: (g as any).created_at || now,
-        }));
-        const { error } = await client.from('small_groups').upsert(sanitized);
-        if (error) throw error;
-        summary['small_groups'] = sanitized.length;
-      },
-    },
-    {
-      name: 'members',
-      label: 'Church Members',
-      run: async () => {
-        if (data.members.length === 0) return;
-        const sanitized = data.members.map((m) => sanitizeMemberForSupabase(m));
-
-        // Deduplicate incoming array by member_id to prevent multi-row batch conflict errors
-        const seenMemberIds = new Set<string>();
-        const uniqueMembers: any[] = [];
-        for (let i = sanitized.length - 1; i >= 0; i--) {
-          const m = sanitized[i];
-          const rawId = (m.member_id || '').trim();
-          if (!rawId || seenMemberIds.has(rawId)) continue;
-          seenMemberIds.add(rawId);
-          uniqueMembers.unshift(m);
-        }
-
-        // Query existing members in Supabase to align primary keys and avoid unique constraint clashes
-        const existingIdByMemberId = new Map<string, string>();
-        try {
-          const { data: existingRows } = await client
-            .from('members')
-            .select('id, member_id');
-          if (existingRows && Array.isArray(existingRows)) {
-            for (const row of existingRows) {
-              if (row.member_id && row.id) {
-                existingIdByMemberId.set(row.member_id.trim(), row.id);
-              }
-            }
-          }
-        } catch (fetchErr) {
-          console.warn('Note checking existing members in Supabase:', fetchErr);
-        }
-
-        // Reconcile primary keys: if Supabase already has this member_id under an existing id, retain that id
-        for (const m of uniqueMembers) {
-          const mId = (m.member_id || '').trim();
-          if (existingIdByMemberId.has(mId)) {
-            m.id = existingIdByMemberId.get(mId);
-          }
-        }
-
-        // Attempt upsert targeting member_id as conflict resolution column
-        let { error } = await client
-          .from('members')
-          .upsert(uniqueMembers, { onConflict: 'member_id' });
-
-        if (error) {
-          // If batch upsert failed (e.g. constraint mismatch), perform resilient per-member sync
-          let syncedCount = 0;
-          const individualErrors: string[] = [];
-
-          for (const m of uniqueMembers) {
-            try {
-              // 1. Try single-record upsert with onConflict: member_id
-              const singleUpsert = await client
-                .from('members')
-                .upsert(m, { onConflict: 'member_id' });
-
-              if (!singleUpsert.error) {
-                syncedCount++;
-                continue;
-              }
-
-              // 2. If rejected due to constraint on id, update by member_id without overwriting id
-              const { id, ...updateFields } = m;
-              const updateRes = await client
-                .from('members')
-                .update(updateFields)
-                .eq('member_id', m.member_id);
-
-              if (!updateRes.error) {
-                syncedCount++;
-                continue;
-              }
-
-              // 3. If row didn't exist or update was empty, try insert
-              const insertRes = await client.from('members').insert(updateFields);
-              if (!insertRes.error) {
-                syncedCount++;
-                continue;
-              }
-
-              individualErrors.push(`${m.member_id}: ${singleUpsert.error.message || updateRes.error?.message}`);
-            } catch (err: any) {
-              individualErrors.push(`${m.member_id}: ${err.message}`);
-            }
-          }
-
-          if (syncedCount > 0) {
-            summary['members'] = syncedCount;
-          }
-          if (syncedCount === uniqueMembers.length) {
-            error = null;
-          } else if (individualErrors.length > 0 && syncedCount === 0) {
-            throw new Error(`Failed to sync members: ${individualErrors[0]}`);
-          }
-        } else {
-          summary['members'] = uniqueMembers.length;
-        }
-      },
-    },
-    {
-      name: 'visitors',
-      label: 'First-time Visitors',
-      run: async () => {
-        if (data.visitors.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.visitors.map((v) => ({
-          ...v,
-          service_attended: v.service_attended || 'Sunday Main Service',
-          visit_date: v.visit_date || now.split('T')[0],
-          follow_up_status: v.follow_up_status || 'new',
-          created_at: v.created_at || now,
-          updated_at: v.updated_at || now,
-        }));
-        const { error } = await client.from('visitors').upsert(sanitized);
-        if (error) throw error;
-        summary['visitors'] = sanitized.length;
-      },
-    },
-    {
-      name: 'services',
-      label: 'Worship Services',
-      run: async () => {
-        if (data.services.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.services.map((s) => ({
-          ...s,
-          type: s.type || 'sunday',
-          day_of_week: s.day_of_week || 'Sunday',
-          start_time: s.start_time || '09:00',
-          end_time: s.end_time || '12:00',
-          order_of_service: s.order_of_service || [],
-          created_at: (s as any).created_at || now,
-        }));
-        const { error } = await client.from('services').upsert(sanitized);
-        if (error) throw error;
-        summary['services'] = sanitized.length;
-      },
-    },
-    {
-      name: 'roster_assignments',
-      label: 'Service Duty Roster',
-      run: async () => {
-        if (!data.rosterAssignments || data.rosterAssignments.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.rosterAssignments.map((assignment) => ({
-          ...assignment,
-          member_id: assignment.member_id || null,
-          service_id: assignment.service_id || null,
-          service_name: assignment.service_name || 'Church Service',
-          date: cleanDate(assignment.date) || now.split('T')[0],
-          department: assignment.department || 'ushers_protocol',
-          role_title: assignment.role_title || 'Volunteer',
-          report_time: assignment.report_time || '08:00',
-          status: assignment.status || 'pending',
-          notes: assignment.notes || null,
-          announcement: assignment.announcement || null,
-          created_at: (assignment as any).created_at || now,
-          updated_at: (assignment as any).updated_at || now,
-        }));
-        const { error } = await client.from('roster_assignments').upsert(sanitized);
-        if (error) {
-          if (isPermissionDeniedError(error) || isTableNotFoundError(error)) {
-            console.warn('Supabase permission denied or table not ready for roster_assignments during push:', error.message);
-            return;
-          }
-          throw error;
-        }
-        summary['roster_assignments'] = sanitized.length;
-      },
-    },
-    {
-      name: 'attendance',
-      label: 'Attendance Records',
-      run: async () => {
-        if (data.attendance.length === 0) return;
-        const sanitized = data.attendance.map((a) => {
-          const memId = a.member_id && typeof a.member_id === 'string' && a.member_id.trim() !== '' ? a.member_id.trim() : null;
-          const visId = a.visitor_id && typeof a.visitor_id === 'string' && a.visitor_id.trim() !== '' ? a.visitor_id.trim() : null;
-          const srvId = a.service_id && typeof a.service_id === 'string' && a.service_id.trim() !== '' ? a.service_id.trim() : 'srv-001';
-          return {
-            ...a,
-            member_id: memId,
-            visitor_id: visId,
-            service_id: srvId,
-            date: a.date || new Date().toISOString().split('T')[0],
-            check_in_time: a.check_in_time || new Date().toISOString(),
-            status: a.status || 'present',
-          };
-        });
-        const { error } = await client.from('attendance').upsert(sanitized);
-        if (error) {
-          // If a legacy FK constraint (e.g. attendance_member_id_fkey or attendance_service_id_fkey) fails, retry safely with null member_id
-          if (error.message?.includes('foreign key') || error.message?.includes('fkey')) {
-            const fallback = sanitized.map((r) => ({ ...r, member_id: null }));
-            const retry = await client.from('attendance').upsert(fallback);
-            if (!retry.error) {
-              summary['attendance'] = fallback.length;
-              return;
-            }
-          }
-          throw error;
-        }
-        summary['attendance'] = sanitized.length;
-      },
-    },
-    {
-      name: 'headcounts',
-      label: 'Auditorium Headcounts',
-      run: async () => {
-        if (!data.headcounts || data.headcounts.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.headcounts.map((h) => ({
-          ...h,
-          date: cleanDate(h.date) || now.split('T')[0],
-          created_at: (h as any).created_at || now,
-          men: Number(h.men) || 0,
-          women: Number(h.women) || 0,
-          youth: Number(h.youth) || 0,
-          children: Number(h.children) || 0,
-          total_auditorium:
-            Number(h.total_auditorium) ||
-            (Number(h.men) || 0) +
-              (Number(h.women) || 0) +
-              (Number(h.youth) || 0) +
-              (Number(h.children) || 0),
-        }));
-        const { error } = await client.from('headcounts').upsert(sanitized);
-        if (error) throw error;
-        summary['headcounts'] = sanitized.length;
-      },
-    },
-    {
-      name: 'giving',
-      label: 'Giving & Tithes',
-      run: async () => {
-        if (data.giving.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.giving.map((g) => {
-          const memId = g.member_id && typeof g.member_id === 'string' && g.member_id.trim() !== '' ? g.member_id.trim() : null;
-          return {
-            ...g,
-            member_id: memId,
-            created_at: (g as any).created_at || now,
-            amount: Number(g.amount) || 0,
-            currency: g.currency || 'GHS',
-            date: cleanDate(g.date) || now.split('T')[0],
-            payment_method: g.payment_method || 'mobile_money',
-          };
-        });
-        let { error } = await client.from('giving').upsert(sanitized);
-        if (error) {
-          // If tithe_number column has not been added to remote Supabase schema cache yet, retry without it
-          if (
-            error.message?.includes('tithe_number') ||
-            String(error.details || '').includes('tithe_number') ||
-            String((error as any).hint || '').includes('tithe_number')
-          ) {
-            const fallbackWithoutTithe = sanitized.map(({ tithe_number, ...rest }: any) => rest);
-            const retryTithe = await client.from('giving').upsert(fallbackWithoutTithe);
-            if (!retryTithe.error) {
-              summary['giving'] = fallbackWithoutTithe.length;
-              return;
-            }
-            error = retryTithe.error;
-          }
-
-          if (error && (error.message?.includes('foreign key') || error.message?.includes('fkey'))) {
-            const fallback = sanitized.map(({ tithe_number, ...r }: any) => ({ ...r, member_id: null }));
-            const retry = await client.from('giving').upsert(fallback);
-            if (!retry.error) {
-              summary['giving'] = fallback.length;
-              return;
-            }
-          }
-          throw error;
-        }
-        summary['giving'] = sanitized.length;
-      },
-    },
-    {
-      name: 'expenses',
-      label: 'Expenditure & Operations',
-      run: async () => {
-        if (data.expenses.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.expenses.map((e) => ({
-          ...e,
-          created_at: (e as any).created_at || now,
-          amount: Number(e.amount) || 0,
-          currency: e.currency || 'GHS',
-          date: cleanDate(e.date) || now.split('T')[0],
-          description: e.description || e.title || 'Church operational expenditure',
-          category: e.category || 'Operations',
-        }));
-        const { error } = await client.from('expenses').upsert(sanitized);
-        if (error) throw error;
-        summary['expenses'] = sanitized.length;
-      },
-    },
-    {
-      name: 'church_accounts',
-      label: 'Church Bank & MoMo Accounts',
-      run: async () => {
-        if (!data.churchAccounts || data.churchAccounts.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.churchAccounts.map((acc) => ({
-          ...acc,
-          name: acc.name || 'Main Account',
-          account_type: acc.account_type || 'bank',
-          bank_or_provider: acc.bank_or_provider || 'GCB Bank',
-          current_balance: Number(acc.current_balance) || 0,
-          currency: acc.currency || 'GHS',
-          is_active: acc.is_active !== false,
-          created_at: acc.created_at || now,
-          updated_at: acc.updated_at || now,
-        }));
-        const { error } = await client.from('church_accounts').upsert(sanitized);
-        if (error) {
-          if (error.message?.includes('row-level security') || error.message?.includes('violates row-level security')) {
-            throw new Error('new row violates row-level security policy for table "church_accounts". Run Church Finance RLS script.');
-          }
-          throw error;
-        }
-        summary['church_accounts'] = sanitized.length;
-      },
-    },
-    {
-      name: 'church_finances',
-      label: 'Church Operational Finances',
-      run: async () => {
-        if (!data.churchFinances || data.churchFinances.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.churchFinances.map((f) => ({
-          ...f,
-          transaction_type: f.transaction_type || 'expense',
-          account_id: f.account_id || null,
-          account_name: f.account_name || 'Main Operating Account',
-          category: f.category || 'Operations',
-          title: f.title || 'Church Expenditure',
-          recipient_or_vendor: f.recipient_or_vendor || null,
-          amount: Number(f.amount) || 0,
-          currency: f.currency || 'GHS',
-          date: cleanDate(f.date) || now.split('T')[0],
-          payment_method: f.payment_method || 'bank_transfer',
-          status: f.status || 'completed',
-          created_at: f.created_at || now,
-          updated_at: f.updated_at || now,
-        }));
-        const { error } = await client.from('church_finances').upsert(sanitized);
-        if (error) {
-          if (error.message?.includes('row-level security') || error.message?.includes('violates row-level security')) {
-            throw new Error('new row violates row-level security policy for table "church_finances". Run Church Finance RLS script.');
-          }
-          throw error;
-        }
-        summary['church_finances'] = sanitized.length;
-      },
-    },
-    {
-      name: 'pledge_campaigns',
-      label: 'Pledge Campaigns',
-      run: async () => {
-        if (data.campaigns.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.campaigns.map((c) => ({
-          ...c,
-          created_at: (c as any).created_at || now,
-          target_amount: Number(c.target_amount) || 0,
-          start_date: cleanDate(c.start_date) || now.split('T')[0],
-          end_date: cleanDate(c.end_date) || now.split('T')[0],
-        }));
-        const { error } = await client.from('pledge_campaigns').upsert(sanitized);
-        if (error) throw error;
-        summary['pledge_campaigns'] = sanitized.length;
-      },
-    },
-    {
-      name: 'pledges',
-      label: 'Member Pledges',
-      run: async () => {
-        if (data.pledges.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.pledges.map((p) => {
-          const pledged = Number(p.amount_pledged) || 0;
-          const paid = Number(p.amount_paid) || 0;
-          return {
-            ...p,
-            created_at: (p as any).created_at || now,
-            updated_at: (p as any).updated_at || (p as any).created_at || now,
-            amount_pledged: pledged,
-            amount_paid: paid,
-            balance: Math.max(0, pledged - paid),
-            status: p.status || 'active',
-            due_date: cleanDate(p.due_date) || now.split('T')[0],
-          };
-        });
-        const { error } = await client.from('pledges').upsert(sanitized);
-        if (error) throw error;
-        summary['pledges'] = sanitized.length;
-      },
-    },
-    {
-      name: 'events',
-      label: 'Church Calendar Events',
-      run: async () => {
-        if (data.events.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.events.map((ev) => ({
-          ...ev,
-          created_at: ev.created_at || now,
-          updated_at: ev.updated_at || now,
-          event_type: ev.event_type || 'church_service',
-          start_date: cleanDate(ev.start_date) || now.split('T')[0],
-          end_date: cleanDate(ev.end_date) || cleanDate(ev.start_date) || now.split('T')[0],
-          start_time: ev.start_time || '09:00',
-          end_time: ev.end_time || '12:00',
-          venue: ev.venue || 'Main Sanctuary, Joma',
-          status: ev.status || 'upcoming',
-          attendees: ev.attendees || [],
-        }));
-        let { error } = await client.from('events').upsert(sanitized);
-        if (error && (error.message?.includes('updated_at') || String(error.details || '').includes('updated_at'))) {
-          const fallback = sanitized.map(({ updated_at, ...rest }) => rest);
-          const retry = await client.from('events').upsert(fallback);
-          error = retry.error;
-        }
-        if (error) throw error;
-        summary['events'] = sanitized.length;
-      },
-    },
-    {
-      name: 'pastoral_care',
-      label: 'Pastoral Care Records',
-      run: async () => {
-        if (data.pastoralCare.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.pastoralCare.map((p) => {
-          const memId = p.member_id && typeof p.member_id === 'string' && p.member_id.trim() !== '' ? p.member_id.trim() : null;
-          return {
-            ...p,
-            member_id: memId,
-            created_at: p.created_at || now,
-            care_type: p.care_type || 'Visitation',
-            assigned_pastor: p.assigned_pastor || p.pastor_name || 'Senior Pastor',
-            notes: p.notes || 'Pastoral session recorded',
-            date: cleanDate(p.date) || now.split('T')[0],
-          };
-        });
-        const { error } = await client.from('pastoral_care').upsert(sanitized);
-        if (error) {
-          if (error.message?.includes('foreign key') || error.message?.includes('fkey')) {
-            const fallback = sanitized.map((r) => ({ ...r, member_id: null }));
-            const retry = await client.from('pastoral_care').upsert(fallback);
-            if (!retry.error) {
-              summary['pastoral_care'] = fallback.length;
-              return;
-            }
-          }
-          throw error;
-        }
-        summary['pastoral_care'] = sanitized.length;
-      },
-    },
-    {
-      name: 'prayer_requests',
-      label: 'Prayer Requests',
-      run: async () => {
-        if (data.prayerRequests.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.prayerRequests.map((pr) => {
-          const memId = pr.member_id && typeof pr.member_id === 'string' && pr.member_id.trim() !== '' ? pr.member_id.trim() : null;
-          return {
-            ...pr,
-            member_id: memId,
-            created_at: pr.created_at || now,
-            category: pr.category || 'General',
-            request: pr.request || 'Prayer request',
-            date_submitted: cleanDate(pr.date_submitted) || now.split('T')[0],
-            status: pr.status || 'new',
-          };
-        });
-        const { error } = await client.from('prayer_requests').upsert(sanitized);
-        if (error) {
-          if (error.message?.includes('foreign key') || error.message?.includes('fkey')) {
-            const fallback = sanitized.map((r) => ({ ...r, member_id: null }));
-            const retry = await client.from('prayer_requests').upsert(fallback);
-            if (!retry.error) {
-              summary['prayer_requests'] = fallback.length;
-              return;
-            }
-          }
-          throw error;
-        }
-        summary['prayer_requests'] = sanitized.length;
-      },
-    },
-    {
-      name: 'communications',
-      label: 'Communications',
-      run: async () => {
-        if (data.communications.length === 0) return;
-        const sanitized = data.communications.map((comm) => ({
-          ...comm,
-          channel: comm.channel || 'sms',
-          recipient_type: comm.recipient_type || 'all',
-          recipient_count: Number(comm.recipient_count) || 0,
-          status: comm.status || 'sent',
-          message: comm.message || '',
-        }));
-        const { error } = await client.from('communications').upsert(sanitized);
-        if (error) throw error;
-        summary['communications'] = sanitized.length;
-      },
-    },
-    {
-      name: 'welfare_contributions',
-      label: 'Welfare Contributions',
-      run: async () => {
-        if (!data.welfareContributions || data.welfareContributions.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.welfareContributions.map((record) => ({
-          ...record,
-          member_id: record.member_id && record.member_id.trim() !== '' ? record.member_id.trim() : (record.id || 'MEM-GEN'),
-          member_name: record.member_name || 'Member',
-          date: cleanDate(record.date) || now.split('T')[0],
-          month: record.month || now.split('T')[0].slice(0, 7),
-          amount: Number(record.amount) || 0,
-          payment_method: record.payment_method || 'mobile_money',
-          payment_channel: record.payment_channel || null,
-          reference_no: record.reference_no || null,
-          notes: record.notes || null,
-          recorded_by: record.recorded_by || 'Church Office',
-          created_at: record.created_at || now,
-        }));
-        const { error } = await client.from('welfare_contributions').upsert(sanitized);
-        if (error) {
-          if (error.message?.includes('row-level security policy') || error.message?.includes('violates row-level security')) {
-            throw new Error('new row violates row-level security policy for table "welfare_contributions". Run the Welfare RLS Repair script in your Supabase SQL Editor.');
-          }
-          throw error;
-        }
-        summary['welfare_contributions'] = sanitized.length;
-      },
-    },
-    {
-      name: 'welfare_claims',
-      label: 'Welfare Claims',
-      run: async () => {
-        if (!data.welfareClaims || data.welfareClaims.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.welfareClaims.map((record) => ({
-          ...record,
-          claim_number: record.claim_number || `BEN-${new Date().getFullYear()}-${record.id || '001'}`,
-          member_id: record.member_id && record.member_id.trim() !== '' ? record.member_id.trim() : (record.id || 'MEM-GEN'),
-          member_name: record.member_name || 'Member',
-          category: record.category || 'emergency_relief',
-          title: record.title || 'Welfare support',
-          description: record.description || '',
-          amount_requested: Number(record.amount_requested) || 0,
-          amount_approved: record.amount_approved == null ? null : Number(record.amount_approved) || 0,
-          status: record.status || 'pending',
-          emergency_level: record.emergency_level || 'normal',
-          date_submitted: cleanDate(record.date_submitted) || now.split('T')[0],
-          date_reviewed: cleanDate(record.date_reviewed),
-          reviewed_by: record.reviewed_by || null,
-          pastoral_notes: record.pastoral_notes || null,
-          disbursement_date: cleanDate(record.disbursement_date),
-          disbursement_method: record.disbursement_method || null,
-          disbursement_channel: record.disbursement_channel || null,
-          disbursement_voucher_no: record.disbursement_voucher_no || null,
-          supporting_documents: record.supporting_documents || null,
-          created_at: record.created_at || now,
-          updated_at: record.updated_at || now,
-        }));
-        const { error } = await client.from('welfare_claims').upsert(sanitized);
-        if (error) {
-          if (error.message?.includes('row-level security policy') || error.message?.includes('violates row-level security')) {
-            throw new Error('new row violates row-level security policy for table "welfare_claims". Run the Welfare RLS Repair script in your Supabase SQL Editor.');
-          }
-          throw error;
-        }
-        summary['welfare_claims'] = sanitized.length;
-      },
-    },
-    {
-      name: 'welfare_events',
-      label: 'Welfare Contribution Events',
-      run: async () => {
-        if (!data.welfareEvents || data.welfareEvents.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.welfareEvents.map((event) => ({
-          ...event,
-          start_date: cleanDate(event.start_date) || now.split('T')[0],
-          end_date: cleanDate(event.end_date) || now.split('T')[0],
-          target_amount: event.target_amount ? Number(event.target_amount) : null,
-          minimum_contribution: Math.max(20.0, Number(event.minimum_contribution) || 20.0),
-          created_at: event.created_at || now,
-          updated_at: event.updated_at || now,
-        }));
-        const { error } = await client.from('welfare_events').upsert(sanitized);
-        if (error) {
-          if (isTableNotFoundError(error) || isPermissionDeniedError(error)) {
-            console.warn('Welfare events table pending in Supabase; continuing sync');
-            return;
-          }
-          throw error;
-        }
-        summary['welfare_events'] = sanitized.length;
-      },
-    },
-    {
-      name: 'welfare_event_contributions',
-      label: 'Welfare Event Contributions',
-      run: async () => {
-        if (!data.welfareEventContributions || data.welfareEventContributions.length === 0) return;
-        const now = new Date().toISOString();
-        const sanitized = data.welfareEventContributions.map((c) => ({
-          ...c,
-          amount: Math.max(20.0, Number(c.amount) || 20.0),
-          payment_date: cleanDate(c.payment_date) || now.split('T')[0],
-          created_at: c.created_at || now,
-          updated_at: c.updated_at || now,
-        }));
-        const { error } = await client.from('welfare_event_contributions').upsert(sanitized);
-        if (error) {
-          if (isTableNotFoundError(error) || isPermissionDeniedError(error)) {
-            console.warn('Welfare event contributions table pending in Supabase; continuing sync');
-            return;
-          }
-          throw error;
-        }
-        summary['welfare_event_contributions'] = sanitized.length;
-      },
-    },
-    {
-      name: 'audit_logs',
-      label: 'System Audit Logs',
-      run: async () => {
-        if (data.auditLogs.length === 0) return;
-        const sanitized = data.auditLogs.map((log) => ({
-          ...log,
-          action: log.action || 'ACTION',
-          module: log.module || 'System',
-          timestamp: log.timestamp || new Date().toISOString(),
-        }));
-        const { error } = await client.from('audit_logs').upsert(sanitized);
-        if (error) throw error;
-        summary['audit_logs'] = sanitized.length;
-      },
-    },
-  ];
-
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
-    const percent = Math.round(((i + 1) / steps.length) * 100);
-    onProgress?.(`Syncing ${step.label}...`, percent);
+export async function fetchAllRows(client: SupabaseClient, table: string, namespace?: string): Promise<any[]> {
+  const rows:any[]=[]; let offset=0;
+  while(true) {
+    let query=client.from(table).select('*').order('id',{ascending:true});
+    if(namespace) query=query.eq('namespace',namespace);
+    const {data,error}=await query.range(offset,offset+499);
+    if(error) throw error;
+    const page=data || []; rows.push(...page); offset+=page.length;
+    if(page.length===0) return rows;
+  }
+}
+export async function pullAllDataFromSupabase(): Promise<{success:boolean;data:Partial<ChurchAllData>;errors:string[]}> {
+  const client=getSupabaseClient();
+  if(!client || !syncOwner) return {success:false,data:{},errors:['Please sign in before loading church records.']};
+  const owner=syncOwner,active=outbox;
+  const result:Partial<ChurchAllData>={}; const errors:string[]=[];
+  await Promise.allSettled(SYNC_TABLES.map(async({table,key,document})=>{
     try {
-      await step.run();
-    } catch (err: any) {
-      console.error(`Error syncing ${step.name}:`, err);
-      errors.push(`${step.label}: ${err.message || 'Unknown error'}`);
-    }
+      let records:any[];
+      if(syncRole==='member' && ['welfare_claims','pastoral_care','welfare_events','foundation_cohorts','foundation_students'].includes(table)){
+        const {data,error}=await client.rpc('gwcc_member_records',{p_table:table});if(error)throw error;records=data||[];
+      }else {const rows=await fetchAllRows(client,document?'gwcc_documents':table,document?table:undefined);records=document?rows.map(row=>row.data):rows;}
+      if(owner!==syncOwner)return;
+      active?.observe(table,records);
+      const merged=active?.merge(table,records)||records;
+      if(key==='settings') result.settings=merged[0] || undefined;
+      else (result as any)[key]=merged;
+    } catch(error) { errors.push(`${table}: ${(error as Error).message}`); }
+  }));
+  if(owner!==syncOwner)return {success:false,data:{},errors:['The signed-in account changed.']};
+  return {success:errors.length===0,data:result,errors};
+}
+export async function pushAllDataToSupabase(data:ChurchAllData,onProgress?:(step:string,percent:number)=>void) {
+  const summary:Record<string,number>={};
+  for(const [index,{table,key}] of SYNC_TABLES.entries()) {
+    if(key==='auditLogs') continue; // Existing server audit history is never rewritten.
+    const records=key==='settings' ? [data.settings] : ((data as any)[key] || []);
+    for(const record of records) { const result=await dbSyncUpsert(table,record); if(result.error) return {success:false,summary,errors:[result.error]}; }
+    summary[table]=records.length; onProgress?.(table,Math.round((index+1)/SYNC_TABLES.length*100));
   }
-
-  return {
-    success: errors.length === 0,
-    summary,
-    errors,
-  };
+  const status=await flushSyncOutbox();
+  return {success:status.success,summary,errors:status.error?[status.error]:[]};
+}
+export async function syncRosterAssignmentToSupabase(assignment:RosterAssignment):Promise<{success:boolean;error?:string}> {
+  await dbSyncUpsert('roster_assignments',assignment);return flushSyncOutbox();
+}
+export async function deleteRosterAssignmentFromSupabase(id:string):Promise<{success:boolean;error?:string}> {
+  await dbSyncDelete('roster_assignments',id);return flushSyncOutbox();
 }
 
-// PULL ALL DATA FROM SUPABASE INTO LOCAL APP
-export async function pullAllDataFromSupabase(): Promise<{
-  success: boolean;
-  data: Partial<ChurchAllData>;
-  errors: string[];
-}> {
-  let client = getSupabaseClient();
-  if (!client) {
-    return { success: false, data: {}, errors: ['Supabase not configured.'] };
-  }
-
-  const result: Partial<ChurchAllData> = {};
-  let errors: string[] = [];
-
-  const tableList: Array<{ table: string; key: keyof ChurchAllData }> = [
-    { table: 'settings', key: 'settings' },
-    { table: 'members', key: 'members' },
-    { table: 'visitors', key: 'visitors' },
-    { table: 'services', key: 'services' },
-    { table: 'roster_assignments', key: 'rosterAssignments' },
-    { table: 'attendance', key: 'attendance' },
-    { table: 'headcounts', key: 'headcounts' },
-    { table: 'giving', key: 'giving' },
-    { table: 'expenses', key: 'expenses' },
-    { table: 'church_accounts', key: 'churchAccounts' },
-    { table: 'church_finances', key: 'churchFinances' },
-    { table: 'pledge_campaigns', key: 'campaigns' },
-    { table: 'pledges', key: 'pledges' },
-    { table: 'ministries', key: 'ministries' },
-    { table: 'small_groups', key: 'smallGroups' },
-    { table: 'events', key: 'events' },
-    { table: 'pastoral_care', key: 'pastoralCare' },
-    { table: 'prayer_requests', key: 'prayerRequests' },
-    { table: 'communications', key: 'communications' },
-    { table: 'welfare_contributions', key: 'welfareContributions' },
-    { table: 'welfare_claims', key: 'welfareClaims' },
-    { table: 'welfare_events', key: 'welfareEvents' },
-    { table: 'welfare_event_contributions', key: 'welfareEventContributions' },
-    { table: 'audit_logs', key: 'auditLogs' },
-  ];
-
-  const fetchTable = async (targetClient: SupabaseClient, table: string, key: keyof ChurchAllData) => {
-    try {
-      const { data, error } = await targetClient.from(table).select('*');
-      if (error) {
-        if (!isTableNotFoundError(error)) {
-          if (isPermissionDeniedError(error)) {
-            console.warn(`[Supabase] Table "${table}" access restricted by permissions/RLS: ${error.message}. Local data retained.`);
-            if (table !== 'roster_assignments') {
-              errors.push(`${table}: ${error.message}`);
-            }
-          } else {
-            errors.push(`${table}: ${error.message}`);
-          }
-        }
-        return;
-      }
-      if (data && (data.length > 0 || key === 'rosterAssignments')) {
-        if (key === 'settings') {
-          result.settings = data[0] as ChurchSettings;
-        } else {
-          (result as any)[key] = data;
-        }
-      }
-    } catch (err: any) {
-      if (!isTableNotFoundError(err)) {
-        if (isPermissionDeniedError(err)) {
-          console.warn(`[Supabase] Table "${table}" access restricted by permissions: ${err?.message || err}`);
-          if (table !== 'roster_assignments') {
-            errors.push(`${table}: ${err.message}`);
-          }
-        } else {
-          errors.push(`${table}: ${err.message}`);
-        }
-      }
-    }
-  };
-
-  await Promise.allSettled(tableList.map((t) => fetchTable(client, t.table, t.key)));
-
-  // Self-healing recovery: If any table returned "Invalid API key", the active client was using an invalid/stale key.
-  // Re-run with the verified DEFAULT_SUPABASE credentials!
-  const hasInvalidKeyError = errors.some(
-    (e) => e.toLowerCase().includes('invalid api key') || e.toLowerCase().includes('apikey')
-  );
-
-  if (hasInvalidKeyError) {
-    console.warn('Supabase query rejected credentials with Invalid API key. Applying verified project key recovery...');
-    localStorage.setItem(STORAGE_KEY_URL, DEFAULT_SUPABASE_URL);
-    localStorage.setItem(STORAGE_KEY_ANON, DEFAULT_SUPABASE_ANON_KEY);
-    localStorage.removeItem('gwcc_supabase_disabled');
-
-    const verifiedClient = createClient(DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY, {
-      auth: {
-        storageKey: 'gwcc-church-auth-token',
-        persistSession: true,
-        autoRefreshToken: true,
-      },
-    });
-
-    cachedClient = verifiedClient;
-    currentConfigKey = `${DEFAULT_SUPABASE_URL}:${DEFAULT_SUPABASE_ANON_KEY}`;
-    (globalThis as typeof globalThis & { [GLOBAL_SUPABASE_CLIENT_KEY]?: SupabaseClient })[
-      GLOBAL_SUPABASE_CLIENT_KEY
-    ] = verifiedClient;
-
-    errors = [];
-    await Promise.allSettled(tableList.map((t) => fetchTable(verifiedClient, t.table, t.key)));
-  }
-
-  const hasSuccessfulData = Object.keys(result).length > 0;
-  const fatalErrors = errors.filter((e) => !e.toLowerCase().includes('permission denied'));
-  const isSuccessful = errors.length === 0 || (hasSuccessfulData && fatalErrors.length === 0);
-
-  return {
-    success: isSuccessful,
-    data: result,
-    errors,
-  };
-}
-
-// ASYNC INDIVIDUAL CRUD OPS TO SUPABASE
-export async function dbSyncUpsert(table: string, record: any): Promise<void> {
-  const client = getSupabaseClient();
-  if (!client || !record) return;
-  try {
-    const sanitized = sanitizeRecordForSupabase(table, record);
-
-    if (table === 'members' && sanitized.member_id) {
-      let { error: memErr } = await client.from('members').upsert(sanitized, { onConflict: 'member_id' });
-      if (memErr && (memErr.message?.includes('members_member_id_key') || memErr.message?.includes('duplicate key') || memErr.message?.includes('unique constraint'))) {
-        const { id, ...updateFields } = sanitized;
-        const updateRes = await client.from('members').update(updateFields).eq('member_id', sanitized.member_id);
-        if (!updateRes.error) return;
-      } else if (!memErr) {
-        return;
-      }
-    }
-
-    if (table === 'settings') {
-      const { error: settingsErr } = await upsertSettingsWithFallback(client, sanitized);
-      if (!settingsErr) return;
-      console.warn(`Supabase upsert failed on settings:`, settingsErr.message);
-      return;
-    }
-
-    let { error } = await client.from(table).upsert(sanitized);
-    if (error && !isTableNotFoundError(error)) {
-      if (
-        table === 'giving' &&
-        (error.message?.includes('tithe_number') ||
-          String(error.details || '').includes('tithe_number') ||
-          String((error as any).hint || '').includes('tithe_number'))
-      ) {
-        const { tithe_number, ...rest } = sanitized;
-        const retry = await client.from(table).upsert(rest);
-        if (!retry.error) return;
-      }
-      if (table === 'events' && (error.message?.includes('updated_at') || String(error.details || '').includes('updated_at'))) {
-        const { updated_at, ...rest } = sanitized;
-        const retry = await client.from(table).upsert(rest);
-        if (!retry.error) return;
-      }
-      // If foreign key constraint failed on attendance/prayer_requests/pastoral_care, retry with member_id: null
-      if (
-        (error.message?.includes('foreign key') || error.message?.includes('fkey')) &&
-        (table === 'attendance' || table === 'prayer_requests' || table === 'pastoral_care')
-      ) {
-        const fallback = { ...sanitized, member_id: null };
-        const retry = await client.from(table).upsert(fallback);
-        if (!retry.error) return;
-      }
-      console.warn(`Supabase upsert failed on ${table}:`, error.message);
-    }
-  } catch (err: any) {
-    if (!isTableNotFoundError(err)) {
-      console.warn(`Supabase upsert failed on ${table}:`, err?.message || err);
-    }
-  }
-}
-
-export async function syncRosterAssignmentToSupabase(
-  assignment: RosterAssignment
-): Promise<{ success: boolean; error?: string }> {
-  const client = getSupabaseClient();
-  if (!client) return { success: false, error: 'Supabase is not configured.' };
-
-  try {
-    const { error } = await client
-      .from('roster_assignments')
-      .upsert(sanitizeRecordForSupabase('roster_assignments', assignment));
-    if (error) {
-      return { success: false, error: error.message };
-    }
-    return { success: true };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown Supabase roster sync error.';
-    return { success: false, error: message };
-  }
-}
-
-export async function deleteRosterAssignmentFromSupabase(
-  id: string
-): Promise<{ success: boolean; error?: string }> {
-  const client = getSupabaseClient();
-  if (!client) return { success: false, error: 'Supabase is not configured.' };
-
-  try {
-    const { error } = await client.from('roster_assignments').delete().eq('id', id);
-    if (error) {
-      return { success: false, error: error.message };
-    }
-    return { success: true };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown Supabase roster delete error.';
-    return { success: false, error: message };
-  }
-}
-
-export async function dbSyncDelete(table: string, id: string): Promise<void> {
-  const client = getSupabaseClient();
-  if (!client) return;
-  try {
-    const { error } = await client.from(table).delete().eq('id', id);
-    if (error && !isTableNotFoundError(error)) {
-      console.warn(`Supabase delete failed on ${table}:`, error.message);
-    }
-  } catch (err: any) {
-    if (!isTableNotFoundError(err)) {
-      console.warn(`Supabase delete failed on ${table}:`, err?.message || err);
-    }
-  }
-}
+if(typeof window!=='undefined') window.addEventListener('online',()=>{void flushSyncOutbox();});

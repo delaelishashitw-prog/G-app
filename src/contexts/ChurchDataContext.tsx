@@ -1,3 +1,5 @@
+import { withSyncTransaction, hasPendingChanges } from '../lib/supabase';
+import { createPickupToken, findPickup } from '../lib/childSafety';
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
   Member,
@@ -37,44 +39,12 @@ import {
   ChurchFinanceRecord,
   DepartmentBudget,
 } from '../types/database.types';
-import {
-  initialSettings,
-  sampleMembers,
-  sampleVisitors,
-  sampleServices,
-  sampleAttendance,
-  sampleHeadcounts,
-  sampleGiving,
-  sampleCampaigns,
-  samplePledges,
-  sampleExpenses,
-  sampleChurchAccounts,
-  sampleChurchFinances,
-  sampleDepartmentBudgets,
-  sampleMinistries,
-  sampleSmallGroups,
-  sampleEvents,
-  samplePastoralCare,
-  samplePrayerRequests,
-  sampleCommunications,
-  sampleAuditLogs,
-  sampleWelfareContributions,
-  sampleWelfareClaims,
-  sampleWelfareEvents,
-  sampleWelfareEventContributions,
-  sampleChildCheckIns,
-  sampleAssets,
-  sampleRosterAssignments,
-  sampleFoundationCohorts,
-  sampleFoundationStudents,
-  samplePastoralVisitations,
-  samplePastoralCounselingSessions,
-  sampleIntercessoryWatchSlots,
-} from '../lib/initialData';
+import { initialSettings } from '../lib/initialData';
 import { useAuth } from './AuthContext';
 import {
   isSupabaseConfigured,
   getStoredSupabaseConfig,
+  getSupabaseClient,
   saveSupabaseCredentials,
   clearSupabaseCredentials,
   testSupabaseConnection,
@@ -85,6 +55,9 @@ import {
   syncRosterAssignmentToSupabase,
   deleteRosterAssignmentFromSupabase,
   ChurchAllData,
+  SYNC_TABLES,
+  mergePendingRecords,
+  flushSyncOutbox,
 } from '../lib/supabase';
 import {
   addMember as addMemberRecord,
@@ -415,11 +388,11 @@ interface ChurchDataContextType {
   childCheckIns: ChildCheckInRecord[];
   checkInChild: (
     record: Omit<ChildCheckInRecord, 'id' | 'security_code' | 'created_at' | 'status'> & { security_code?: string }
-  ) => ChildCheckInRecord;
+  ) => Promise<ChildCheckInRecord>;
   checkOutChild: (
     id: string,
     details: { checked_out_to_person: string; verified_by_leader: string }
-  ) => void;
+  ) => Promise<void>;
   summonChildParent: (id: string, notes?: string) => void;
   deleteChildCheckIn: (id: string) => void;
 
@@ -474,891 +447,229 @@ interface ChurchDataContextType {
 const ChurchDataContext = createContext<ChurchDataContextType | undefined>(undefined);
 
 export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentUser } = useAuth();
+  const { currentUser, isAuthenticated, canAccess } = useAuth();
   const isInitialMount = React.useRef(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(() => new Date());
 
-  const [settings, setSettings] = useState<ChurchSettings>(() => loadSettingsFromStorage(initialSettings));
-  const [members, setMembers] = useState<Member[]>(() => {
-    const loaded = loadFromStorage<Member[]>('members', []);
-    if (!loaded || loaded.length === 0) return sampleMembers;
-    const existingIds = new Set(loaded.map((m) => m.id));
-    const missing = sampleMembers.filter((m) => !existingIds.has(m.id));
-    return missing.length > 0 ? [...loaded, ...missing] : loaded;
-  });
-  const [visitors, setVisitors] = useState<Visitor[]>(() => {
-    const loaded = loadFromStorage<Visitor[]>('visitors', []);
-    return loaded && loaded.length > 0 ? loaded : sampleVisitors;
-  });
-  const [services, setServices] = useState<ChurchService[]>(() => {
-    const loaded = loadFromStorage<ChurchService[]>('services', []);
-    return loaded && loaded.length > 0 ? loaded : sampleServices;
-  });
-  const [attendance, setAttendance] = useState<AttendanceRecord[]>(() => {
-    const loaded = loadFromStorage<AttendanceRecord[]>('attendance', []);
-    return loaded && loaded.length > 0 ? loaded : sampleAttendance;
-  });
-  const [headcounts, setHeadcounts] = useState<HeadcountRecord[]>(() => {
-    const loaded = loadFromStorage<HeadcountRecord[]>('headcounts', []);
-    return loaded && loaded.length > 0 ? loaded : sampleHeadcounts;
-  });
-  const [giving, setGiving] = useState<GivingRecord[]>(() => {
-    const loaded = loadFromStorage<GivingRecord[]>('giving', []);
-    return loaded && loaded.length > 0 ? loaded : sampleGiving;
-  });
-  const [campaigns, setCampaigns] = useState<PledgeCampaign[]>(() => {
-    const loaded = loadFromStorage<PledgeCampaign[]>('campaigns', []);
-    return loaded && loaded.length > 0 ? loaded : sampleCampaigns;
-  });
-  const [pledges, setPledges] = useState<PledgeRecord[]>(() => {
-    const loaded = loadFromStorage<PledgeRecord[]>('pledges', []);
-    return loaded && loaded.length > 0 ? loaded : samplePledges;
-  });
-  const [expenses, setExpenses] = useState<ExpenseRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem('gwcc_expenses');
-      if (saved !== null) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          if (parsed.some((e: any) => typeof e?.id === 'string' && e.id.startsWith('exp-'))) {
-            localStorage.removeItem('gwcc_expenses');
-            return [];
-          }
-          return parsed;
-        }
-      }
-    } catch {
-      // fallback
-    }
-    return sampleExpenses;
-  });
+  const [settings, setSettings] = useState<ChurchSettings>(initialSettings);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [visitors, setVisitors] = useState<Visitor[]>([]);
+  const [services, setServices] = useState<ChurchService[]>([]);
+  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
+  const [headcounts, setHeadcounts] = useState<HeadcountRecord[]>([]);
+  const [giving, setGiving] = useState<GivingRecord[]>([]);
+  const [campaigns, setCampaigns] = useState<PledgeCampaign[]>([]);
+  const [pledges, setPledges] = useState<PledgeRecord[]>([]);
+  const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
 
-  const [churchAccounts, setChurchAccounts] = useState<ChurchAccount[]>(() => {
-    try {
-      const saved = localStorage.getItem('gwcc_churchAccounts');
-      if (saved !== null) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          if (parsed.some((a: any) => a.id === 'acc-1' && a.current_balance === 48500)) {
-            const zeroed = parsed.map((a: any) => ({ ...a, current_balance: 0.00 }));
-            localStorage.setItem('gwcc_churchAccounts', JSON.stringify(zeroed));
-            return zeroed;
-          }
-          return parsed;
-        }
-      }
-    } catch {
-      // fallback
-    }
-    return sampleChurchAccounts;
-  });
+  const [churchAccounts, setChurchAccounts] = useState<ChurchAccount[]>([]);
 
-  const [churchFinances, setChurchFinances] = useState<ChurchFinanceRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem('gwcc_churchFinances');
-      if (saved !== null) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      }
-    } catch {
-      // fallback
-    }
-    return sampleChurchFinances;
-  });
+  const [churchFinances, setChurchFinances] = useState<ChurchFinanceRecord[]>([]);
 
-  const [departmentBudgets, setDepartmentBudgets] = useState<DepartmentBudget[]>(() => {
-    try {
-      const saved = localStorage.getItem('gwcc_departmentBudgets');
-      if (saved !== null) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      }
-    } catch {
-      // fallback
-    }
-    return sampleDepartmentBudgets;
-  });
-  const [ministries, setMinistries] = useState<Ministry[]>(() => {
-    const loaded = loadFromStorage<Ministry[]>('ministries', []);
-    return loaded && loaded.length > 0 ? loaded : sampleMinistries;
-  });
-  const [smallGroups, setSmallGroups] = useState<SmallGroup[]>(() => {
-    const loaded = loadFromStorage<SmallGroup[]>('smallGroups', []);
-    return loaded && loaded.length > 0 ? loaded : sampleSmallGroups;
-  });
-  const [events, setEvents] = useState<ChurchEvent[]>(() => {
-    const loaded = loadFromStorage<ChurchEvent[]>('events', []);
-    return loaded && loaded.length > 0 ? loaded : sampleEvents;
-  });
-  const [pastoralCare, setPastoralCare] = useState<PastoralCareRecord[]>(() => {
-    const loaded = loadFromStorage<PastoralCareRecord[]>('pastoralCare', []);
-    return loaded && loaded.length > 0 ? loaded : samplePastoralCare;
-  });
-  const [prayerRequests, setPrayerRequests] = useState<PrayerRequest[]>(() => {
-    const loaded = loadFromStorage<PrayerRequest[]>('prayerRequests', []);
-    return loaded && loaded.length > 0 ? loaded : samplePrayerRequests;
-  });
-  const [communications, setCommunications] = useState<CommunicationRecord[]>(() => {
-    const loaded = loadFromStorage<CommunicationRecord[]>('communications', []);
-    return loaded && loaded.length > 0 ? loaded : sampleCommunications;
-  });
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
-    const loaded = loadFromStorage<AuditLog[]>('auditLogs', []);
-    return loaded && loaded.length > 0 ? loaded : sampleAuditLogs;
-  });
+  const [departmentBudgets, setDepartmentBudgets] = useState<DepartmentBudget[]>([]);
+  const [ministries, setMinistries] = useState<Ministry[]>([]);
+  const [smallGroups, setSmallGroups] = useState<SmallGroup[]>([]);
+  const [events, setEvents] = useState<ChurchEvent[]>([]);
+  const [pastoralCare, setPastoralCare] = useState<PastoralCareRecord[]>([]);
+  const [prayerRequests, setPrayerRequests] = useState<PrayerRequest[]>([]);
+  const [communications, setCommunications] = useState<CommunicationRecord[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
-  const [welfareContributions, setWelfareContributions] = useState<WelfareContribution[]>(() => {
-    const loaded = loadFromStorage<WelfareContribution[]>('welfareContributions', []);
-    return loaded && loaded.length > 0 ? loaded : sampleWelfareContributions;
-  });
+  const [welfareContributions, setWelfareContributions] = useState<WelfareContribution[]>([]);
 
-  const [welfareClaims, setWelfareClaims] = useState<WelfareClaim[]>(() => {
-    const loaded = loadFromStorage<WelfareClaim[]>('welfareClaims', []);
-    return loaded && loaded.length > 0 ? loaded : sampleWelfareClaims;
-  });
+  const [welfareClaims, setWelfareClaims] = useState<WelfareClaim[]>([]);
 
-  const [welfareEvents, setWelfareEvents] = useState<WelfareEvent[]>(() => {
-    const loaded = loadFromStorage<WelfareEvent[]>('welfareEvents', []);
-    const seedIds = new Set(['wevt-1', 'wevt-2', 'wevt-3', 'wevt-4', 'wevt-5', 'wevt-6', 'wevt-7']);
-    const nonSeed = (loaded || []).filter((e) => !seedIds.has(e.id));
-    if (loaded && loaded.length !== nonSeed.length) {
-      saveToStorage('welfareEvents', nonSeed);
-    }
-    return nonSeed;
-  });
+  const [welfareEvents, setWelfareEvents] = useState<WelfareEvent[]>([]);
 
-  const [welfareEventContributions, setWelfareEventContributions] = useState<WelfareEventContribution[]>(() => {
-    const loaded = loadFromStorage<WelfareEventContribution[]>('welfareEventContributions', []);
-    const seedEventIds = new Set(['wevt-1', 'wevt-2', 'wevt-3', 'wevt-4', 'wevt-5', 'wevt-6', 'wevt-7']);
-    const seedContributionIds = new Set([
-      'wec-1', 'wec-2', 'wec-3', 'wec-4', 'wec-5', 'wec-6', 'wec-7',
-      'wec-8', 'wec-9', 'wec-10', 'wec-11', 'wec-12', 'wec-13',
-    ]);
-    const nonSeed = (loaded || []).filter(
-      (c) => !seedContributionIds.has(c.id) && !seedEventIds.has(c.event_id)
-    );
-    if (loaded && loaded.length !== nonSeed.length) {
-      saveToStorage('welfareEventContributions', nonSeed);
-    }
-    return nonSeed;
-  });
+  const [welfareEventContributions, setWelfareEventContributions] = useState<WelfareEventContribution[]>([]);
 
-  const [childCheckIns, setChildCheckIns] = useState<ChildCheckInRecord[]>(() => {
-    const loaded = loadFromStorage<ChildCheckInRecord[]>('childCheckIns', []);
-    return loaded && loaded.length > 0 ? loaded : sampleChildCheckIns;
-  });
+  const [childCheckIns, setChildCheckIns] = useState<ChildCheckInRecord[]>([]);
 
-  const [assets, setAssets] = useState<ChurchAsset[]>(() => {
-    const loaded = loadFromStorage<ChurchAsset[]>('assets', []);
-    return loaded && loaded.length > 0 ? loaded : sampleAssets;
-  });
+  const [assets, setAssets] = useState<ChurchAsset[]>([]);
 
-  const [rosterAssignments, setRosterAssignments] = useState<RosterAssignment[]>(() => {
-    const loaded = loadFromStorage<RosterAssignment[]>('rosterAssignments', []);
-    if (!loaded || loaded.length === 0) return sampleRosterAssignments;
-    const existingIds = new Set(loaded.map((r) => r.id));
-    const missing = sampleRosterAssignments.filter((r) => !existingIds.has(r.id));
-    return missing.length > 0 ? [...loaded, ...missing] : loaded;
-  });
-  const previousRosterAssignmentsRef = React.useRef(rosterAssignments);
-  const pendingRosterSyncRef = React.useRef(new Map<string, RosterAssignment | null>());
-  const isRosterSyncingRef = React.useRef(false);
+  const [rosterAssignments, setRosterAssignments] = useState<RosterAssignment[]>([]);
 
-  const [foundationCohorts, setFoundationCohorts] = useState<FoundationCohort[]>(() => {
-    const loaded = loadFromStorage<FoundationCohort[]>('foundationCohorts', []);
-    return loaded && loaded.length > 0 ? loaded : sampleFoundationCohorts;
-  });
+  const [foundationCohorts, setFoundationCohorts] = useState<FoundationCohort[]>([]);
 
-  const [foundationStudents, setFoundationStudents] = useState<FoundationStudent[]>(() => {
-    const loaded = loadFromStorage<FoundationStudent[]>('foundationStudents', []);
-    return loaded && loaded.length > 0 ? loaded : sampleFoundationStudents;
-  });
+  const [foundationStudents, setFoundationStudents] = useState<FoundationStudent[]>([]);
 
-  const [pastoralVisitations, setPastoralVisitations] = useState<PastoralVisitationRecord[]>(() => {
-    const loaded = loadFromStorage<PastoralVisitationRecord[]>('pastoralVisitations', []);
-    return loaded && loaded.length > 0 ? loaded : samplePastoralVisitations;
-  });
+  const [pastoralVisitations, setPastoralVisitations] = useState<PastoralVisitationRecord[]>([]);
 
-  const [counselingSessions, setCounselingSessions] = useState<PastoralCounselingSession[]>(() => {
-    const loaded = loadFromStorage<PastoralCounselingSession[]>('counselingSessions', []);
-    return loaded && loaded.length > 0 ? loaded : samplePastoralCounselingSessions;
-  });
+  const [counselingSessions, setCounselingSessions] = useState<PastoralCounselingSession[]>([]);
 
-  const [intercessorySlots, setIntercessorySlots] = useState<IntercessoryWatchSlot[]>(() => {
-    const loaded = loadFromStorage<IntercessoryWatchSlot[]>('intercessorySlots', []);
-    return loaded && loaded.length > 0 ? loaded : sampleIntercessoryWatchSlots;
-  });
+  const [intercessorySlots, setIntercessorySlots] = useState<IntercessoryWatchSlot[]>([]);
 
-  useEffect(() => {
-    const handleStorageSync = (event: StorageEvent) => {
-      if (!event.key) return;
+  const [dataOwner,setDataOwner]=useState('');
+  const pledgesRef=React.useRef(pledges);pledgesRef.current=pledges;
+  const commitPledges:React.Dispatch<React.SetStateAction<PledgeRecord[]>>=action=>{const next=typeof action==='function'?action(pledgesRef.current):action;pledgesRef.current=next;setPledges(next);};
+  const givingRef=React.useRef(giving);givingRef.current=giving;
+  const commitGiving:React.Dispatch<React.SetStateAction<GivingRecord[]>>=action=>{const next=typeof action==='function'?action(givingRef.current):action;givingRef.current=next;setGiving(next);};
+  const financeStateRef=React.useRef({finances:churchFinances,accounts:churchAccounts,budgets:departmentBudgets});
+  financeStateRef.current={finances:churchFinances,accounts:churchAccounts,budgets:departmentBudgets};
+  const commitFinances:React.Dispatch<React.SetStateAction<ChurchFinanceRecord[]>>=action=>{
+    const next=typeof action==='function'?action(financeStateRef.current.finances):action;
+    financeStateRef.current.finances=next;setChurchFinances(next);
+  };
+  const commitAccounts:React.Dispatch<React.SetStateAction<ChurchAccount[]>>=action=>{
+    const next=typeof action==='function'?action(financeStateRef.current.accounts):action;
+    financeStateRef.current.accounts=next;setChurchAccounts(next);
+  };
+  const commitBudgets:React.Dispatch<React.SetStateAction<DepartmentBudget[]>>=action=>{
+    const next=typeof action==='function'?action(financeStateRef.current.budgets):action;
+    financeStateRef.current.budgets=next;setDepartmentBudgets(next);
+  };
 
-      if (event.key === 'services') {
-        try {
-          const nextValue = event.newValue ? JSON.parse(event.newValue) : sampleServices;
-          if (Array.isArray(nextValue)) {
-            setServices(nextValue);
-          }
-        } catch {
-          // Ignore malformed storage payloads and keep current state.
-        }
-      }
-
-      if (event.key === 'rosterAssignments') {
-        try {
-          const nextValue = event.newValue ? JSON.parse(event.newValue) : sampleRosterAssignments;
-          if (Array.isArray(nextValue)) {
-            setRosterAssignments(nextValue);
-          }
-        } catch {
-          // Ignore malformed storage payloads and keep current state.
-        }
-      }
-    };
-
-    window.addEventListener('storage', handleStorageSync);
-    return () => window.removeEventListener('storage', handleStorageSync);
-  }, []);
-
-  // Supabase states
   const [supabaseConfig, setSupabaseConfig] = useState(getStoredSupabaseConfig());
-  const [supabaseStatus, setSupabaseStatus] = useState<SupabaseStatus>(() => getInitialSupabaseStatus());
+  const [supabaseStatus, setSupabaseStatus] = useState<SupabaseStatus>('disconnected');
   const [supabaseError, setSupabaseError] = useState<string | null>(null);
-  const [lastSyncTime, setLastSyncTime] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem('gwcc_last_supabase_sync') || null;
-    } catch {
-      return null;
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const dataSetters: Record<string, React.Dispatch<React.SetStateAction<any[]>>> = {
+    members: setMembers,
+    visitors: setVisitors,
+    services: setServices,
+    attendance: setAttendance,
+    headcounts: setHeadcounts,
+    giving: setGiving,
+    campaigns: setCampaigns,
+    pledges: setPledges,
+    expenses: setExpenses,
+    churchAccounts: setChurchAccounts,
+    churchFinances: setChurchFinances,
+    departmentBudgets: setDepartmentBudgets,
+    ministries: setMinistries,
+    smallGroups: setSmallGroups,
+    events: setEvents,
+    pastoralCare: setPastoralCare,
+    prayerRequests: setPrayerRequests,
+    communications: setCommunications,
+    auditLogs: setAuditLogs,
+    welfareContributions: setWelfareContributions,
+    welfareClaims: setWelfareClaims,
+    welfareEvents: setWelfareEvents,
+    welfareEventContributions: setWelfareEventContributions,
+    childCheckIns: setChildCheckIns,
+    assets: setAssets,
+    rosterAssignments: setRosterAssignments,
+    foundationCohorts: setFoundationCohorts,
+    foundationStudents: setFoundationStudents,
+    pastoralVisitations: setPastoralVisitations,
+    counselingSessions: setCounselingSessions,
+    intercessorySlots: setIntercessorySlots
+  };
+  const currentData = { members, visitors, services, attendance, headcounts, giving, campaigns, pledges, expenses, churchAccounts, churchFinances, departmentBudgets, ministries, smallGroups, events, pastoralCare, prayerRequests, communications, auditLogs, welfareContributions, welfareClaims, welfareEvents, welfareEventContributions, childCheckIns, assets, rosterAssignments, foundationCohorts, foundationStudents, pastoralVisitations, counselingSessions, intercessorySlots };
+  const currentDataRef=React.useRef(currentData); currentDataRef.current=currentData;
+  const documentBaseline=React.useRef<Record<string,any[]>>({});
+  const incomingDocuments=React.useRef<Record<string,any[]>>({});
+  const setterRef=React.useRef(dataSetters); setterRef.current=dataSetters;
+
+  const applyData=useCallback((data:Partial<ChurchAllData>)=>{
+    for(const {key} of SYNC_TABLES) {
+      if(key==='settings') { if(data.settings) setSettings(normalizeSettings(data.settings,initialSettings)); continue; }
+      const rows=(data as any)[key];
+      if(Array.isArray(rows)) { incomingDocuments.current[key]=rows; setterRef.current[key]?.(rows); }
     }
-  });
-
-  // Skip writing identical datasets to localStorage immediately on mount
-  useEffect(() => {
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      return;
-    }
-    saveToStorage('settings', settings);
-  }, [settings]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('members', members);
-  }, [members]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('visitors', visitors);
-  }, [visitors]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('services', services);
-  }, [services]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('attendance', attendance);
-  }, [attendance]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('headcounts', headcounts);
-  }, [headcounts]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('giving', giving);
-  }, [giving]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('campaigns', campaigns);
-  }, [campaigns]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('pledges', pledges);
-  }, [pledges]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('expenses', expenses);
-  }, [expenses]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('churchAccounts', churchAccounts);
-  }, [churchAccounts]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('churchFinances', churchFinances);
-  }, [churchFinances]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('departmentBudgets', departmentBudgets);
-  }, [departmentBudgets]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('ministries', ministries);
-  }, [ministries]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('smallGroups', smallGroups);
-  }, [smallGroups]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('events', events);
-  }, [events]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('pastoralCare', pastoralCare);
-  }, [pastoralCare]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('prayerRequests', prayerRequests);
-  }, [prayerRequests]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('communications', communications);
-  }, [communications]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('auditLogs', auditLogs);
-  }, [auditLogs]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('welfareContributions', welfareContributions);
-  }, [welfareContributions]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('welfareClaims', welfareClaims);
-  }, [welfareClaims]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('welfareEvents', welfareEvents);
-  }, [welfareEvents]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('welfareEventContributions', welfareEventContributions);
-  }, [welfareEventContributions]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('childCheckIns', childCheckIns);
-  }, [childCheckIns]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('assets', assets);
-  }, [assets]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('rosterAssignments', rosterAssignments);
-  }, [rosterAssignments]);
-
-  const flushPendingRosterSync = useCallback(async () => {
-    const isOnline = typeof navigator === 'undefined' || navigator.onLine;
-    if (
-      currentUser.role === 'member' ||
-      !isSupabaseConfigured() ||
-      !isOnline ||
-      isRosterSyncingRef.current ||
-      pendingRosterSyncRef.current.size === 0
-    ) {
-      return;
-    }
-
-    isRosterSyncingRef.current = true;
-    const pending = [...pendingRosterSyncRef.current.entries()];
-    const results = await Promise.all(
-      pending.map(async ([id, assignment]) => ({
-        id,
-        assignment,
-        result: assignment
-          ? await syncRosterAssignmentToSupabase(assignment)
-          : await deleteRosterAssignmentFromSupabase(id),
-      }))
-    );
-    const errors: string[] = [];
-
-    results.forEach(({ id, assignment, result }) => {
-      if (!result.success) {
-        errors.push(`${id}: ${result.error || 'Unknown roster sync error.'}`);
-        // Prune from pending queue so automatic loop doesn't thrash; user can retry via button
-        pendingRosterSyncRef.current.delete(id);
-        return;
-      }
-      if (pendingRosterSyncRef.current.get(id) === assignment) {
-        pendingRosterSyncRef.current.delete(id);
-      }
-    });
-
-    isRosterSyncingRef.current = false;
-
-    if (errors.length > 0) {
-      const message = `Service roster cloud sync failed: ${errors.join('; ')}`;
-      console.warn(message);
-      setSupabaseStatus('error');
-      setSupabaseError(message);
-      return;
-    }
-
-    const now = new Date().toISOString();
-    setSupabaseStatus('connected');
-    setSupabaseError(null);
-    setLastSyncTime(now);
-    try {
-      localStorage.setItem('gwcc_last_supabase_sync', now);
-    } catch (error) {
-      console.warn('Could not save the roster sync timestamp:', error);
-    }
-
-    if (pendingRosterSyncRef.current.size > 0) {
-      void flushPendingRosterSync();
-    }
-  }, [currentUser.role]);
-
-  const clearSupabaseError = useCallback(() => {
-    setSupabaseError(null);
-    if (supabaseStatus === 'error') {
-      setSupabaseStatus(isSupabaseConfigured() ? 'connected' : 'disconnected');
-    }
-  }, [supabaseStatus]);
-
-  const retryRosterSync = useCallback(async () => {
-    rosterAssignments.forEach((item) => {
-      pendingRosterSyncRef.current.set(item.id, item);
-    });
-    setSupabaseError(null);
-    await flushPendingRosterSync();
-  }, [rosterAssignments, flushPendingRosterSync]);
-
-  useEffect(() => {
-    if (currentUser.role === 'member') {
-      pendingRosterSyncRef.current.clear();
-      previousRosterAssignmentsRef.current = rosterAssignments;
-      return;
-    }
-
-    const previousById = new Map(previousRosterAssignmentsRef.current.map((item) => [item.id, item]));
-    const nextById = new Map(rosterAssignments.map((item) => [item.id, item]));
-
-    previousById.forEach((previous, id) => {
-      if (!nextById.has(id)) pendingRosterSyncRef.current.set(id, null);
-      else if (nextById.get(id) !== previous) pendingRosterSyncRef.current.set(id, nextById.get(id)!);
-    });
-    nextById.forEach((next, id) => {
-      if (!previousById.has(id)) pendingRosterSyncRef.current.set(id, next);
-    });
-
-    previousRosterAssignmentsRef.current = rosterAssignments;
-    void flushPendingRosterSync();
-  }, [currentUser.role, rosterAssignments, flushPendingRosterSync]);
-
-  useEffect(() => {
-    const handleOnline = () => void flushPendingRosterSync();
-    window.addEventListener('online', handleOnline);
-    return () => window.removeEventListener('online', handleOnline);
-  }, [flushPendingRosterSync]);
-
-  useEffect(() => {
-    void flushPendingRosterSync();
-  }, [supabaseConfig.url, flushPendingRosterSync]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('foundationCohorts', foundationCohorts);
-  }, [foundationCohorts]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('foundationStudents', foundationStudents);
-  }, [foundationStudents]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('pastoralVisitations', pastoralVisitations);
-  }, [pastoralVisitations]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('counselingSessions', counselingSessions);
-  }, [counselingSessions]);
-
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    saveToStorage('intercessorySlots', intercessorySlots);
-  }, [intercessorySlots]);
-
-  // Initial Supabase check and hydration
-  useEffect(() => {
-    if (currentUser.role === 'member' || !isSupabaseConfigured()) {
-      setSupabaseStatus('disconnected');
-      return;
-    }
-
-    let isMounted = true;
-
-    async function initSupabaseSync() {
-      setSupabaseStatus('syncing');
-      const test = await testSupabaseConnection();
-      if (!isMounted) return;
-
-      if (!test.success) {
-        setSupabaseStatus('error');
-        setSupabaseError(test.message);
-        return;
-      }
-
-      if (test.tablesStatus === 'tables_missing') {
-        setSupabaseStatus('tables_missing');
-        setSupabaseError(null);
-        return;
-      }
-
-      setSupabaseStatus('connected');
-      setSupabaseError(null);
-
-      // Attempt to pull latest cloud records
-      try {
-        const pullRes = await pullAllDataFromSupabase();
-        if (!isMounted) return;
-
-        if (pullRes.success && pullRes.data) {
-          const { data } = pullRes;
-          if (data.members && data.members.length > 0) setMembers(data.members);
-          if (data.visitors && data.visitors.length > 0) setVisitors(data.visitors);
-          if (data.services && data.services.length > 0) setServices(data.services);
-          if (data.rosterAssignments) {
-            pendingRosterSyncRef.current.clear();
-            previousRosterAssignmentsRef.current = data.rosterAssignments;
-            setRosterAssignments(data.rosterAssignments);
-          }
-          if (data.attendance && data.attendance.length > 0) setAttendance(data.attendance);
-          if (data.headcounts && data.headcounts.length > 0) setHeadcounts(data.headcounts);
-          if (data.giving && data.giving.length > 0) setGiving(data.giving);
-          if (data.expenses && data.expenses.length > 0) setExpenses(data.expenses);
-          if (data.churchAccounts && data.churchAccounts.length > 0) setChurchAccounts(data.churchAccounts);
-          if (data.churchFinances && data.churchFinances.length > 0) setChurchFinances(data.churchFinances);
-          if (data.campaigns && data.campaigns.length > 0) setCampaigns(data.campaigns);
-          if (data.pledges && data.pledges.length > 0) setPledges(data.pledges);
-          if (data.ministries && data.ministries.length > 0) setMinistries(data.ministries);
-          if (data.smallGroups && data.smallGroups.length > 0) setSmallGroups(data.smallGroups);
-          if (data.events && data.events.length > 0) setEvents(data.events);
-          if (data.pastoralCare && data.pastoralCare.length > 0) setPastoralCare(data.pastoralCare);
-          if (data.prayerRequests && data.prayerRequests.length > 0) setPrayerRequests(data.prayerRequests);
-          if (data.communications && data.communications.length > 0) setCommunications(data.communications);
-          if (data.welfareContributions && data.welfareContributions.length > 0) setWelfareContributions(data.welfareContributions);
-          if (data.welfareClaims && data.welfareClaims.length > 0) setWelfareClaims(data.welfareClaims);
-          if (data.welfareEvents && data.welfareEvents.length > 0) setWelfareEvents(data.welfareEvents);
-          if (data.welfareEventContributions && data.welfareEventContributions.length > 0) setWelfareEventContributions(data.welfareEventContributions);
-          if (data.settings) setSettings(normalizeSettings(data.settings, initialSettings));
-
-          const now = new Date().toISOString();
-          setLastSyncTime(now);
-          try {
-            localStorage.setItem('gwcc_last_supabase_sync', now);
-          } catch {
-            // Ignore
-          }
-        }
-      } catch (err: any) {
-        console.warn('Initial Supabase pull note:', err);
-      }
-    }
-
-    initSupabaseSync();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [currentUser.role]);
-
-  const connectSupabase = useCallback(async (url: string, key: string) => {
-    return connectSupabaseRecord(url, key, setSupabaseStatus, setSupabaseError, setSupabaseConfig);
-  }, []);
-
-  const disconnectSupabase = useCallback(() => {
-    disconnectSupabaseRecord(setSupabaseConfig, setSupabaseStatus, setSupabaseError);
-  }, []);
-
-  const pushToSupabase = useCallback(
-    async (onProgress?: (step: string, percent: number) => void) => {
-      if (currentUser.role === 'member') {
-        const errors = ['Member accounts cannot push church-wide records to Supabase.'];
-        setSupabaseError(errors[0]);
-        return { success: false, summary: {}, errors };
-      }
-
-      const allData: ChurchAllData = {
-        settings,
-        members,
-        visitors,
-        services,
-        rosterAssignments,
-        attendance,
-        headcounts,
-        giving,
-        expenses,
-        churchAccounts,
-        churchFinances,
-        campaigns,
-        pledges,
-        ministries,
-        smallGroups,
-        events,
-        pastoralCare,
-        prayerRequests,
-        communications,
-        welfareContributions,
-        welfareClaims,
-        auditLogs,
-      };
-
-      return pushSupabaseDataRecord(
-        allData,
-        setSupabaseStatus,
-        setSupabaseError,
-        setLastSyncTime,
-        onProgress
-      );
-    },
-    [
-      settings,
-      members,
-      visitors,
-      services,
-      rosterAssignments,
-      attendance,
-      headcounts,
-      giving,
-      expenses,
-      churchAccounts,
-      churchFinances,
-      campaigns,
-      pledges,
-      ministries,
-      smallGroups,
-      events,
-      pastoralCare,
-      prayerRequests,
-      communications,
-      welfareContributions,
-      welfareClaims,
-      auditLogs,
-      currentUser.role,
-      setSupabaseError,
-    ]
-  );
-
-  const pullFromSupabase = useCallback(async () => {
-    if (currentUser.role === 'member') {
-      return { success: false, errors: ['Member accounts cannot pull the full church dataset.'] };
-    }
-
-    const res = await pullSupabaseDataRecord(setSupabaseStatus, setSupabaseError, setLastSyncTime);
-    if (res.success && res.data) {
-      const { data } = res;
-      if (data.members) setMembers(data.members);
-      if (data.visitors) setVisitors(data.visitors);
-      if (data.services) setServices(data.services);
-      if (data.rosterAssignments) {
-        previousRosterAssignmentsRef.current = data.rosterAssignments;
-        setRosterAssignments(data.rosterAssignments);
-      }
-      if (data.attendance) setAttendance(data.attendance);
-      if (data.headcounts) setHeadcounts(data.headcounts);
-      if (data.giving) setGiving(data.giving);
-      if (data.expenses) setExpenses(data.expenses);
-      if (data.churchAccounts) setChurchAccounts(data.churchAccounts);
-      if (data.churchFinances) setChurchFinances(data.churchFinances);
-      if (data.campaigns) setCampaigns(data.campaigns);
-      if (data.pledges) setPledges(data.pledges);
-      if (data.ministries) setMinistries(data.ministries);
-      if (data.smallGroups) setSmallGroups(data.smallGroups);
-      if (data.events) setEvents(data.events);
-      if (data.pastoralCare) setPastoralCare(data.pastoralCare);
-      if (data.prayerRequests) setPrayerRequests(data.prayerRequests);
-      if (data.communications) setCommunications(data.communications);
-      if (data.welfareContributions) setWelfareContributions(data.welfareContributions);
-      if (data.welfareClaims) setWelfareClaims(data.welfareClaims);
-      if (data.auditLogs) setAuditLogs(data.auditLogs);
-      if (data.settings) setSettings(normalizeSettings(data.settings, initialSettings));
-      return { success: true, errors: [] };
-    }
-
-    return { success: false, errors: res.errors };
-  }, [currentUser.role]);
-
-  const refreshData = useCallback(async (): Promise<{ success: boolean; source: 'supabase' | 'local'; message: string }> => {
-    if (currentUser.role === 'member') {
-      return {
-        success: false,
-        source: 'local',
-        message: 'Member accounts can refresh their personal roster from the Member Portal only.',
-      };
-    }
-
+  },[]);
+
+  const clearSupabaseError=useCallback(()=>setSupabaseError(null),[]);
+  const retryRosterSync=useCallback(async()=>{
+    const status=await flushSyncOutbox();setSupabaseError(status.error || null);setSupabaseStatus(status.success?'connected':'error');
+  },[]);
+  const connectSupabase=useCallback(async(url:string,key:string)=>connectSupabaseRecord(url,key,setSupabaseStatus,setSupabaseError,setSupabaseConfig),[]);
+  const disconnectSupabase=useCallback(()=>disconnectSupabaseRecord(setSupabaseConfig,setSupabaseStatus,setSupabaseError),[]);
+
+  const refreshData=useCallback(async():Promise<{success:boolean;source:'supabase'|'local';message:string}>=>{
+    if(!isAuthenticated) return {success:false,source:'local',message:'Please sign in.'};
     setIsRefreshing(true);
     try {
-      const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-      const isConfigured = isSupabaseConfigured();
+      if(typeof navigator!=='undefined' && !navigator.onLine) return {success:true,source:'local',message:'Offline. Your pending records remain on this device.'};
+      await flushSyncOutbox();
+      const result=await pullAllDataFromSupabase();
+      applyData(result.data);
+      if(!result.success) {setSupabaseStatus('error');setSupabaseError(result.errors.join('; '));return {success:false,source:'supabase',message:result.errors.join('; ')};}
+      const now=new Date();setLastRefreshedAt(now);setLastSyncTime(now.toISOString());setSupabaseStatus('connected');setSupabaseError(null);
+      return {success:true,source:'supabase',message:'Church records refreshed; unsent local changes preserved.'};
+    } finally {setIsRefreshing(false);}
+  },[isAuthenticated,currentUser.id,applyData]);
+  useEffect(()=>{const reload=()=>void refreshData();window.addEventListener('gwcc-reload-cloud',reload);return()=>window.removeEventListener('gwcc-reload-cloud',reload);},[refreshData]);
+  const pullFromSupabase=useCallback(async()=>{
+    const result=await refreshData();return {success:result.success,errors:result.success?[]:[result.message]};
+  },[refreshData]);
+  const pushToSupabase=useCallback(async(onProgress?:(step:string,percent:number)=>void)=>{
+    if(!isAuthenticated || !canAccess('settings')) return {success:false,summary:{},errors:['Administrator authorization is required.']};
+    const result=await pushAllDataToSupabase({settings,...currentDataRef.current} as ChurchAllData,onProgress);
+    setSupabaseStatus(result.success?'connected':'error');setSupabaseError(result.errors.join('; ') || null);return result;
+  },[isAuthenticated,currentUser.id,currentUser.role,settings]);
 
-      if (isConfigured && isOnline) {
-        setSupabaseStatus('syncing');
-        const pullRes = await pullAllDataFromSupabase();
-        if (pullRes.success && pullRes.data) {
-          const { data } = pullRes;
-          if (data.members) setMembers(data.members);
-          if (data.visitors) setVisitors(data.visitors);
-          if (data.services) setServices(data.services);
-          if (data.rosterAssignments) {
-            pendingRosterSyncRef.current.clear();
-            previousRosterAssignmentsRef.current = data.rosterAssignments;
-            setRosterAssignments(data.rosterAssignments);
-          }
-          if (data.attendance) setAttendance(data.attendance);
-          if (data.headcounts) setHeadcounts(data.headcounts);
-          if (data.giving) setGiving(data.giving);
-          if (data.expenses) setExpenses(data.expenses);
-          if (data.churchAccounts) setChurchAccounts(data.churchAccounts);
-          if (data.churchFinances) setChurchFinances(data.churchFinances);
-          if (data.campaigns) setCampaigns(data.campaigns);
-          if (data.pledges) setPledges(data.pledges);
-          if (data.ministries) setMinistries(data.ministries);
-          if (data.smallGroups) setSmallGroups(data.smallGroups);
-          if (data.events) setEvents(data.events);
-          if (data.pastoralCare) setPastoralCare(data.pastoralCare);
-          if (data.prayerRequests) setPrayerRequests(data.prayerRequests);
-          if (data.communications) setCommunications(data.communications);
-          if (data.welfareContributions) setWelfareContributions(data.welfareContributions);
-          if (data.welfareClaims) setWelfareClaims(data.welfareClaims);
-          if (data.welfareEvents) setWelfareEvents(data.welfareEvents);
-          if (data.welfareEventContributions) setWelfareEventContributions(data.welfareEventContributions);
-          if (data.auditLogs) setAuditLogs(data.auditLogs);
-          if (data.settings) setSettings(normalizeSettings(data.settings, initialSettings));
-
-          setSupabaseStatus('connected');
-          setSupabaseError(null);
-          const now = new Date();
-          setLastRefreshedAt(now);
-          const nowIso = now.toISOString();
-          setLastSyncTime(nowIso);
-          try {
-            localStorage.setItem('gwcc_last_supabase_sync', nowIso);
-          } catch {
-            // Ignore
-          }
-
-          return {
-            success: true,
-            source: 'supabase',
-            message: 'All church records synced fresh from Supabase cloud database.',
-          };
-        }
-      }
-
-      // Local storage reload
-      const loadedMembers = loadFromStorage<Member[]>('members', []);
-      if (loadedMembers && loadedMembers.length > 0) setMembers(loadedMembers);
-
-      const loadedVisitors = loadFromStorage<Visitor[]>('visitors', []);
-      if (loadedVisitors && loadedVisitors.length > 0) setVisitors(loadedVisitors);
-
-      const loadedServices = loadFromStorage<ChurchService[]>('services', []);
-      if (loadedServices && loadedServices.length > 0) setServices(loadedServices);
-
-      const loadedAttendance = loadFromStorage<AttendanceRecord[]>('attendance', []);
-      if (loadedAttendance && loadedAttendance.length > 0) setAttendance(loadedAttendance);
-
-      const loadedHeadcounts = loadFromStorage<HeadcountRecord[]>('headcounts', []);
-      if (loadedHeadcounts && loadedHeadcounts.length > 0) setHeadcounts(loadedHeadcounts);
-
-      const loadedGiving = loadFromStorage<GivingRecord[]>('giving', []);
-      if (loadedGiving && loadedGiving.length > 0) setGiving(loadedGiving);
-
-      const loadedExpenses = loadFromStorage<ExpenseRecord[]>('expenses', []);
-      if (loadedExpenses && loadedExpenses.length > 0) setExpenses(loadedExpenses);
-
-      const loadedChurchAccounts = loadFromStorage<ChurchAccount[]>('churchAccounts', []);
-      if (loadedChurchAccounts && loadedChurchAccounts.length > 0) setChurchAccounts(loadedChurchAccounts);
-
-      const loadedChurchFinances = loadFromStorage<ChurchFinanceRecord[]>('churchFinances', []);
-      if (loadedChurchFinances && loadedChurchFinances.length > 0) setChurchFinances(loadedChurchFinances);
-
-      const loadedDepartmentBudgets = loadFromStorage<DepartmentBudget[]>('departmentBudgets', []);
-      if (loadedDepartmentBudgets && loadedDepartmentBudgets.length > 0) setDepartmentBudgets(loadedDepartmentBudgets);
-
-      const loadedCampaigns = loadFromStorage<PledgeCampaign[]>('campaigns', []);
-      if (loadedCampaigns && loadedCampaigns.length > 0) setCampaigns(loadedCampaigns);
-
-      const loadedPledges = loadFromStorage<PledgeRecord[]>('pledges', []);
-      if (loadedPledges && loadedPledges.length > 0) setPledges(loadedPledges);
-
-      const loadedMinistries = loadFromStorage<Ministry[]>('ministries', []);
-      if (loadedMinistries && loadedMinistries.length > 0) setMinistries(loadedMinistries);
-
-      const loadedSmallGroups = loadFromStorage<SmallGroup[]>('smallGroups', []);
-      if (loadedSmallGroups && loadedSmallGroups.length > 0) setSmallGroups(loadedSmallGroups);
-
-      const loadedEvents = loadFromStorage<ChurchEvent[]>('events', []);
-      if (loadedEvents && loadedEvents.length > 0) setEvents(loadedEvents);
-
-      const loadedPastoralCare = loadFromStorage<PastoralCareRecord[]>('pastoralCare', []);
-      if (loadedPastoralCare && loadedPastoralCare.length > 0) setPastoralCare(loadedPastoralCare);
-
-      const loadedPrayerRequests = loadFromStorage<PrayerRequest[]>('prayerRequests', []);
-      if (loadedPrayerRequests && loadedPrayerRequests.length > 0) setPrayerRequests(loadedPrayerRequests);
-
-      const loadedCommunications = loadFromStorage<CommunicationRecord[]>('communications', []);
-      if (loadedCommunications && loadedCommunications.length > 0) setCommunications(loadedCommunications);
-
-      const loadedAuditLogs = loadFromStorage<AuditLog[]>('auditLogs', []);
-      if (loadedAuditLogs && loadedAuditLogs.length > 0) setAuditLogs(loadedAuditLogs);
-
-      const loadedSettings = loadFromStorage('settings', initialSettings);
-      if (loadedSettings) setSettings(normalizeSettings(loadedSettings, initialSettings));
-
-      const now = new Date();
-      setLastRefreshedAt(now);
-
-      return {
-        success: true,
-        source: 'local',
-        message: 'Church records reloaded fresh from local storage.',
-      };
-    } catch (err: any) {
-      return {
-        success: false,
-        source: 'local',
-        message: `Refresh failed: ${err?.message || 'Unknown error'}`,
-      };
-    } finally {
-      setTimeout(() => {
-        setIsRefreshing(false);
-      }, 500);
+  useEffect(()=>{
+    // Session changes always clear the previous identity's in-memory records first.
+    documentBaseline.current={};incomingDocuments.current={};setDataOwner('');
+    for(const setter of Object.values(setterRef.current)) setter([]);
+    setSettings(initialSettings);
+    if(!isAuthenticated) {setSupabaseStatus('disconnected');return;}
+    const local:Partial<ChurchAllData>={};
+    for(const {key,table} of SYNC_TABLES) {
+      if(key==='settings') {local.settings=loadFromStorage('settings',initialSettings);continue;}
+      (local as any)[key]=mergePendingRecords(table,loadFromStorage(key,[]));
     }
-  }, [currentUser.role]);
+    applyData(local);setDataOwner(`${currentUser.id}:${currentUser.role}`);
+    let alive=true;
+    const hydrate=async()=>{
+      setSupabaseStatus('syncing');await flushSyncOutbox();
+      const result=await pullAllDataFromSupabase();if(!alive)return;
+      applyData(result.data);setSupabaseStatus(result.success?'connected':'error');setSupabaseError(result.errors.join('; ')||null);
+    };
+    void hydrate();
+    return()=>{alive=false;};
+  },[isAuthenticated,currentUser.id,currentUser.role,applyData]);
+
+  useEffect(()=>{
+    let alive=true;
+    const update=(event:Event)=>{
+      const {owner,records}=(event as CustomEvent).detail || {};
+      if(!isAuthenticated || owner!==currentUser.id) return;
+      const patches:Partial<ChurchAllData>={};
+      for(const {table,key} of SYNC_TABLES) {
+        const items=(records || []).filter((item:any)=>item.table===table);if(!items.length)continue;
+        if(key==='settings') {patches.settings=items.at(-1).record;continue;}
+        const map=new Map((currentDataRef.current as any)[key]?.map((row:any)=>[row.id,row]) || []);
+        for(const item of items) {if(item.deleted)map.delete(item.id);else if(item.record)map.set(item.record.id,item.record);}
+        (patches as any)[key]=mergePendingRecords(table,[...map.values()]);
+      }
+      applyData(patches);
+      // Account balances are owned by the database ledger trigger. Re-read after acknowledgment.
+      if((records || []).some((item:any)=>item.table==='church_finances')) {
+        const client = getSupabaseClient();
+        client?.from('church_accounts').select('*').order('id').then(({data,error})=>{
+          if(alive && !error && data && !hasPendingChanges('church_finances')) applyData({churchAccounts:data});
+        });
+      }
+    };
+    window.addEventListener('gwcc-sync-records',update);return()=>{alive=false;window.removeEventListener('gwcc-sync-records',update);};
+  },[isAuthenticated,currentUser.id,applyData]);
+
+  useEffect(()=>{
+    if(!isAuthenticated || dataOwner!==`${currentUser.id}:${currentUser.role}`) return;
+    saveToStorage('settings',settings);
+    for(const [key,rows] of Object.entries(currentData)) saveToStorage(key,rows);
+  },[isAuthenticated,currentUser.id,currentUser.role,dataOwner,settings,members, visitors, services, attendance, headcounts, giving, campaigns, pledges, expenses, churchAccounts, churchFinances, departmentBudgets, ministries, smallGroups, events, pastoralCare, prayerRequests, communications, auditLogs, welfareContributions, welfareClaims, welfareEvents, welfareEventContributions, childCheckIns, assets, rosterAssignments, foundationCohorts, foundationStudents, pastoralVisitations, counselingSessions, intercessorySlots]);
+
+  // Modules previously stored only on one device now use the same durable outbox.
+  useEffect(()=>{
+    if(!isAuthenticated || dataOwner!==`${currentUser.id}:${currentUser.role}` || currentUser.role==='member')return;
+    for(const key of ['assets', 'departmentBudgets', 'rosterAssignments', 'foundationCohorts', 'foundationStudents', 'pastoralVisitations', 'counselingSessions', 'intercessorySlots']) {
+      const table=SYNC_TABLES.find(item=>item.key===key)?.table;if(!table)continue;
+      const after=(currentData as any)[key] || [];
+      if(incomingDocuments.current[key]) {
+        if(JSON.stringify(incomingDocuments.current[key])!==JSON.stringify(after))continue;
+        documentBaseline.current[key]=after;delete incomingDocuments.current[key];continue;
+      }
+      const before=new Map((documentBaseline.current[key] || []).map(row=>[row.id,row]));
+      for(const row of after) {if(JSON.stringify(before.get(row.id))!==JSON.stringify(row)) void dbSyncUpsert(table,row);before.delete(row.id);}
+      for(const id of before.keys()) void dbSyncDelete(table,id);
+      documentBaseline.current[key]=after;
+    }
+  },[isAuthenticated,currentUser.id,currentUser.role,dataOwner,childCheckIns, assets, departmentBudgets, rosterAssignments, foundationCohorts, foundationStudents, pastoralVisitations, counselingSessions, intercessorySlots]);
 
   const logAction = (action: string, module: string, details: string, recordId?: string) => {
     logActionRecord(action, module, details, recordId, currentUser, setAuditLogs, dbSyncUpsert);
@@ -1374,37 +685,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   // Helper to generate the next member ID matching canonical GWCC-XXXX convention.
-  const generateMemberId = () => {
-    const numbers = members.map((m) => {
-      const match = m.member_id.match(/GWCC-(\d+)/i) || m.member_id.match(/MEMBER-(\d+)/i);
-      return match ? parseInt(match[1], 10) : 0;
-    });
-    const maxNum = numbers.length > 0 ? Math.max(...numbers) : 0;
-    let nextNum = maxNum + 1;
-    let candidate = `GWCC-${String(nextNum).padStart(4, '0')}`;
-    while (members.some((m) => m.member_id.toUpperCase() === candidate.toUpperCase())) {
-      nextNum++;
-      candidate = `GWCC-${String(nextNum).padStart(4, '0')}`;
-    }
-    return candidate;
-  };
-
-  // Helper to generate next Tithe Number: T-1049
-  const generateTitheNumber = () => {
-    const numbers = members.map((m) => {
-      if (!m.tithe_number) return 1000;
-      const match = m.tithe_number.match(/T-(\d+)/i);
-      return match ? parseInt(match[1], 10) : 1000;
-    });
-    const maxNum = numbers.length > 0 ? Math.max(...numbers) : 1000;
-    let nextNum = maxNum + 1;
-    let candidate = `T-${nextNum}`;
-    while (members.some((m) => m.tithe_number?.toUpperCase() === candidate.toUpperCase())) {
-      nextNum++;
-      candidate = `T-${nextNum}`;
-    }
-    return candidate;
-  };
+  const generateMemberId = () => `PENDING-${crypto.randomUUID()}`;
+  const generateTitheNumber = () => `PENDING-${crypto.randomUUID()}`;
 
   // MEMBER OPERATIONS
   const addMember = (data: Omit<Member, 'id' | 'member_id' | 'created_at' | 'updated_at'>): Member =>
@@ -1575,38 +857,26 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   // FINANCE & GIVING
-  const recordGiving = (data: Omit<GivingRecord, 'id' | 'created_at'>): GivingRecord => {
-    const record = recordGivingRecord(data, members, setGiving, logAction, dbSyncUpsert);
-    if (data.pledge_id && data.amount > 0) {
-      setPledges((prev) =>
-        prev.map((p) => {
-          if (p.id === data.pledge_id) {
-            const newPaid = p.amount_paid + data.amount;
-            const newBalance = Math.max(0, p.amount_pledged - newPaid);
-            const newStatus = newBalance === 0 ? 'completed' : 'partially_paid';
-            const updated = {
-              ...p,
-              amount_paid: newPaid,
-              balance: newBalance,
-              status: newStatus as any,
-              updated_at: new Date().toISOString(),
-            };
-            dbSyncUpsert('pledges', updated);
-            return updated;
-          }
-          return p;
-        })
-      );
+  const recordGiving = (data:Omit<GivingRecord,'id'|'created_at'>):GivingRecord=>withSyncTransaction(()=>{
+    if(!isAuthenticated || !canAccess('giving'))throw new Error('Finance staff access is required.');
+    if(!Number.isFinite(data.amount)||data.amount<=0)throw new Error('Enter a finite positive amount.');
+    const pledge=data.pledge_id?pledgesRef.current.find(row=>row.id===data.pledge_id):null;
+    if(data.pledge_id && (!pledge||data.amount>pledge.balance))throw new Error('The amount exceeds the remaining pledge balance.');
+    const record=recordGivingRecord(data,members,commitGiving,logAction,dbSyncUpsert);
+    if(pledge){
+      const amount_paid=pledge.amount_paid+data.amount,balance=pledge.amount_pledged-amount_paid;
+      const updated={...pledge,amount_paid,balance,status:(balance===0?'completed':'partially_paid') as PledgeRecord['status'],updated_at:new Date().toISOString()};
+      commitPledges(prev=>prev.map(row=>row.id===pledge.id?updated:row));void dbSyncUpsert('pledges',updated);
     }
     return record;
-  };
+  });
 
   const updateGiving = (id: string, updates: Partial<GivingRecord>) => {
     updateGivingRecord(id, updates, members, setGiving, logAction, dbSyncUpsert);
   };
 
   const deleteGiving = (id: string) => {
-    deleteGivingRecord(id, setGiving, logAction, dbSyncDelete);
+    voidGivingRecord(id,'Removed by the finance office',`${currentUser.first_name} ${currentUser.last_name}`,setGiving,logAction,dbSyncUpsert);
   };
 
   const voidGiving = (id: string, reason: string) => {
@@ -1638,23 +908,23 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   const recordChurchFinance = (data: Omit<ChurchFinanceRecord, 'id' | 'created_at' | 'updated_at'>): ChurchFinanceRecord =>
-    recordChurchFinanceRecord(data, setChurchFinances, setChurchAccounts, setDepartmentBudgets, logAction, dbSyncUpsert);
+    recordChurchFinanceRecord(data, commitFinances, commitAccounts, commitBudgets, logAction, dbSyncUpsert, financeStateRef.current);
 
   const updateChurchFinance = (id: string, updates: Partial<ChurchFinanceRecord>) => {
-    updateChurchFinanceRecord(id, updates, setChurchFinances, setChurchAccounts, setDepartmentBudgets, logAction, dbSyncUpsert);
+    updateChurchFinanceRecord(id, updates, commitFinances, commitAccounts, commitBudgets, logAction, dbSyncUpsert, financeStateRef.current);
   };
 
   const deleteChurchFinance = (id: string) => {
-    deleteChurchFinanceRecord(id, setChurchFinances, setChurchAccounts, setDepartmentBudgets, logAction, dbSyncDelete, dbSyncUpsert);
+    deleteChurchFinanceRecord(id, commitFinances, commitAccounts, commitBudgets, logAction, dbSyncDelete, dbSyncUpsert, financeStateRef.current);
   };
 
   const voidChurchFinance = (id: string, reason: string) => {
     const userSignature = currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat';
-    voidChurchFinanceRecord(id, reason, userSignature, setChurchFinances, setChurchAccounts, setDepartmentBudgets, logAction, dbSyncUpsert);
+    voidChurchFinanceRecord(id, reason, userSignature, commitFinances, commitAccounts, commitBudgets, logAction, dbSyncUpsert, financeStateRef.current);
   };
 
   const transferBetweenAccounts = (fromAccountId: string, toAccountId: string, amount: number, notes?: string) =>
-    transferBetweenAccountsRecord(fromAccountId, toAccountId, amount, notes, setChurchAccounts, setChurchFinances, logAction, dbSyncUpsert);
+    transferBetweenAccountsRecord(fromAccountId, toAccountId, amount, notes, commitAccounts, commitFinances, logAction, dbSyncUpsert, financeStateRef.current);
 
   const addDepartmentBudget = (data: Omit<DepartmentBudget, 'id' | 'created_at' | 'updated_at'>): DepartmentBudget =>
     addDepartmentBudgetRecord(data, setDepartmentBudgets, logAction);
@@ -1663,34 +933,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     updateDepartmentBudgetRecord(id, updates, setDepartmentBudgets, logAction);
   };
 
-  const resetChurchFinanceData = (mode: 'reset_balances' | 'wipe_all' = 'reset_balances') => {
-    setChurchFinances([]);
-    setExpenses([]);
-    setDepartmentBudgets([]);
-    saveToStorage('churchFinances', []);
-    saveToStorage('expenses', []);
-    saveToStorage('departmentBudgets', []);
-
-    if (mode === 'wipe_all') {
-      setChurchAccounts([]);
-      saveToStorage('churchAccounts', []);
-      logAction('PURGE_ALL_FINANCE', 'Church Finance', 'Purged all financial records and accounts to start completely afresh');
-    } else {
-      setChurchAccounts((prev) => {
-        const sourceAccounts = prev.length > 0 ? prev : sampleChurchAccounts;
-        const zeroed = sourceAccounts.map((acc) => ({
-          ...acc,
-          current_balance: 0.00,
-          updated_at: new Date().toISOString(),
-        }));
-        saveToStorage('churchAccounts', zeroed);
-        return zeroed;
-      });
-      logAction('RESET_FINANCE_DATA', 'Church Finance', 'Cleared all transactions and reset treasury account balances to GH₵ 0.00');
-    }
-
-    return { success: true, message: 'Finance records cleared. You can now start afresh with a clean financial slate.' };
-  };
+  const resetChurchFinanceData = (_mode: 'reset_balances' | 'wipe_all' = 'reset_balances') => ({
+    success:false,message:'Financial history is preserved. Void incorrect receipts or record an adjustment instead of clearing balances.'
+  });
 
   // CAMPAIGNS
   const addCampaign = (data: Omit<PledgeCampaign, 'id'>): PledgeCampaign =>
@@ -1707,14 +952,14 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // PLEDGES
   const createPledge = (
     data: Omit<PledgeRecord, 'id' | 'balance' | 'status' | 'created_at'>
-  ): PledgeRecord => createPledgeRecord(data, members, setPledges, logAction, dbSyncUpsert);
+  ): PledgeRecord => createPledgeRecord(data, members, commitPledges, logAction, dbSyncUpsert);
 
   const updatePledge = (id: string, updates: Partial<PledgeRecord>) => {
-    updatePledgeRecord(id, updates, setPledges, logAction, dbSyncUpsert);
+    updatePledgeRecord(id, updates, commitPledges, logAction, dbSyncUpsert);
   };
 
   const deletePledge = (id: string) => {
-    deletePledgeRecord(id, pledges, setPledges, logAction, dbSyncDelete);
+    deletePledgeRecord(id, pledgesRef.current, commitPledges, logAction, dbSyncDelete);
   };
 
   const recordPledgePayment = (
@@ -1727,16 +972,16 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       syncWithGiving?: boolean;
     }
   ) => {
-    recordPledgePaymentRecord(
+    withSyncTransaction(()=>recordPledgePaymentRecord(
       pledgeId,
       amount,
-      pledges,
-      setPledges,
+      pledgesRef.current,
+      commitPledges,
       logAction,
       dbSyncUpsert,
       (data) => recordGiving(data),
       paymentDetails
-    );
+    ));
   };
 
   // MINISTRIES & SMALL GROUPS
@@ -1908,6 +1153,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   const deleteWelfareClaim = (id: string) => {
+    if(welfareClaims.some(row=>row.id===id && (row.amount_disbursed||0)>0))throw new Error('A claim with payout history cannot be deleted.');
     deleteWelfareClaimRecord(id, welfareClaims, setWelfareClaims, logAction, dbSyncDelete);
   };
 
@@ -1925,94 +1171,19 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       sync_with_church_finance?: boolean;
     }
   ) => {
-    const claim = welfareClaims.find((c) => c.id === id);
-    const amountToDisburse = details.amount_paid !== undefined ? details.amount_paid : details.amount_approved;
-
-    disburseWelfareClaimRecord(
-      id,
-      {
-        ...details,
-        recorded_by: `${currentUser.first_name} ${currentUser.last_name}`,
-      },
-      setWelfareClaims,
-      logAction,
-      dbSyncUpsert
-    );
-
-    // If sync with Church Finance is enabled, record as institutional Church Finance expense
-    if (details.sync_with_church_finance && amountToDisburse > 0 && claim) {
-      const today = new Date().toISOString().split('T')[0];
-      const accountName = details.finance_account_name || 'Main Operating Account';
-
-      const newExpenseRecord: ChurchFinanceRecord = {
-        id: `fin-welfare-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        transaction_type: 'disbursement',
-        account_id: details.finance_account_id,
-        account_name: accountName,
-        category: 'Benevolence & Welfare',
-        title: `Welfare Grant: ${claim.member_name} (${claim.category.replace('_', ' ')})`,
-        recipient_or_vendor: claim.member_name,
-        amount: amountToDisburse,
-        currency: 'GHS',
-        date: today,
-        payment_method: details.disbursement_method,
-        reference_no: details.disbursement_voucher_no,
-        department: 'Welfare & Pastoral Care',
-        description: `Benevolence voucher ${details.disbursement_voucher_no} disbursed for ${claim.title}. ${details.pastoral_notes || ''}`,
-        notes: `Beneficiary phone: ${claim.member_phone || 'N/A'}. Claim Ref: ${claim.claim_number}`,
-        approved_by: `${currentUser.first_name} ${currentUser.last_name}`,
-        recorded_by: `${currentUser.first_name} ${currentUser.last_name}`,
-        status: 'completed',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      setChurchFinances((prev) => [newExpenseRecord, ...prev]);
-      if (dbSyncUpsert) {
-        dbSyncUpsert('church_finances', newExpenseRecord);
-      }
-
-      // Debit account if account_id is present
-      if (details.finance_account_id) {
-        setChurchAccounts((prev) =>
-          prev.map((acc) => {
-            if (acc.id === details.finance_account_id) {
-              const updatedAcc = {
-                ...acc,
-                current_balance: Math.max(0, acc.current_balance - amountToDisburse),
-                updated_at: new Date().toISOString(),
-              };
-              if (dbSyncUpsert) {
-                dbSyncUpsert('church_accounts', updatedAcc);
-              }
-              return updatedAcc;
-            }
-            return acc;
-          })
-        );
-      }
-
-      // Update Welfare department budget if present
-      setDepartmentBudgets((prevBudgets) =>
-        prevBudgets.map((b) => {
-          if (b.department.toLowerCase().includes('welfare') || b.department.toLowerCase().includes('benevolence')) {
-            return {
-              ...b,
-              spent_amount: b.spent_amount + amountToDisburse,
-              updated_at: new Date().toISOString(),
-            };
-          }
-          return b;
-        })
-      );
-
-      logAction(
-        'RECORD_CHURCH_EXPENSE',
-        'Church Finance',
-        `Disbursed welfare benevolence of GH₵ ${amountToDisburse.toFixed(2)} from ${accountName} to ${claim.member_name} (Voucher ${details.disbursement_voucher_no})`,
-        newExpenseRecord.id
-      );
-    }
+    const claim=welfareClaims.find(row=>row.id===id);
+    if(!claim || !['approved','disbursed'].includes(claim.status))throw new Error('Approve the claim before recording a payment.');
+    const amount=details.amount_paid??details.amount_approved;
+    const remaining=(claim.amount_approved||0)-(claim.amount_disbursed||0);
+    if(!Number.isFinite(amount)||amount<=0||amount>remaining)throw new Error('Enter a payment within the remaining approved amount.');
+    if(!details.finance_account_id)throw new Error('Select a church holding account for the payout.');
+    const actor=`${currentUser.first_name} ${currentUser.last_name}`;
+    withSyncTransaction(()=>{
+    const receipt=recordChurchFinance({transaction_type:'disbursement',account_id:details.finance_account_id,account_name:details.finance_account_name||'Welfare Account',
+      category:'Benevolence & Welfare',title:`Welfare Grant: ${claim.member_name}`,recipient_or_vendor:claim.member_name,amount,currency:'GHS',date:new Date().toISOString().slice(0,10),
+      payment_method:details.disbursement_method,reference_no:details.disbursement_voucher_no,department:'Welfare & Benevolence',recorded_by:actor,status:'completed'});
+    disburseWelfareClaimRecord(id,{...details,recorded_by:actor,finance_transaction_id:receipt.id},setWelfareClaims,logAction,dbSyncUpsert,welfareClaims);
+    });
   };
 
   // WELFARE CONTRIBUTION EVENTS
@@ -2045,14 +1216,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setWelfareEventContributions
     );
 
-  const clearAllWelfareEvents = (): { success: boolean; message: string } => {
-    setWelfareEvents([]);
-    setWelfareEventContributions([]);
-    saveToStorage('welfareEvents', []);
-    saveToStorage('welfareEventContributions', []);
-    logAction('RESET_WELFARE_EVENTS', 'Welfare', 'Cleared all welfare events and contributions for a fresh start');
-    return { success: true, message: 'All welfare events cleared successfully. Ready for a fresh start.' };
-  };
+  const clearAllWelfareEvents = () => ({success:false,message:'Receipt history is preserved. Close or cancel welfare events instead of clearing them.'});
 
   const recordEventContribution = (
     data: Omit<WelfareEventContribution, 'id' | 'created_at' | 'updated_at'>,
@@ -2062,7 +1226,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       financeAccountId?: string;
       financeAccountName?: string;
     }
-  ) =>
+  ) => withSyncTransaction(()=>
     recordEventContributionRecord(
       data,
       welfareEvents,
@@ -2072,108 +1236,70 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       dbSyncUpsert,
       {
         ...options,
-        setChurchFinances,
-        setChurchAccounts,
+        setChurchFinances:commitFinances,
+        setChurchAccounts:commitAccounts,
+        state:financeStateRef.current,
       }
-    );
+    ));
 
   const updateEventContribution = (id: string, updates: Partial<WelfareEventContribution>) => {
-    updateEventContributionRecord(
+    withSyncTransaction(()=>updateEventContributionRecord(
       id,
       updates,
       `${currentUser.first_name} ${currentUser.last_name}`,
       setWelfareEventContributions,
       logAction,
-      dbSyncUpsert
-    );
+      dbSyncUpsert,
+      {contributions:welfareEventContributions,events:welfareEvents,state:financeStateRef.current,setChurchFinances:commitFinances,setChurchAccounts:commitAccounts}
+    ));
   };
 
   const deleteEventContribution = (id: string) => {
-    deleteEventContributionRecord(
+    withSyncTransaction(()=>deleteEventContributionRecord(
       id,
       welfareEventContributions,
       `${currentUser.first_name} ${currentUser.last_name}`,
       setWelfareEventContributions,
       logAction,
-      dbSyncDelete
-    );
+      dbSyncDelete,
+      {contributions:welfareEventContributions,events:welfareEvents,state:financeStateRef.current,setChurchFinances:commitFinances,setChurchAccounts:commitAccounts},
+      dbSyncUpsert
+    ));
   };
 
   // CHILDREN'S MINISTRY SAFETY & PICKUP TAGS
-  const checkInChild = (
+  const checkInChild = async (
     data: Omit<ChildCheckInRecord, 'id' | 'security_code' | 'created_at' | 'status'> & { security_code?: string }
-  ): ChildCheckInRecord => {
-    const randomCode = data.security_code || `GWCC-K${Math.floor(100 + Math.random() * 900)}`;
-    const newRecord: ChildCheckInRecord = {
-      ...data,
-      id: `chk-child-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      security_code: randomCode,
-      status: 'checked_in',
-      created_at: new Date().toISOString(),
-    };
-    setChildCheckIns((prev) => [newRecord, ...prev]);
-    logAction(
-      'CHILD_CHECK_IN',
-      'Attendance',
-      `Checked in ${data.child_name} into ${data.class_room} (Security Code: ${randomCode})`,
-      newRecord.id
-    );
+  ): Promise<ChildCheckInRecord> => {
+    if(!isAuthenticated || !canAccess('attendance'))throw new Error('Attendance staff access is required.');
+    const newRecord:ChildCheckInRecord={...data,id:crypto.randomUUID(),security_code:createPickupToken(childCheckIns),
+      checked_in_by:currentUser.id,status:'checked_in',created_at:new Date().toISOString()};
+    await dbSyncUpsert('child_check_ins',newRecord);
+    const result=await flushSyncOutbox();
+    if(!result.success)throw new Error(result.error||'Check-in is pending. Refresh after synchronization before printing a tag.');
+    setChildCheckIns(prev=>[newRecord,...prev.filter(row=>row.id!==newRecord.id)]);
     return newRecord;
   };
-
-  const checkOutChild = (
-    id: string,
-    details: { checked_out_to_person: string; verified_by_leader: string }
-  ) => {
-    const nowTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    setChildCheckIns((prev) =>
-      prev.map((ch) => {
-        if (ch.id === id) {
-          const updated: ChildCheckInRecord = {
-            ...ch,
-            status: 'checked_out',
-            check_out_time: nowTime,
-            checked_out_to_person: details.checked_out_to_person,
-            verified_by_leader: details.verified_by_leader,
-          };
-          logAction(
-            'CHILD_CHECK_OUT',
-            'Attendance',
-            `Safely checked out ${ch.child_name} to ${details.checked_out_to_person} (Verified by ${details.verified_by_leader})`,
-            id
-          );
-          return updated;
-        }
-        return ch;
-      })
-    );
+  const checkOutChild = async (id:string,details:{checked_out_to_person:string;verified_by_leader:string}) => {
+    if(!isAuthenticated || !canAccess('attendance'))throw new Error('Attendance staff access is required.');
+    const current=childCheckIns.find(row=>row.id===id);
+    if(!current)throw new Error('Refresh check-in records before releasing this child.');
+    findPickup(childCheckIns,current.security_code,details.checked_out_to_person);
+    const updated={...current,status:'checked_out' as const,checked_out_to_person:details.checked_out_to_person.trim(),
+      verified_by_leader:currentUser.id,check_out_time:new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})};
+    await dbSyncUpsert('child_check_ins',updated);
+    const result=await flushSyncOutbox();
+    if(!result.success)throw new Error(result.error||'Pickup has not been confirmed by the server.');
+    setChildCheckIns(prev=>prev.map(row=>row.id===id?updated:row));
   };
 
-  const summonChildParent = (id: string, notes?: string) => {
-    setChildCheckIns((prev) =>
-      prev.map((ch) => {
-        if (ch.id === id) {
-          const updated: ChildCheckInRecord = {
-            ...ch,
-            emergency_parent_called: true,
-            emergency_call_notes: notes || 'Parent summoned to Sunday School',
-          };
-          logAction(
-            'SUMMON_CHILD_PARENT',
-            'Attendance',
-            `Triggered emergency summon to parent ${ch.parent_name} (${ch.parent_phone}) for child ${ch.child_name}`,
-            id
-          );
-          return updated;
-        }
-        return ch;
-      })
-    );
+  const summonChildParent=(id:string,notes?:string)=>{
+    const record=childCheckIns.find(row=>row.id===id);if(!record)throw new Error('Check-in not found.');
+    const updated={...record,emergency_parent_called:true,emergency_call_notes:notes||'Parent contact requested; staff must call directly.'};
+    setChildCheckIns(prev=>prev.map(row=>row.id===id?updated:row));void dbSyncUpsert('child_check_ins',updated);
   };
 
-  const deleteChildCheckIn = (id: string) => {
-    setChildCheckIns((prev) => prev.filter((c) => c.id !== id));
-  };
+  const deleteChildCheckIn = (_id: string) => { throw new Error('Child check-in history is preserved.'); };
 
   // CHURCH ASSETS & INVENTORY
   const addAsset = (
@@ -2200,24 +1326,6 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     data: Omit<RosterAssignment, 'id' | 'created_at'>
   ): RosterAssignment => {
     const created = addRosterAssignmentRecord(data, setRosterAssignments, logAction);
-    try {
-      fetch('/api/roster/notify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'ROSTER_ASSIGNED',
-          memberId: created.member_id,
-          memberName: created.member_name,
-          dutyId: created.id,
-          serviceName: created.service_name,
-          date: created.date,
-          department: created.department,
-          roleTitle: created.role_title,
-          reportTime: created.report_time,
-          notes: created.notes,
-        }),
-      }).catch(() => {});
-    } catch {}
     return created;
   };
 
@@ -2227,34 +1335,6 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     fallbackAssignment?: RosterAssignment
   ) => {
     updateRosterAssignmentRecord(id, updates, setRosterAssignments, logAction, fallbackAssignment);
-    try {
-      const target = rosterAssignments.find((a) => a.id === id) || fallbackAssignment;
-      if (target) {
-        const type =
-          updates.status === 'confirmed'
-            ? 'ROSTER_CONFIRMED'
-            : updates.status === 'substituted'
-            ? 'ROSTER_SUBSTITUTED'
-            : 'ROSTER_UPDATED';
-
-        fetch('/api/roster/notify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type,
-            memberId: target.member_id,
-            memberName: target.member_name,
-            dutyId: target.id,
-            serviceName: target.service_name,
-            date: target.date,
-            department: target.department,
-            roleTitle: target.role_title,
-            reportTime: target.report_time,
-            notes: updates.notes || target.notes,
-          }),
-        }).catch(() => {});
-      }
-    } catch {}
   };
 
   const deleteRosterAssignment = (id: string) => {
@@ -2300,44 +1380,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // RESET
   const resetToSampleData = () => {
-    resetToSampleDataState(
-      {
-        setSettings,
-        setMembers,
-        setVisitors,
-        setServices,
-        setAttendance,
-        setHeadcounts,
-        setGiving,
-        setCampaigns,
-        setPledges,
-        setExpenses,
-        setChurchAccounts,
-        setChurchFinances,
-        setDepartmentBudgets,
-        setMinistries,
-        setSmallGroups,
-        setEvents,
-        setPastoralCare,
-        setPrayerRequests,
-        setCommunications,
-        setAuditLogs,
-        setWelfareContributions,
-        setWelfareClaims,
-        setWelfareEvents,
-        setWelfareEventContributions,
-        setChildCheckIns,
-        setAssets,
-        setRosterAssignments,
-        setFoundationCohorts,
-        setFoundationStudents,
-        setPastoralVisitations,
-        setCounselingSessions,
-        setIntercessorySlots,
-      },
-      saveToStorage,
-      logAction
-    );
+    throw new Error('Sample-data reset is disabled for operational accounts.');
   };
 
   const contextValue = React.useMemo<ChurchDataContextType>(
@@ -2545,6 +1588,10 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       isRefreshing,
       lastRefreshedAt,
       refreshData,
+      headcounts,
+      currentUser.id,
+      currentUser.role,
+      isAuthenticated,
     ]
   );
 

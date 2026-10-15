@@ -1,3 +1,5 @@
+import { isActiveTransaction } from '../lib/ledgerUtils';
+import { reportExpenses } from '../lib/reportData';
 import React, { useState, useMemo } from 'react';
 import {
   X,
@@ -127,7 +129,9 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
   initialStartDate,
   initialEndDate,
 }) => {
-  const { members, visitors, attendance, giving, expenses, pledges, settings, smallGroups, ministries } = useChurchData();
+  const { members, visitors, attendance, giving:allGiving, expenses:legacyExpenses, churchFinances, pledges, settings, smallGroups, ministries } = useChurchData();
+  const giving=useMemo(()=>allGiving.filter(isActiveTransaction),[allGiving]);
+  const expenses=useMemo(()=>reportExpenses(legacyExpenses,churchFinances),[legacyExpenses,churchFinances]);
   const { currentUser } = useAuth();
   const { success, error: toastError } = useToast();
 

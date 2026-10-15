@@ -1,3 +1,4 @@
+import { isActiveTransaction } from './ledgerUtils';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
@@ -97,6 +98,7 @@ export function generateChurchReportPdf(
 
   // Filter data by dates
   const filteredGiving = data.giving.filter((g) => {
+    if(!isActiveTransaction(g))return false;
     if (!startDate && !endDate) return true;
     if (startDate && g.date < startDate) return false;
     if (endDate && g.date > endDate) return false;

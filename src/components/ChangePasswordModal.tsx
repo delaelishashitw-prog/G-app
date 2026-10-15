@@ -27,8 +27,8 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ isOpen
     setSuccessMsg(null);
 
     const trimmedNew = newPassword.trim();
-    if (trimmedNew.length < 6) {
-      setErrorMsg('New password must be at least 6 characters long.');
+    if (trimmedNew.length < 12) {
+      setErrorMsg('New password must be at least 12 characters long.');
       return;
     }
 
@@ -83,20 +83,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ isOpen
           </button>
         </div>
 
-        {/* Informational Callout regarding default password */}
-        <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/60 space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
-          <div className="flex items-center gap-1.5 font-semibold text-slate-800 dark:text-slate-200">
-            <Info className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span>Default Staff Password</span>
-          </div>
-          <p className="leading-relaxed">
-            The standard default system password for newly initialized church accounts is{' '}
-            <code className="font-mono bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 font-bold text-emerald-700 dark:text-emerald-400">
-              Gwcc@2026
-            </code>
-            . Setting a personal password below updates your workstation credentials immediately.
-          </p>
-        </div>
+        <p className="text-xs text-slate-600">Use a unique password of at least 12 characters. Your password is stored by the authentication service.</p>
 
         {/* Feedback Alerts */}
         {errorMsg && (
@@ -117,14 +104,14 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ isOpen
         <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
           <div>
             <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Current / Default Password (Optional)
+              Current Password (Optional)
             </label>
             <div className="relative">
               <input
                 type={showCurrent ? 'text' : 'password'}
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder="e.g. Gwcc@2026"
+                placeholder="Your current password"
                 className="w-full pl-9 pr-10 py-2.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-emerald-800 focus:ring-2 focus:ring-emerald-800/20"
               />
               <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -148,7 +135,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ isOpen
                 required
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="At least 6 characters"
+                placeholder="At least 12 characters"
                 className="w-full pl-9 pr-10 py-2.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-emerald-800 focus:ring-2 focus:ring-emerald-800/20 font-mono"
               />
               <Key className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />

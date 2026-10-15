@@ -1,3 +1,4 @@
+import { PasswordSetupPage } from './PasswordSetupPage';
 import React, { useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import {
@@ -179,6 +180,7 @@ export const LoginPage: React.FC = () => {
     }
   };
 
+  if(new URLSearchParams(location.search).get('recovery')==='1')return <PasswordSetupPage/>;
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col lg:flex-row antialiased">
       {/* LEFT COLUMN: Hero & Assembly Brand Showcase (Visible on large screens) */}
@@ -398,7 +400,7 @@ export const LoginPage: React.FC = () => {
             </h2>
             <p className="text-xs text-slate-500 mt-1">
               {activeTab === 'signin' && 'Enter your official church staff email and password to access the workstation.'}
-              {activeTab === 'register' && 'Register new church staff, ministry coordinators, or volunteers for ChMS access.'}
+              {activeTab === 'register' && 'An administrator must invite staff and assign their access.'}
               {activeTab === 'recovery' && 'Reset your password securely via Supabase Auth or obtain administrator reset instructions.'}
             </p>
 
@@ -434,7 +436,7 @@ export const LoginPage: React.FC = () => {
                 }`}
               >
                 <Briefcase className="w-3.5 h-3.5 text-emerald-800" />
-                <span>Register Staff</span>
+                <span>Staff Access</span>
               </button>
               <button
                 type="button"
@@ -467,17 +469,7 @@ export const LoginPage: React.FC = () => {
                   errorMessage.toLowerCase().includes('cloud') ||
                   errorMessage.toLowerCase().includes('jwt')) && (
                   <div className="pt-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        clearSupabaseCredentials();
-                        setErrorMessage(null);
-                        setInfoMessage('Stored cloud keys cleared! You are now in offline local mode. You can sign in below with your registered staff email and password.');
-                      }}
-                      className="px-3 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-lg text-[11px] font-bold shadow-xs transition flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <span>Clear Cloud Key & Switch to Local Mode</span>
-                    </button>
+                    <p className="mt-2 text-xs">Sign-in requires a verified account. Contact the church administrator if your account is inactive or the service is unavailable.</p>
                   </div>
                 )}
               </div>
@@ -618,158 +610,9 @@ export const LoginPage: React.FC = () => {
 
           {/* TAB 2: STAFF REGISTRATION / ACCESS REQUEST */}
           {activeTab === 'register' && (
-            <form onSubmit={handleRegister} className="space-y-4 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">First Name *</label>
-                  <input
-                    type="text"
-                    required
-                    value={regFirstName}
-                    onChange={(e) => setRegFirstName(e.target.value)}
-                    placeholder="e.g. Kwame"
-                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium text-slate-900 focus:outline-emerald-800 focus:border-emerald-800"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Last Name *</label>
-                  <input
-                    type="text"
-                    required
-                    value={regLastName}
-                    onChange={(e) => setRegLastName(e.target.value)}
-                    placeholder="e.g. Mensah"
-                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium text-slate-900 focus:outline-emerald-800 focus:border-emerald-800"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Staff Email *</label>
-                  <div className="relative">
-                    <input
-                      type="email"
-                      required
-                      value={regEmail}
-                      onChange={(e) => setRegEmail(e.target.value)}
-                      placeholder="k.mensah@church.org"
-                      className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium text-slate-900 focus:outline-emerald-800 focus:border-emerald-800"
-                    />
-                    <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  </div>
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Phone Number</label>
-                  <div className="relative">
-                    <input
-                      type="tel"
-                      value={regPhone}
-                      onChange={(e) => setRegPhone(e.target.value)}
-                      placeholder="+233 24 000 0000"
-                      className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium text-slate-900 focus:outline-emerald-800 focus:border-emerald-800"
-                    />
-                    <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Department / Ministry</label>
-                  <select
-                    value={regDepartment}
-                    onChange={(e) => setRegDepartment(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium text-slate-900 focus:outline-emerald-800 focus:border-emerald-800"
-                  >
-                    <option value="Administration">Church Administration Office</option>
-                    <option value="Pastoral">Pastoral Care & Counseling</option>
-                    <option value="Finance">Finance & Treasury</option>
-                    <option value="Protocol">Protocol & Ushers</option>
-                    <option value="Youth">Youth Fellowship</option>
-                    <option value="Children">Sunday School / Children</option>
-                    <option value="Media">Media, Sound & Tech</option>
-                    <option value="Music">Choir & Worship Ministry</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Requested Role</label>
-                  <select
-                    value={regRole}
-                    onChange={(e) => setRegRole(e.target.value as UserRole)}
-                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium text-slate-900 focus:outline-emerald-800 focus:border-emerald-800"
-                  >
-                    <option value="ministry_leader">Ministry Leader / Department Coordinator</option>
-                    <option value="attendance_officer">Attendance & Protocol Officer</option>
-                    <option value="data_entry">Data Entry Assistant</option>
-                  </select>
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    Administrative, Pastoral, and Treasury roles are provisioned directly by church leadership.
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Create Password (min 6 chars) *</label>
-                  <div className="relative">
-                    <input
-                      type={regShowPassword ? 'text' : 'password'}
-                      required
-                      value={regPassword}
-                      onChange={(e) => setRegPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full pl-9 pr-10 py-2 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-900 focus:outline-emerald-800 focus:border-emerald-800"
-                    />
-                    <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <button
-                      type="button"
-                      onClick={() => setRegShowPassword(!regShowPassword)}
-                      className="p-1 text-slate-400 hover:text-slate-600 absolute right-2.5 top-1/2 -translate-y-1/2"
-                    >
-                      {regShowPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Confirm Password *</label>
-                  <div className="relative">
-                    <input
-                      type={regShowPassword ? 'text' : 'password'}
-                      required
-                      value={regConfirmPassword}
-                      onChange={(e) => setRegConfirmPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-900 focus:outline-emerald-800 focus:border-emerald-800"
-                    />
-                    <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  </div>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full py-3 bg-[#064e3b] hover:bg-[#047857] text-white rounded-xl font-bold text-xs shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {isLoading ? (
-                  <span className="flex items-center gap-2">
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Creating Account...</span>
-                  </span>
-                ) : (
-                  <>
-                    <span>Create & Activate Staff Account</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
-              </button>
-            </form>
+            <div className="p-4 rounded-xl bg-slate-50 border text-sm text-slate-700">Staff access is invitation-only. Ask a super administrator to create your account in Users &amp; Roles. Use the email invitation to set your password.</div>
           )}
 
-          {/* TAB 3: PASSWORD RECOVERY */}
           {activeTab === 'recovery' && (
             <div className="space-y-4">
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2 text-xs text-slate-600">

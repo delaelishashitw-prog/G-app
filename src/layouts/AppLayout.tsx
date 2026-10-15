@@ -1,3 +1,4 @@
+import { SyncStatusBanner } from '../components/SyncStatusBanner';
 import React, { useState, useEffect } from 'react';
 import { Outlet, useLocation, Navigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -19,6 +20,7 @@ export const AppLayout: React.FC = () => {
     currentRole,
     currentUser,
     isAuthenticated,
+    isAuthLoading,
     isSimulating,
     impersonatingAdmin,
     exitSimulation,
@@ -75,11 +77,7 @@ export const AppLayout: React.FC = () => {
     onCloseAllModals: handleCloseAllModals,
   });
 
-  // Check if active account has been suspended/deactivated
-  if (currentUser && currentUser.is_active === false) {
-    logout();
-    return <Navigate to="/login" replace state={{ deactivated: true }} />;
-  }
+  if (isAuthLoading && !isAuthenticated) return <div className="p-8 text-center">Verifying your account…</div>;
 
   // Redirect to login if user is not authenticated (must be after all hooks)
   if (!isAuthenticated) {
@@ -164,6 +162,8 @@ export const AppLayout: React.FC = () => {
           </div>
         )}
 
+        <SyncStatusBanner />
+
         {/* Dynamic Page Outlet with smooth route transitions */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
           {isRouteUnauthorized ? (
@@ -216,7 +216,7 @@ export const AppLayout: React.FC = () => {
         {/* Footer */}
         <footer className="py-4 px-6 text-center text-xs text-slate-600 border-t border-slate-200 bg-white">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-2 max-w-7xl mx-auto">
-            <span>Church Management System • City, Country</span>
+            <span>Greater Works City Church • Joma, Accra</span>
             <div className="flex items-center gap-4">
               <button
                 type="button"
@@ -230,7 +230,7 @@ export const AppLayout: React.FC = () => {
                   ?
                 </kbd>
               </button>
-              <span>Enterprise Church Ops • Currency: USD ($)</span>
+              <span>Enterprise Church Ops • Currency: GHS (GH₵)</span>
             </div>
           </div>
         </footer>

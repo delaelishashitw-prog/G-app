@@ -1,3 +1,4 @@
+import { isActiveTransaction } from '../lib/ledgerUtils';
 import React, { useState, useMemo } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import {
@@ -84,57 +85,6 @@ type PortalTab =
   | 'prayers'
   | 'events'
   | 'profile';
-
-const MEMBER_PIN_STORAGE_KEY = 'gwcc_member_passwords_v2';
-const LEGACY_MEMBER_PIN_STORAGE_KEY = 'gwcc_member_passwords';
-
-async function hashMemberPin(pin: string): Promise<string> {
-  const normalized = (pin || '').trim();
-  if (!normalized) return '';
-
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
-    return Array.from(new Uint8Array(digest))
-      .map((byte) => byte.toString(16).padStart(2, '0'))
-      .join('');
-  }
-
-  return normalized;
-}
-
-function readMemberPinMap(): Record<string, string> {
-  try {
-    const sessionValue = sessionStorage.getItem(MEMBER_PIN_STORAGE_KEY);
-    if (sessionValue) {
-      const parsed = JSON.parse(sessionValue);
-      if (parsed && typeof parsed === 'object') {
-        return parsed as Record<string, string>;
-      }
-    }
-  } catch {}
-
-  try {
-    const legacyValue = localStorage.getItem(LEGACY_MEMBER_PIN_STORAGE_KEY);
-    if (legacyValue) {
-      const parsed = JSON.parse(legacyValue);
-      if (parsed && typeof parsed === 'object') {
-        return parsed as Record<string, string>;
-      }
-    }
-  } catch {}
-
-  return {};
-}
-
-function persistMemberPinMap(map: Record<string, string>): void {
-  try {
-    sessionStorage.setItem(MEMBER_PIN_STORAGE_KEY, JSON.stringify(map));
-  } catch {}
-
-  try {
-    localStorage.removeItem(LEGACY_MEMBER_PIN_STORAGE_KEY);
-  } catch {}
-}
 
 const FOUNDATION_CURRICULUM = [
   {
@@ -282,7 +232,7 @@ export const MemberPortalPage: React.FC = () => {
 
   const {
     members,
-    giving,
+    giving:allGiving,
     pledges,
     attendance,
     services,
@@ -308,12 +258,14 @@ export const MemberPortalPage: React.FC = () => {
     updateRosterAssignment,
     updateFoundationStudent,
     enrollMemberInFoundationSchool,
+    refreshData,
   } = useChurchData();
 
+  const giving=useMemo(()=>allGiving.filter(isActiveTransaction),[allGiving]);
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const requiresCloudMemberAuth = import.meta.env.PROD && isSupabaseConfigured();
+  const requiresCloudMemberAuth = true;
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<PortalTab>(() => {
@@ -411,9 +363,7 @@ export const MemberPortalPage: React.FC = () => {
     const loadMemberRoster = async () => {
       const { data: sessionData, error: sessionError } = await client.auth.getSession();
       if (sessionError) throw sessionError;
-      const sessionEmail = sessionData.session?.user.email?.trim().toLowerCase();
-      const memberEmail = activeMember.email?.trim().toLowerCase();
-      if (!sessionEmail || !memberEmail || sessionEmail !== memberEmail) {
+      if (!sessionData.session || activeMember.auth_user_id !== sessionData.session.user.id) {
         throw new Error('The signed-in Supabase account does not match this member record.');
       }
 
@@ -866,9 +816,9 @@ export const MemberPortalPage: React.FC = () => {
     markAllAsRead: markAllRosterAlertsAsRead,
     simulateDutyAlert,
   } = useRealtimeRosterNotifications({
-    memberId: activeMember?.member_id || activeMember?.id,
+    memberId: activeMember?.id,
     memberName: activeMember ? `${activeMember.first_name} ${activeMember.last_name}` : undefined,
-    enabled: Boolean(activeMember) && !usesPrivateCloudRoster,
+    enabled: Boolean(activeMember),
     onNotificationReceived: (notif) => {
       toastSuccess('Duty Roster Alert', notif.message);
     },
@@ -897,43 +847,34 @@ export const MemberPortalPage: React.FC = () => {
     }
   }, [upcomingRosterDuties.length, memberRosterAssignments.length]);
 
-  const handleConfirmRosterAttendance = (assignmentId: string, fallback?: RosterAssignment) => {
-    updateRosterAssignment(assignmentId, { status: 'confirmed' }, fallback);
-    toastSuccess('Attendance Confirmed', 'You have confirmed your attendance for this service duty assignment!');
+  const respondToDuty = async (assignmentId:string,status:'confirmed'|'substituted',notes?:string) => {
+    try {
+      const client=getSupabaseClient();if(!client)throw new Error('Secure member sign-in is unavailable.');
+      const {data,error}=await client.rpc('gwcc_member_action',{p_action:'roster',p_id:assignmentId,p_data:{status,notes}});
+      if(error)throw error;
+      setCloudRosterAssignments(prev=>(prev||[]).map(row=>row.id===assignmentId?data:row));
+      toastSuccess(status==='confirmed'?'Attendance Confirmed':'Substitute Requested','Your response has been saved.');
+    }catch(error){toastError('Response not saved',(error as Error).message);}
   };
-
-  const handleConfirmSubstitute = (assignmentId: string, reason: string, note: string) => {
-    updateRosterAssignment(
-      assignmentId,
-      { status: 'substituted', notes: note },
-      selectedSubstituteAssignment || undefined
-    );
-    toastSuccess('Substitute Requested', 'Your substitute request has been logged. The department coordinator has been notified.');
-  };
+  const handleConfirmRosterAttendance = (id:string,_fallback?:RosterAssignment) => {void respondToDuty(id,'confirmed');};
+  const handleConfirmSubstitute = (id:string,reason:string,note:string) => {void respondToDuty(id,'substituted',`${reason}: ${note}`);};
 
   const handleOpenSubstituteModal = (assignment: RosterAssignment) => {
     setSelectedSubstituteAssignment(assignment);
   };
 
-  const handleSelfEnrollFoundation = () => {
-    if (!activeMember) return;
-    const activeCohort = foundationCohorts.find((c) => c.status === 'active') || foundationCohorts[0];
-    if (activeCohort) {
-      enrollMemberInFoundationSchool({
-        cohort_id: activeCohort.id,
-        cohort_name: activeCohort.name,
-        member_id: activeMember.id,
-        member_name: `${activeMember.first_name} ${activeMember.last_name}`,
-        member_phone: activeMember.phone || undefined,
-        enrollment_date: new Date().toISOString().split('T')[0],
-        completed_modules: [],
-        water_baptism_status: Boolean(activeMember.baptism_status),
-        status: 'in_progress',
-      });
-      toastSuccess('Enrolled in Foundation School', `You have been enrolled into ${activeCohort.name}!`);
-    } else {
-      toastInfo('Enrollment Notice', 'Foundation School enrollment request submitted to the secretariat.');
-    }
+  const memberAction=async(action:string,data:Record<string,unknown>)=>{
+    if(!activeMember)throw new Error('Sign in to your member account.');
+    const client=getSupabaseClient();if(!client)throw new Error('Secure member sign-in is unavailable.');
+    const {data:result,error}=await client.rpc('gwcc_member_action',{p_action:action,p_id:activeMember.id,p_data:data});
+    if(error)throw error;
+    await refreshData();return result;
+  };
+  const handleSelfEnrollFoundation=async()=>{
+    const cohort=foundationCohorts.find(row=>row.status==='active');
+    if(!cohort){toastInfo('Enrollment unavailable','Ask the church office about the next active cohort.');return;}
+    try{await memberAction('foundation',{cohort_id:cohort.id});toastSuccess('Enrollment Saved',`Your enrollment in ${cohort.name} has been saved.`);}
+    catch(error){toastError('Enrollment not saved',(error as Error).message);}
   };
 
   // Modal / Action States
@@ -973,7 +914,7 @@ export const MemberPortalPage: React.FC = () => {
     e.preventDefault();
     setLoginError(null);
     if (!identifier.trim()) {
-      setLoginError('Please enter your Member ID, Phone Number, or Email.');
+      setLoginError('Please enter your verified email address.');
       return;
     }
     if (!pin.trim()) {
@@ -999,51 +940,13 @@ export const MemberPortalPage: React.FC = () => {
   };
 
   // Submit Online Tithe/Offering
-  const handleRecordGiving = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeMember) return;
-    const amountVal = parseFloat(giveAmount);
-    if (isNaN(amountVal) || amountVal <= 0) {
-      toastError('Invalid Amount', 'Please specify a valid contribution amount.');
-      return;
-    }
-
-    setIsSubmittingGiving(true);
-    try {
-      const today = new Date().toISOString().split('T')[0];
-      const receiptNo = `RCP-${Date.now().toString().slice(-6)}`;
-
-      recordGiving({
-        date: today,
-        category: giveCategory,
-        amount: amountVal,
-        payment_method: giveMethod,
-        payment_channel: giveChannel,
-        reference_number: giveReference || receiptNo,
-        member_id: activeMember.id,
-        member_name: `${activeMember.first_name} ${activeMember.last_name}`,
-        donor_name: `${activeMember.first_name} ${activeMember.last_name}`,
-        service_id: 'srv-002', // Sunday Celebration Service
-        currency: 'GHS',
-        notes: `Submitted via Member Self-Service Portal by ${activeMember.first_name}`,
-      });
-
-      toastSuccess(
-        'Contribution Recorded',
-        `Thank you, ${activeMember.first_name}! GH₵ ${amountVal.toFixed(2)} (${giveCategory.toUpperCase()}) recorded. God richly bless you!`
-      );
-      setGiveAmount('');
-      setGiveReference('');
-      setGiveModalOpen(false);
-    } catch (err: any) {
-      toastError('Error', err?.message || 'Could not record giving.');
-    } finally {
-      setIsSubmittingGiving(false);
-    }
+  const handleRecordGiving=(event:React.FormEvent)=>{
+    event.preventDefault();
+    toastInfo('Payment verification required','This screen does not process payments. Use the church office’s verified payment instructions. A finance officer will record your receipt after confirming payment.');
   };
 
   // Submit Confidential Prayer Request
-  const handleSubmitPrayer = (e: React.FormEvent) => {
+  const handleSubmitPrayer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeMember) return;
     if (!prayerTitle.trim() || !prayerPetition.trim()) {
@@ -1053,7 +956,7 @@ export const MemberPortalPage: React.FC = () => {
 
     setIsSubmittingPrayer(true);
     try {
-      addPrayerRequest({
+      await memberAction('prayer',{
         category: prayerCategory,
         request: `${prayerTitle.trim()}: ${prayerPetition.trim()}`,
         requester_name: `${activeMember.first_name} ${activeMember.last_name}`,
@@ -1079,7 +982,7 @@ export const MemberPortalPage: React.FC = () => {
   };
 
   // Request Pastoral Counseling
-  const handleRequestCounseling = (e: React.FormEvent) => {
+  const handleRequestCounseling = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeMember) return;
     if (!counselingTopic.trim()) {
@@ -1090,7 +993,7 @@ export const MemberPortalPage: React.FC = () => {
     setIsSubmittingCounseling(true);
     try {
       const today = new Date().toISOString().split('T')[0];
-      addPastoralCare({
+      await memberAction('counseling',{
         date: counselingDate || today,
         care_type: 'counseling',
         member_id: activeMember.id,
@@ -1121,11 +1024,11 @@ export const MemberPortalPage: React.FC = () => {
     if (!activeMember) return;
 
     if (newPortalPin && newPortalPin !== confirmPortalPin) {
-      toastError('PIN Mismatch', 'New portal PIN and confirmation PIN do not match.');
+      toastError('Password Mismatch', 'New password and confirmation do not match.');
       return;
     }
-    if (usesPrivateCloudRoster && newPortalPin.length < 6) {
-      toastError('Password Too Short', 'Supabase member account passwords must be at least 6 characters.');
+    if (newPortalPin && newPortalPin.length < 12) {
+      toastError('Password Too Short', 'Supabase member account passwords must be at least 12 characters.');
       return;
     }
     if (
@@ -1138,30 +1041,23 @@ export const MemberPortalPage: React.FC = () => {
 
     setIsSavingProfile(true);
     try {
-      updateMember(activeMember.id, {
+      const client=getSupabaseClient();
+      if(!client)throw new Error('Secure member sign-in is unavailable.');
+      const {data:saved,error:profileError}=await client.rpc('gwcc_member_action',{p_action:'profile',p_id:activeMember.id,p_data:{
         phone: editPhone.trim() || activeMember.phone,
         email: editEmail.trim() || activeMember.email,
         residential_address: editAddress.trim() || activeMember.residential_address,
         gps_address: editGps.trim() || activeMember.gps_address,
         emergency_name: editEmergencyName.trim() || activeMember.emergency_name,
         emergency_phone: editEmergencyPhone.trim() || activeMember.emergency_phone,
-      });
+      }});
+      if(profileError)throw profileError;
+      setPortalMember(saved);
 
       if (newPortalPin) {
-        if (usesPrivateCloudRoster) {
-          const client = getSupabaseClient();
-          if (!client) throw new Error('Secure member sign-in is unavailable.');
-          const { error } = await client.auth.updateUser({ password: newPortalPin.trim() });
-          if (error) throw error;
-          toastSuccess('Account Password Updated', 'Your Supabase member account password has been changed.');
-        } else {
-          const pinsMap = readMemberPinMap();
-          const hashedValue = await hashMemberPin(newPortalPin.trim());
-          pinsMap[activeMember.id] = hashedValue;
-          pinsMap[activeMember.member_id] = hashedValue;
-          persistMemberPinMap(pinsMap);
-          toastSuccess('Portal PIN Updated', 'Your Member Portal PIN has been securely saved.');
-        }
+        const { error }=await client.auth.updateUser({password:newPortalPin});
+        if(error)throw new Error(`Profile saved, but password was not changed: ${error.message}`);
+        toastSuccess('Account Password Updated','Your account password has been changed.');
         setNewPortalPin('');
         setConfirmPortalPin('');
       }
@@ -1291,7 +1187,7 @@ export const MemberPortalPage: React.FC = () => {
             <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-700/60 text-[11px] text-slate-300 flex items-start gap-2">
               <Info className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
               <span>
-                <strong>First-time PIN:</strong> Your default PIN is the <strong>last 4 digits of your registered phone number</strong>. You can change your PIN at any time inside your portal profile.
+                <strong>Secure member account:</strong> Use your verified email and password. Ask the church office to link your account if you need access.
               </span>
             </div>
 
@@ -3856,7 +3752,7 @@ export const MemberPortalPage: React.FC = () => {
                     </label>
                     <input
                       type="password"
-                      placeholder={usesPrivateCloudRoster ? 'Enter a new password (6+ characters)' : 'Enter new 4-digit PIN'}
+                      placeholder={usesPrivateCloudRoster ? 'Enter a new password (12+ characters)' : 'Enter new 4-digit PIN'}
                       value={newPortalPin}
                       onChange={(e) => setNewPortalPin(e.target.value)}
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -3865,11 +3761,11 @@ export const MemberPortalPage: React.FC = () => {
 
                   <div>
                     <label className="block font-bold text-slate-700 mb-1">
-                      Confirm New PIN
+                      Confirm New Password
                     </label>
                     <input
                       type="password"
-                      placeholder="Repeat PIN to confirm"
+                      placeholder="Repeat password to confirm"
                       value={confirmPortalPin}
                       onChange={(e) => setConfirmPortalPin(e.target.value)}
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -3893,143 +3789,7 @@ export const MemberPortalPage: React.FC = () => {
         )}
       </main>
 
-      {/* MODAL: GIVE ONLINE / RECORD TITHE */}
-      {giveModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white w-full max-w-lg rounded-3xl p-6 sm:p-8 shadow-2xl space-y-5 border border-slate-200">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-xl bg-emerald-800 text-white flex items-center justify-center">
-                  <Wallet className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-base text-slate-900">
-                    Online Giving & Tithe Submission
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Greater Works City Church • Joma Assembly
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setGiveModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 text-lg font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleRecordGiving} className="space-y-4 text-xs">
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Giving Category</label>
-                <select
-                  value={giveCategory}
-                  onChange={(e) => setGiveCategory(e.target.value as typeof giveCategory)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
-                >
-                  <option value="Tithe">Tithe (Malachi 3:10)</option>
-                  <option value="Offering">Sunday Worship Offering</option>
-                  <option value="Building Fund">Cathedral Building Fund Pledge</option>
-                  <option value="Seed">Sacrificial Revival Seed</option>
-                  <option value="Thanksgiving">Thanksgiving / Birthday Seed</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Amount (GH₵)</label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-2.5 font-bold text-slate-500">GH₵</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    required
-                    placeholder="0.00"
-                    value={giveAmount}
-                    onChange={(e) => setGiveAmount(e.target.value)}
-                    className="w-full pl-12 pr-3 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono font-bold text-base"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Payment Method</label>
-                  <select
-                    value={giveMethod}
-                    onChange={(e) => {
-                      const m = e.target.value as PaymentMethod;
-                      setGiveMethod(m);
-                      if (m === 'mobile_money') setGiveChannel('MTN MoMo');
-                      else if (m === 'bank_transfer') setGiveChannel('GCB Bank');
-                      else setGiveChannel('Sanctuary Offering');
-                    }}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
-                  >
-                    <option value="mobile_money">Mobile Money (MoMo)</option>
-                    <option value="bank_transfer">Bank Transfer</option>
-                    <option value="cash">Cash at Cathedral</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Channel / Network</label>
-                  <select
-                    value={giveChannel}
-                    onChange={(e) => setGiveChannel(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
-                  >
-                    <option value="MTN MoMo">MTN MoMo (024 456 7890)</option>
-                    <option value="Telecel Cash">Telecel Cash (020 876 5432)</option>
-                    <option value="GCB Bank">GCB Bank Transfer</option>
-                    <option value="Sanctuary Envelope">Sanctuary Envelope</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  Transaction / MoMo Reference (Optional)
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. 192830182 or MoMo Approval Code"
-                  value={giveReference}
-                  onChange={(e) => setGiveReference(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-                />
-              </div>
-
-              <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] space-y-1">
-                <p className="font-bold flex items-center gap-1">
-                  <Info className="w-3.5 h-3.5 text-amber-700" />
-                  Church Merchant Details:
-                </p>
-                <p>MTN Mobile Money: <strong>024 456 7890</strong> (Greater Works City Church)</p>
-                <p>Reference: <strong>{activeMember.member_id}</strong></p>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setGiveModalOpen(false)}
-                  className="px-4 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-xl font-bold"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingGiving}
-                  className="px-5 py-2 bg-[#064e3b] hover:bg-[#047857] text-white rounded-xl font-bold flex items-center gap-2 shadow-xs disabled:opacity-50"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>{isSubmittingGiving ? 'Recording...' : 'Confirm & Record Giving'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {(giveModalOpen||isEventContribModalOpen)&&<div role="dialog" aria-modal="true" aria-label="Giving and payment verification" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"><div className="bg-white rounded-2xl max-w-md p-6 space-y-4 text-slate-800"><h2 className="text-lg font-bold">Giving and payment verification</h2><p className="text-sm">Use the church office’s verified payment instructions. This app does not process payments. A finance officer will confirm your payment and record the receipt, which will then appear in your member records.</p><button onClick={()=>{setGiveModalOpen(false);setIsEventContribModalOpen(false);}} className="rounded-lg bg-emerald-800 text-white px-4 py-2 text-sm font-semibold">Close</button></div></div>}
 
       {/* Member Benevolence Application Modal */}
       {activeMember && (
@@ -4074,18 +3834,7 @@ export const MemberPortalPage: React.FC = () => {
         />
       )}
 
-      {/* Welfare Event Contribution Modal */}
-      {isEventContribModalOpen && activeMember && (
-        <RecordWelfareEventContributionModal
-          isOpen={isEventContribModalOpen}
-          onClose={() => {
-            setIsEventContribModalOpen(false);
-            setSelectedPortalEventId(undefined);
-          }}
-          preselectedEventId={selectedPortalEventId}
-          preselectedMemberId={activeMember.id}
-        />
-      )}
+
     </div>
   );
 };

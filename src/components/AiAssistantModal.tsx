@@ -1,3 +1,4 @@
+import { authenticatedFetch } from '../lib/apiClient';
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Sparkles,
@@ -125,7 +126,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
         ministries: ministries.map((m) => m.name),
       };
 
-      const response = await fetch('/api/ai/assistant', {
+      const response = await authenticatedFetch('/api/ai/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -79,7 +79,7 @@ BEGIN
       AND tc.constraint_type = 'CHECK'
       AND ccu.column_name IN ('status', 'gender', 'marital_status', 'role', 'follow_up_status', 'care_type', 'category', 'type', 'channel', 'payment_method')
   ) LOOP
-    EXECUTE format('ALTER TABLE public.%I DROP CONSTRAINT IF EXISTS %I;', r.table_name, r.constraint_name);
+    EXECUTE format('ALTER TABLE IF EXISTS public.%I DROP CONSTRAINT IF EXISTS %I;', r.table_name, r.constraint_name);
   END LOOP;
 
   -- Drop legacy foreign keys that block offline-first text ID synchronization
@@ -94,74 +94,74 @@ BEGIN
       AND tc.table_name IN ('attendance', 'prayer_requests', 'pastoral_care', 'giving', 'pledges', 'events', 'visitors', 'profiles')
       AND ccu.column_name IN ('member_id', 'service_id', 'ministry_id', 'campaign_id', 'id')
   ) LOOP
-    EXECUTE format('ALTER TABLE public.%I DROP CONSTRAINT IF EXISTS %I;', r.table_name, r.constraint_name);
+    EXECUTE format('ALTER TABLE IF EXISTS public.%I DROP CONSTRAINT IF EXISTS %I;', r.table_name, r.constraint_name);
   END LOOP;
 END $$;
 
 -- Explicit drops for known foreign key constraints
-ALTER TABLE public.attendance DROP CONSTRAINT IF EXISTS attendance_member_id_fkey;
-ALTER TABLE public.attendance DROP CONSTRAINT IF EXISTS attendance_service_id_fkey;
-ALTER TABLE public.prayer_requests DROP CONSTRAINT IF EXISTS prayer_requests_member_id_fkey;
-ALTER TABLE public.pastoral_care DROP CONSTRAINT IF EXISTS pastoral_care_member_id_fkey;
-ALTER TABLE public.giving DROP CONSTRAINT IF EXISTS giving_member_id_fkey;
-ALTER TABLE public.pledges DROP CONSTRAINT IF EXISTS pledges_member_id_fkey;
-ALTER TABLE public.events DROP CONSTRAINT IF EXISTS events_ministry_id_fkey;
-ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_id_fkey;
+ALTER TABLE IF EXISTS public.attendance DROP CONSTRAINT IF EXISTS attendance_member_id_fkey;
+ALTER TABLE IF EXISTS public.attendance DROP CONSTRAINT IF EXISTS attendance_service_id_fkey;
+ALTER TABLE IF EXISTS public.prayer_requests DROP CONSTRAINT IF EXISTS prayer_requests_member_id_fkey;
+ALTER TABLE IF EXISTS public.pastoral_care DROP CONSTRAINT IF EXISTS pastoral_care_member_id_fkey;
+ALTER TABLE IF EXISTS public.giving DROP CONSTRAINT IF EXISTS giving_member_id_fkey;
+ALTER TABLE IF EXISTS public.pledges DROP CONSTRAINT IF EXISTS pledges_member_id_fkey;
+ALTER TABLE IF EXISTS public.events DROP CONSTRAINT IF EXISTS events_ministry_id_fkey;
+ALTER TABLE IF EXISTS public.profiles DROP CONSTRAINT IF EXISTS profiles_id_fkey;
 
 -- Ensure created_at has DEFAULT NOW() on all tables where created_at is NOT NULL
 DO $$
 BEGIN
-  ALTER TABLE public.events ALTER COLUMN created_at SET DEFAULT NOW();
+  ALTER TABLE IF EXISTS public.events ALTER COLUMN created_at SET DEFAULT NOW();
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 DO $$
 BEGIN
-  ALTER TABLE public.pastoral_care ALTER COLUMN created_at SET DEFAULT NOW();
+  ALTER TABLE IF EXISTS public.pastoral_care ALTER COLUMN created_at SET DEFAULT NOW();
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 DO $$
 BEGIN
-  ALTER TABLE public.prayer_requests ALTER COLUMN created_at SET DEFAULT NOW();
+  ALTER TABLE IF EXISTS public.prayer_requests ALTER COLUMN created_at SET DEFAULT NOW();
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 DO $$
 BEGIN
-  ALTER TABLE public.giving ALTER COLUMN created_at SET DEFAULT NOW();
+  ALTER TABLE IF EXISTS public.giving ALTER COLUMN created_at SET DEFAULT NOW();
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 DO $$
 BEGIN
-  ALTER TABLE public.expenses ALTER COLUMN created_at SET DEFAULT NOW();
+  ALTER TABLE IF EXISTS public.expenses ALTER COLUMN created_at SET DEFAULT NOW();
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 DO $$
 BEGIN
-  ALTER TABLE public.pledges ALTER COLUMN created_at SET DEFAULT NOW();
+  ALTER TABLE IF EXISTS public.pledges ALTER COLUMN created_at SET DEFAULT NOW();
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 DO $$
 BEGIN
-  ALTER TABLE public.pledge_campaigns ALTER COLUMN created_at SET DEFAULT NOW();
+  ALTER TABLE IF EXISTS public.pledge_campaigns ALTER COLUMN created_at SET DEFAULT NOW();
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 DO $$
 BEGIN
-  ALTER TABLE public.services ALTER COLUMN created_at SET DEFAULT NOW();
+  ALTER TABLE IF EXISTS public.services ALTER COLUMN created_at SET DEFAULT NOW();
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 DO $$
 BEGIN
-  ALTER TABLE public.headcounts ALTER COLUMN created_at SET DEFAULT NOW();
+  ALTER TABLE IF EXISTS public.headcounts ALTER COLUMN created_at SET DEFAULT NOW();
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 DO $$
 BEGIN
-  ALTER TABLE public.ministries ALTER COLUMN created_at SET DEFAULT NOW();
+  ALTER TABLE IF EXISTS public.ministries ALTER COLUMN created_at SET DEFAULT NOW();
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 DO $$
 BEGIN
-  ALTER TABLE public.small_groups ALTER COLUMN created_at SET DEFAULT NOW();
+  ALTER TABLE IF EXISTS public.small_groups ALTER COLUMN created_at SET DEFAULT NOW();
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 
@@ -1406,328 +1406,4 @@ SELECT
   (SELECT COUNT(*) FROM public.ministries WHERE status = 'active') AS active_ministries;
 
 -- ==============================================================================
--- 11. LIVE PRODUCTION SEED DATA (Greater Works City Church - Joma Assembly)
--- ==============================================================================
-
--- 11.1 Church Settings
-INSERT INTO public.settings (
-  id, church_name, branch_name, tagline, short_name, logo_url,
-  location, address, gps_address, phone, email, currency, currency_symbol, timezone
-) VALUES (
-  'gwcc_global_settings',
-  'Greater Works City Church',
-  'Joma Assembly',
-  'Taking Cities and Nations for Christ through the Greater Works',
-  'GWCC',
-  '/assets/logo.png',
-  'Joma, Accra, Ghana',
-  'Main High Street, Adjacent to Joma Market, Joma, Accra',
-  'GA-183-4921',
-  '+233 24 456 7890',
-  'admin@greaterworkscitychurch.org',
-  'GHS',
-  'GH₵',
-  'Africa/Accra'
-) ON CONFLICT (id) DO UPDATE SET updated_at = NOW();
-
--- 11.2 User Profiles
-INSERT INTO public.profiles (id, first_name, last_name, email, phone, department, role, is_active)
-VALUES
-  ('usr-001', 'Prophet Elisha', 'K. Richard', 'senior.pastor@greaterworkscitychurch.org', '+233 24 111 2233', 'Senior Pastoral Board & Executive Council', 'super_admin', true),
-  ('usr-002', 'Kofi', 'Mensah-Bonsu', 'admin@greaterworkscitychurch.org', '+233 24 222 3344', 'Administration', 'super_admin', true),
-  ('usr-003', 'Akosua', 'Frimpong', 'finance@greaterworkscitychurch.org', '+233 20 333 4455', 'Finance & Treasury', 'finance_officer', true),
-  ('usr-004', 'Pastor David', 'Osei-Tutu', 'pastor.david@greaterworkscitychurch.org', '+233 55 444 5566', 'Pastoral Care', 'pastor', true),
-  ('usr-005', 'Ebenezer', 'Quaye', 'attendance@greaterworkscitychurch.org', '+233 24 555 6677', 'Protocol & Ushering', 'attendance_officer', true)
-ON CONFLICT (id) DO UPDATE SET
-  first_name = EXCLUDED.first_name,
-  last_name = EXCLUDED.last_name,
-  email = EXCLUDED.email,
-  phone = EXCLUDED.phone,
-  department = EXCLUDED.department,
-  role = EXCLUDED.role,
-  is_active = EXCLUDED.is_active;
-
--- 11.3 Ministries & Departments
-INSERT INTO public.ministries (id, name, description, leader_name, assistant_leader_name, meeting_schedule, meeting_day, meeting_time, status, member_count)
-VALUES
-  ('min-001', 'Voice of Dominion (Choir & Worship Team)', 'Leads the congregation in Spirit-filled praise, adoration, and classical choral anthems.', 'Minister Kwadwo Boateng', 'Sister Gifty Annan', 'Every Saturday at 4:00 PM', 'Saturday', '16:00', 'active', 32),
-  ('min-002', 'Media, Sound & IT Ministry', 'Responsible for live broadcasting, sound engineering, multi-camera streaming, and digital assets.', 'Brother Samuel Darko', 'Brother Prince Lamptey', 'Every Friday at 5:30 PM & Sunday Pre-service', 'Friday', '17:30', 'active', 14),
-  ('min-003', 'Royal Protocol & Ushers', 'Greets worshipers, coordinates seating, distributes bulletins, and handles service order.', 'Deaconess Beatrice Owusu', 'Sister Selina Mensah', '1st & 3rd Saturdays at 3:00 PM', 'Saturday', '15:00', 'active', 24),
-  ('min-004', 'Generations of Champions (Youth & Campus)', 'Equipping teenagers and tertiary students for leadership, purity, and career excellence.', 'Elder Kenneth Asare', 'Sister Jessica Tetteh', 'Every Sunday at 3:30 PM', 'Sunday', '15:30', 'active', 58),
-  ('min-005', 'Women of Grace (Virtuous Women)', 'Nurturing godly mothers, wives, and career women in spiritual maturity and home building.', 'Lady Pastor Mercy Agyemang', 'Mama Florence Adjei', '2nd Saturday of every month at 8:00 AM', 'Saturday', '08:00', 'active', 76),
-  ('min-006', 'Men of Valour (Christian Men Fellowship)', 'Brotherhood fostering spiritual resilience, economic empowerment, and family leadership.', 'Elder Joseph Koomson', 'Brother Daniel Koranteng', 'Last Saturday of every month at 7:00 AM', 'Saturday', '07:00', 'active', 65),
-  ('min-007', 'Intercessory Prayer Army', 'Carrying the church in 24/7 continuous prayer watches, fasting, and deliverance sessions.', 'Pastor David Osei-Tutu', 'Evangelist Paulina Akoto', 'Tuesdays & Thursdays at 5:00 PM', 'Tuesday', '17:00', 'active', 28)
-ON CONFLICT (id) DO NOTHING;
-
--- 11.4 Small Groups (Cell Fellowships)
-INSERT INTO public.small_groups (id, name, leader_name, meeting_location, meeting_address, zone, meeting_day, meeting_time, notes, member_count)
-VALUES
-  ('grp-001', 'Joma Faith Cell', 'Elder Kenneth Asare', 'Near Joma Chief Palace, Joma', 'Joma High Street', 'Joma Central', 'Tuesday', '19:00', 'Meets in the compound of Elder Kenneth', 18),
-  ('grp-002', 'Ablekuma Central Cell', 'Deacon Stephen Antwi', 'Ablekuma Curve, Opposite Presby Church', 'Ablekuma Main Road', 'Ablekuma', 'Tuesday', '19:00', 'Active cell group with steady growth', 22),
-  ('grp-003', 'Weija Victory Group', 'Sister Mercy Mensah', 'Weija Junction, Near Barrier', 'Weija Barrier High St', 'Weija', 'Thursday', '18:30', 'Focus on family Bible study', 16),
-  ('grp-004', 'Anyaa Fellowship Hub', 'Brother Michael Quaye', 'Anyaa Market Junction', 'Anyaa Last Stop', 'Anyaa', 'Wednesday', '19:00', 'Very youthful cell group', 25)
-ON CONFLICT (id) DO NOTHING;
-
--- 11.5 Worship Services & Liturgical Programs
-INSERT INTO public.services (
-  id, name, type, day_of_week, start_time, end_time, venue,
-  service_leader, preacher, worship_leader, expected_attendance, order_of_service, description, is_active
-) VALUES
-  (
-    'srv-001',
-    'Sunday 1st Service (Prophetic Encounter)',
-    'sunday',
-    'Sunday',
-    '07:30',
-    '09:30',
-    'Main Cathedral Sanctuary, Joma',
-    'Pastor David Osei-Tutu',
-    'Apostle Emmanuel Agyemang-Prempeh',
-    'Voice of Dominion Choir',
-    180,
-    '[
-      {"id": "item-101", "order": 1, "time": "07:30 - 07:45", "title": "Opening Prayer & Faith Declarations", "minister": "Elder Kenneth Asare", "duration": "15 min"},
-      {"id": "item-102", "order": 2, "time": "07:45 - 08:15", "title": "Intense Praise & Adoration", "minister": "Voice of Dominion Choir", "duration": "30 min"},
-      {"id": "item-103", "order": 3, "time": "08:15 - 08:30", "title": "Welcome of Visitors & Announcements", "minister": "Deaconess Beatrice Owusu", "duration": "15 min"},
-      {"id": "item-104", "order": 4, "time": "08:30 - 08:45", "title": "Covenant Tithes & Offering Exhortation", "minister": "Pastor David Osei-Tutu", "duration": "15 min"},
-      {"id": "item-105", "order": 5, "time": "08:45 - 09:20", "title": "Apostolic Sermon & Prophetic Ministry", "minister": "Apostle Emmanuel Agyemang-Prempeh", "duration": "35 min"},
-      {"id": "item-106", "order": 6, "time": "09:20 - 09:30", "title": "Holy Communion & Benediction", "minister": "Senior Pastoral Board", "duration": "10 min"}
-    ]'::jsonb,
-    'Early morning communion, worship, and prophetic word for divine direction.',
-    true
-  ),
-  (
-    'srv-002',
-    'Sunday 2nd Service (Celebration Service)',
-    'sunday',
-    'Sunday',
-    '10:00',
-    '12:30',
-    'Main Cathedral Sanctuary, Joma',
-    'Lady Pastor Mercy Agyemang',
-    'Apostle Emmanuel Agyemang-Prempeh',
-    'Minister Kwadwo Boateng',
-    350,
-    '[
-      {"id": "item-201", "order": 1, "time": "10:00 - 10:15", "title": "Call to Worship & Intercession", "minister": "Deacon Stephen Antwi", "duration": "15 min"},
-      {"id": "item-202", "order": 2, "time": "10:15 - 10:55", "title": "High Praise & Celebratory Worship", "minister": "Minister Kwadwo Boateng & Choir", "duration": "40 min"},
-      {"id": "item-203", "order": 3, "time": "10:55 - 11:10", "title": "New Visitors Reception & Church Pulse", "minister": "Lady Pastor Mercy Agyemang", "duration": "15 min"},
-      {"id": "item-204", "order": 4, "time": "11:10 - 11:30", "title": "Sacrificial Giving, Tithes & Building Seed", "minister": "Church Finance Board", "duration": "20 min"},
-      {"id": "item-205", "order": 5, "time": "11:30 - 12:15", "title": "Ministry of the Word: Walking in Greater Works", "minister": "Apostle Emmanuel Agyemang-Prempeh", "duration": "45 min"},
-      {"id": "item-206", "order": 6, "time": "12:15 - 12:30", "title": "Altar Call, Healing Ministry & Benediction", "minister": "Apostle & Pastoral Team", "duration": "15 min"}
-    ]'::jsonb,
-    'High praise, congregational celebration worship, child dedication, and apostolic doctrine.',
-    true
-  ),
-  (
-    'srv-003',
-    'Midweek Miracle & Teaching Service',
-    'midweek',
-    'Wednesday',
-    '18:30',
-    '20:30',
-    'Main Cathedral Sanctuary, Joma',
-    'Elder Kenneth Asare',
-    'Pastor David Osei-Tutu',
-    'Brother Prince Lamptey',
-    120,
-    '[]'::jsonb,
-    'In-depth biblical expository verse-by-verse teaching and prayer for signs and wonders.',
-    true
-  ),
-  (
-    'srv-004',
-    'Friday All-Night Deliverance Vigil',
-    'prayer',
-    'Friday',
-    '22:00',
-    '04:00',
-    'Main Cathedral Sanctuary, Joma',
-    'Pastor David Osei-Tutu',
-    'Apostle Emmanuel Agyemang-Prempeh',
-    'Voice of Dominion Night Watch',
-    200,
-    '[]'::jsonb,
-    'Intense intercession, midnight prophetic warfare, family deliverance, and breakthroughs.',
-    true
-  )
-ON CONFLICT (id) DO NOTHING;
-
--- 11.6 Church Members (Complete Records with Date Joined, Ghana Card, GPS & Milestones)
-INSERT INTO public.members (
-  id, member_id, tithe_number, first_name, middle_name, last_name, gender,
-  date_of_birth, marital_status, nationality, national_id, hometown, region_of_origin,
-  spouse_name, spouse_is_member, wedding_anniversary, number_of_children,
-  occupation, employer, education, phone, alternative_phone, preferred_communication,
-  email, residential_address, landmark, city, region, gps_address, profile_photo_url,
-  status, membership_date, date_joined, first_visit_date, right_hand_of_fellowship_date,
-  previous_church, ministry_id, ministry_name, small_group_id, small_group_name,
-  leadership_position, salvation_status, salvation_date, baptism_status, baptism_date,
-  baptized_by, holy_spirit_baptism, holy_spirit_baptism_date, membership_class_completed,
-  spiritual_gifts, talents_skills, emergency_name, emergency_relationship,
-  emergency_phone, emergency_alt_phone, notes, is_archived
-) VALUES
-  (
-    'mem-001', 'GWCC-000001', 'T-1042', 'Kwame', 'Owusu', 'Mensah', 'male',
-    '1988-04-12', 'married', 'Ghanaian', 'GHA-712893450-1', 'Abetifi Kwahu', 'Eastern',
-    'Dr. Evelyn Mensah', true, '2016-11-26', 3,
-    'Senior Civil Engineer', 'Ghana Highway Authority', 'BSc Civil Engineering (KNUST)',
-    '+233 24 456 1234', '+233 20 987 6543', 'whatsapp',
-    'k.mensah@ghanahighways.gov.gh', 'Plot 42, Joma New Site, Near Top Pharmacy',
-    'Behind Joma Chief Palace, Near Ablekuma Curve', 'Accra', 'Greater Accra', 'GA-183-4921',
-    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-    'active', '2021-03-15', '2021-03-15', '2021-01-10', '2021-04-04',
-    'Church of Pentecost', 'min-006', 'Men of Valour (Christian Men Fellowship)',
-    'grp-001', 'Joma Faith Cell', 'Men Fellowship Secretary',
-    true, '2005-08-14', true, '2021-06-20', 'Pastor David Osei-Tutu',
-    true, '2021-07-02', true, 'Administration & Organisation, Giving & Philanthropy',
-    'Event Decor & Logistics, Building & Maintenance / Electrician',
-    'Dr. Evelyn Mensah', 'Spouse', '+233 24 555 9876', NULL,
-    'Pillar of the church, consistent tither, and active cell organizer.', false
-  ),
-  (
-    'mem-002', 'GWCC-000002', 'T-1043', 'Abena', 'Serwaa', 'Osei', 'female',
-    '1993-09-28', 'married', 'Ghanaian', 'GHA-829103948-3', 'Mampong Ashanti', 'Ashanti',
-    'Kofi Osei', true, '2019-12-14', 2,
-    'Pharmacist', 'Ernest Chemists Ltd', 'PharmD (University of Ghana)',
-    '+233 20 876 5432', NULL, 'whatsapp',
-    'abena.osei@gmail.com', 'House No. 12, Ablekuma Central, Accra',
-    'Opposite Presby Church, Near Ablekuma Clinic', 'Accra', 'Greater Accra', 'GA-201-9943',
-    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-    'active', '2022-01-09', '2022-01-09', '2021-11-28', '2022-02-06',
-    'ICGC Christ Temple', 'min-001', 'Voice of Dominion (Choir & Worship Team)',
-    'grp-002', 'Ablekuma Central Cell', 'Soprano Section Leader',
-    true, '2010-04-18', true, '2022-04-17', 'Apostle Emmanuel Agyemang-Prempeh',
-    true, '2022-04-20', true, 'Praise & Worship / Music, Hospitality & Ushering',
-    'Singing (Vocalist), Keyboard / Piano',
-    'Kofi Osei', 'Spouse', '+233 24 777 8899', NULL,
-    'Very gifted soloist, faithfully attends choir rehearsals every Saturday.', false
-  ),
-  (
-    'mem-003', 'GWCC-000003', 'T-1044', 'Kofi', 'Badu', 'Asante', 'male',
-    '1997-11-05', 'single', 'Ghanaian', 'GHA-938201948-2', 'Sunyani', 'Bono',
-    NULL, false, NULL, 0,
-    'Software Engineer', 'Hubtel Ghana', 'BSc Computer Science (Ashesi)',
-    '+233 55 123 9876', NULL, 'whatsapp',
-    'kofi.asante.tech@gmail.com', 'Anyaa West, Near Pentecost Church',
-    'Opposite Top Pharmacy, Anyaa Last Stop', 'Accra', 'Greater Accra', 'GA-190-2345',
-    'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&auto=format&fit=crop&q=80',
-    'active', '2023-05-21', '2023-05-21', '2023-04-09', '2023-06-04',
-    'Action Chapel International', 'min-002', 'Media, Sound & IT Ministry',
-    'grp-004', 'Anyaa Fellowship Hub', 'Live Stream Coordinator',
-    true, '2014-06-22', true, '2023-07-16', 'Pastor David Osei-Tutu',
-    true, '2023-07-20', true, 'Administration & Organisation, Intercession & Prayer',
-    'Livestream / Camera Operation, Graphic Design & Media, Sound / Audio Engineering',
-    'Gladys Asante', 'Mother', '+233 24 333 1122', NULL,
-    'Handles church YouTube live stream and social media clips.', false
-  ),
-  (
-    'mem-004', 'GWCC-000004', 'T-1045', 'Beatrice', 'Ama', 'Owusu', 'female',
-    '1979-02-14', 'married', 'Ghanaian', 'GHA-718293049-7', 'Akim Oda', 'Eastern',
-    'Elder Joseph Owusu', true, '2003-08-30', 4,
-    'Proprietress & Merchant', 'Grace & Peace Wholesale Trading', 'Diploma in Business Studies',
-    '+233 24 999 0011', '+233 20 111 2233', 'whatsapp',
-    'beatrice.owusu@gmail.com', 'Joma High Street, Behind Market Stall 14',
-    'Adjacent to Joma Market Main Entrance', 'Accra', 'Greater Accra', 'GA-183-5012',
-    'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
-    'leader', '2019-09-08', '2019-09-08', '2019-07-14', '2019-10-06',
-    'Presbyterian Church of Ghana', 'min-003', 'Royal Protocol & Ushers',
-    'grp-001', 'Joma Faith Cell', 'Head of Ushering & Protocol',
-    true, '1998-03-29', true, '2019-12-15', 'Apostle Emmanuel Agyemang-Prempeh',
-    true, '2020-01-10', true, 'Hospitality & Ushering, Helps & Welfare',
-    'Protocol & VIP Coordination, Cooking & Catering',
-    'Elder Joseph Owusu', 'Spouse', '+233 24 888 7766', NULL,
-    'Foundation member of Joma Assembly. Leads Sunday ushering team.', false
-  )
-ON CONFLICT (member_id) DO NOTHING;
-
--- 11.7 Capital Campaigns & Pledges
-INSERT INTO public.pledge_campaigns (id, name, target_amount, start_date, end_date, description, is_active)
-VALUES
-  ('cmp-001', 'Cathedral Sanctuary Expansion & Roofing Covenant', 250000.00, '2026-01-01', '2026-12-31', 'Procurement of structural steel trusses, aluminum roofing sheets, and terrazzo flooring for the 1,000-seater main sanctuary expansion.', true),
-  ('cmp-002', '33-Seater Community Outreach Bus Project', 180000.00, '2026-02-01', '2026-08-31', 'Purchasing a brand-new 33-seater bus for transporting Sunday congregants from Ablekuma, Weija, and Anyaa zones.', true)
-ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO public.pledges (
-  id, campaign_id, campaign_name, member_id, member_name, member_phone,
-  amount_pledged, amount_paid, balance, start_date, due_date, status, notes
-) VALUES
-  ('plg-001', 'cmp-001', 'Cathedral Sanctuary Expansion & Roofing Covenant', 'mem-001', 'Kwame Owusu Mensah', '+233 24 456 1234', 15000.00, 10000.00, 5000.00, '2026-01-15', '2026-09-30', 'partially_paid', 'Paid GH₵ 10,000 via GCB Bank Transfer. Balance of GH₵ 5,000 scheduled for end of month.'),
-  ('plg-002', 'cmp-001', 'Cathedral Sanctuary Expansion & Roofing Covenant', 'mem-002', 'Abena Serwaa Osei', '+233 20 876 5432', 5000.00, 5000.00, 0.00, '2026-02-01', '2026-06-30', 'completed', 'Pledge fully redeemed in honour of mother birthday.'),
-  ('plg-003', 'cmp-002', '33-Seater Community Outreach Bus Project', 'mem-003', 'Kofi Badu Asante', '+233 55 123 9876', 4000.00, 2000.00, 2000.00, '2026-02-15', '2026-07-31', 'partially_paid', 'Monthly installment of GH₵ 500 via MTN MoMo.')
-ON CONFLICT (id) DO NOTHING;
-
--- 11.8 Financial Giving & Tithes (Ghana Cedi)
-INSERT INTO public.giving (
-  id, member_id, member_name, donor_name, category, amount, currency,
-  date, payment_method, payment_channel, reference_number, service_id, service_name, notes, recorded_by
-) VALUES
-  ('giv-001', 'mem-001', 'Kwame Owusu Mensah', 'Kwame Owusu Mensah', 'Tithe', 2400.00, 'GHS', CURRENT_DATE, 'mobile_money', 'MTN MoMo', 'MM-20260901-0942', 'srv-002', 'Sunday 2nd Service (Celebration Service)', 'September Tithe for Kwame Mensah', 'Akosua Frimpong (Finance Officer)'),
-  ('giv-002', 'mem-002', 'Abena Serwaa Osei', 'Abena Serwaa Osei', 'Tithe', 1250.00, 'GHS', CURRENT_DATE, 'mobile_money', 'Telecel Cash', 'TC-20260901-1104', 'srv-002', 'Sunday 2nd Service (Celebration Service)', 'September Tithe', 'Akosua Frimpong (Finance Officer)'),
-  ('giv-003', 'mem-003', 'Kofi Badu Asante', 'Kofi Badu Asante', 'Tithe', 1800.00, 'GHS', CURRENT_DATE, 'mobile_money', 'MTN MoMo', 'MM-20260901-1215', 'srv-002', 'Sunday 2nd Service (Celebration Service)', 'Software consultancy tithe', 'Akosua Frimpong (Finance Officer)'),
-  ('giv-004', NULL, NULL, 'Sunday Congregation (Loose Offering)', 'Offering', 4850.00, 'GHS', CURRENT_DATE, 'cash', 'Auditorium Tally', 'TALLY-SUN-2ND', 'srv-002', 'Sunday 2nd Service (Celebration Service)', 'General Sunday Celebration auditorium basket collection', 'Deaconess Beatrice Owusu'),
-  ('giv-005', 'mem-001', 'Kwame Owusu Mensah', 'Kwame Owusu Mensah', 'Building Fund', 5000.00, 'GHS', CURRENT_DATE, 'bank_transfer', 'GCB Bank Transfer', 'GCB-TRF-99482', 'srv-002', 'Sunday 2nd Service (Celebration Service)', 'Sanctuary Expansion Covenant Seed', 'Akosua Frimpong (Finance Officer)')
-ON CONFLICT (id) DO NOTHING;
-
--- 11.9 Visitors & First-Time Guests
-INSERT INTO public.visitors (
-  id, full_name, gender, phone, email, address, gps_address,
-  visit_date, service_attended, invited_by, how_heard, prayer_request,
-  follow_up_status, assigned_to_name, notes
-) VALUES
-  ('vis-001', 'Samuel Mensah Kyei', 'male', '+233 24 888 1234', 'samuel.kyei@gmail.com', 'Ablekuma Fanmilk, Near Filling Station', 'GA-210-4491', CURRENT_DATE, 'Sunday 2nd Service (Celebration Service)', 'Sister Abena Osei', 'Invited by church member', 'Praying for breakthrough in visa application and career direction', 'follow_up_required', 'Pastor David Osei-Tutu', 'Very receptive gentleman, wants to join the choir ministry next month.'),
-  ('vis-002', 'Priscilla Serwaa Boateng', 'female', '+233 50 111 4455', 'priscilla.serwaa@yahoo.com', 'Joma Old Town, Beside Pentecost Church', 'GA-183-1109', CURRENT_DATE, 'Sunday 1st Service (Prophetic Encounter)', 'Walked in after hearing sound', 'Church Banner / Outdoor sign', 'Spiritual growth and peace in her marriage', 'contacted', 'Lady Pastor Mercy Agyemang', 'Called on phone Monday morning. Very warm and appreciative.')
-ON CONFLICT (id) DO NOTHING;
-
--- 11.10 Operational Expenses
-INSERT INTO public.expenses (
-  id, category, title, recipient, amount, currency, date, account,
-  payment_method, reference_number, description, approved_by, recorded_by
-) VALUES
-  ('exp-001', 'Utilities & Power', 'Electricity (ECG Pre-paid) for Sanctuary', 'Electricity Company of Ghana (ECG)', 1200.00, 'GHS', CURRENT_DATE, 'Church MoMo Operational Account', 'mobile_money', 'ECG-TX-994812', 'Purchased 3-phase commercial electricity tokens for auditorium air-conditioning and sound.', 'Apostle Emmanuel Agyemang-Prempeh', 'Akosua Frimpong (Finance Officer)'),
-  ('exp-002', 'Media & IT', 'High-Speed Fiber Internet for Sunday Livestream', 'Telecel Ghana Broadband', 850.00, 'GHS', CURRENT_DATE, 'Church MoMo Operational Account', 'mobile_money', 'TEL-BB-44921', 'Monthly 100Mbps dedicated fiber internet subscription for 4K YouTube streaming.', 'Kofi Mensah-Bonsu (Admin)', 'Brother Samuel Darko (Media Head)')
-ON CONFLICT (id) DO NOTHING;
-
--- 11.11 Church Events
-INSERT INTO public.events (
-  id, title, description, theme, theme_scripture, event_type,
-  start_date, end_date, start_time, end_time, venue, organizer, speaker,
-  ministry_name, expected_attendance, budget, status, requires_registration, banner_color
-) VALUES
-  (
-    'evt-001',
-    'Annual Greater Works Apostolic Convention 2026',
-    '3 days of power, apostolic impartation, divine healing, and ministerial empowerment for all branches.',
-    'Walking in the Greater Works',
-    'John 14:12 - Verily, verily, I say unto you, He that believeth on me, the works that I do shall he do also; and greater works than these shall he do.',
-    'conference',
-    '2026-11-12', '2026-11-15', '17:30', '21:30',
-    'GWCC Main Cathedral Sanctuary, Joma, Accra',
-    'Pastoral & Apostolic Council',
-    'Apostle Emmanuel Agyemang-Prempeh & International Guest Apostles',
-    'General Assembly', 1200, 35000.00, 'upcoming', true, 'emerald'
-  ),
-  (
-    'evt-002',
-    'Kingdom Wealth & Financial Breakthrough Summit',
-    'Equipping congregants with biblically grounded principles of covenant stewardship, real estate investment, and business creation in Ghana.',
-    'The Power to Get Wealth',
-    'Deuteronomy 8:18',
-    'special',
-    '2026-10-03', '2026-10-04', '09:00', '14:00',
-    'Main Cathedral Sanctuary, Joma',
-    'Men & Women Fellowships',
-    'Renowned Christian CEOs & Financial Analysts',
-    'Men of Valour & Women of Grace', 400, 8000.00, 'upcoming', false, 'amber'
-  )
-ON CONFLICT (id) DO NOTHING;
-
--- 11.12 Initial Audit Trail Log
-INSERT INTO public.audit_logs (id, user_name, user_role, action, module, record_id, details, timestamp)
-VALUES
-  ('log-001', 'System Initializer', 'super_admin', 'SYSTEM_MIGRATION', 'Database', 'gwcc_schema_v2', 'Deployed production-ready Supabase PostgreSQL schema with 18 tables, full RLS security, storage bucket, and live Ghanaian church seed data.', NOW())
-ON CONFLICT (id) DO NOTHING;
-
--- ==============================================================================
--- END OF SUPABASE SQL MIGRATION SCRIPT
--- ==============================================================================
+-- Production databases start empty. Demo data is never inserted by migrations.

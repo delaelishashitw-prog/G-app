@@ -66,26 +66,12 @@ test('sanitizes welfare contribution and claim records for Supabase persistence'
   assert.ok(claim.claim_number.startsWith('BEN-'));
 });
 
-test('SQL schema scripts include full welfare and roster tables and RLS permissions', () => {
-  assert.ok(SQL_MIGRATION_SCHEMA.includes('welfare_contributions'));
-  assert.ok(SQL_MIGRATION_SCHEMA.includes('welfare_claims'));
-  assert.ok(SQL_MIGRATION_SCHEMA.includes('roster_assignments'));
-  assert.ok(SQL_MIGRATION_SCHEMA.includes('ALTER TABLE public.welfare_contributions ENABLE ROW LEVEL SECURITY;'));
-  assert.ok(SQL_MIGRATION_SCHEMA.includes('ALTER TABLE public.welfare_claims ENABLE ROW LEVEL SECURITY;'));
-  assert.ok(SQL_MIGRATION_SCHEMA.includes('ALTER TABLE public.roster_assignments ENABLE ROW LEVEL SECURITY;'));
-
-  assert.ok(SQL_FIX_RLS_SCHEMA.includes('welfare_contributions'));
-  assert.ok(SQL_FIX_RLS_SCHEMA.includes('welfare_claims'));
-  assert.ok(SQL_FIX_RLS_SCHEMA.includes('roster_assignments'));
-
-  assert.ok(SQL_FIX_WELFARE_SCHEMA.includes('CREATE POLICY "gwcc_policy_all_welfare_contributions"'));
-  assert.ok(SQL_FIX_WELFARE_SCHEMA.includes('CREATE POLICY "gwcc_policy_all_welfare_claims"'));
-
-  assert.ok(SQL_FIX_ROSTER_SCHEMA.includes('permission denied for table roster_assignments'));
-  assert.ok(SQL_FIX_ROSTER_SCHEMA.includes('violates row-level security policy for table roster_assignments'));
-  assert.ok(SQL_FIX_ROSTER_SCHEMA.includes('announcement TEXT'));
-  assert.ok(SQL_FIX_ROSTER_SCHEMA.includes('GRANT ALL ON TABLE public.roster_assignments TO anon, authenticated, service_role;'));
-  assert.ok(SQL_FIX_ROSTER_SCHEMA.includes('CREATE POLICY "gwcc_policy_all_roster_assignments"'));
+test('generated repair scripts consistently use the checked write API and revoke anonymous privileges',()=>{
+  for(const script of [SQL_FIX_RLS_SCHEMA,SQL_FIX_WELFARE_SCHEMA,SQL_FIX_ROSTER_SCHEMA]){
+    assert.ok(script.includes('gwcc_apply_mutations'));
+    assert.ok(script.includes('REVOKE ALL ON TABLE'));
+    assert.ok(!script.includes('FOR ALL TO public USING (true)'));
+  }
 });
 
 test('sanitizes roster assignments for Supabase persistence including announcement', () => {
@@ -147,7 +133,7 @@ test('migration 20261010000002 defines department and role RLS policies on roste
   assert.ok(DEPARTMENT_ROSTER_RLS_MIGRATION.includes('CREATE POLICY roster_assignments_anon_select'));
 });
 
-test('Elisha Richard has super_admin role and unrestricted permissions', async () => {
+test('display names and email addresses never establish administrator privileges', async () => {
   const { sampleUsers } = await import('./initialData.ts');
   const { isElishaRichard, ROLE_PERMISSIONS } = await import('../contexts/AuthContext.tsx');
 
@@ -157,9 +143,9 @@ test('Elisha Richard has super_admin role and unrestricted permissions', async (
 
   // Verify helper recognition
   assert.ok(isElishaRichard(elisha));
-  assert.ok(isElishaRichard(null, 'prophet@greaterworkscitychurch.org'));
-  assert.ok(isElishaRichard(null, 'delaelishashitw@gmail.com'));
-  assert.ok(isElishaRichard({ first_name: 'Elisha', last_name: 'Richard' }));
+  assert.equal(isElishaRichard(null,'prophet@greaterworkscitychurch.org'),false);
+  assert.equal(isElishaRichard(null,'delaelishashitw@gmail.com'),false);
+  assert.equal(isElishaRichard({first_name:'Elisha',last_name:'Richard'}),false);
 
   // Verify super_admin has all core modules
   const superAdminModules = ROLE_PERMISSIONS.super_admin;

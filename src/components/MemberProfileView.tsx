@@ -1,3 +1,4 @@
+import { isActiveTransaction } from '../lib/ledgerUtils';
 import React, { useState, useMemo } from 'react';
 import {
   ArrowLeft,
@@ -154,7 +155,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
   }, [attendance, member.id]);
 
   const memberGiving = useMemo(() => {
-    return giving
+    return giving.filter(isActiveTransaction)
       .filter((g) => g.member_id === member.id)
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [giving, member.id]);
@@ -1746,7 +1747,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
         onClose={() => setIsDossierOpen(false)}
         member={member}
         settings={settings}
-        givingRecords={giving}
+        givingRecords={giving.filter(isActiveTransaction)}
         attendanceRecords={attendance}
         pledgeRecords={pledges}
       />
@@ -1754,7 +1755,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
       {isGivingStatementOpen && (
         <MemberGivingStatementModal
           member={member}
-          givingRecords={giving}
+          givingRecords={giving.filter(isActiveTransaction)}
           settings={settings}
           onClose={() => setIsGivingStatementOpen(false)}
         />

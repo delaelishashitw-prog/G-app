@@ -1,3 +1,5 @@
+import { isActiveTransaction } from '../lib/ledgerUtils';
+import { reportExpenses } from '../lib/reportData';
 import React, { useState, useMemo } from 'react';
 import {
   BarChart3,
@@ -51,8 +53,8 @@ export const ReportsPage: React.FC = () => {
     visitors,
     attendance,
     headcounts,
-    giving,
-    expenses,
+    giving:allGiving,
+    expenses:legacyExpenses,
     churchFinances,
     pledges,
     settings,
@@ -62,6 +64,8 @@ export const ReportsPage: React.FC = () => {
     lastRefreshedAt,
     refreshData,
   } = useChurchData();
+  const giving=useMemo(()=>allGiving.filter(isActiveTransaction),[allGiving]);
+  const expenses=useMemo(()=>reportExpenses(legacyExpenses,churchFinances),[legacyExpenses,churchFinances]);
   const { currentUser } = useAuth();
   const { success, warning, error: toastError } = useToast();
 
@@ -222,7 +226,7 @@ export const ReportsPage: React.FC = () => {
     () => (churchFinances || [])
       .filter((f) => {
         const matchDate = (!startDate || f.date >= startDate) && (!endDate || f.date <= endDate);
-        return matchDate && (f.transaction_type === 'income' || f.transaction_type === 'grant');
+        return matchDate && isActiveTransaction(f) && (f.transaction_type === 'income' || f.transaction_type === 'grant');
       })
       .reduce((s, f) => s + (Number(f.amount) || 0), 0),
     [churchFinances, startDate, endDate]
@@ -232,7 +236,7 @@ export const ReportsPage: React.FC = () => {
     () => filteredExpenses.reduce((s, e) => s + e.amount, 0),
     [filteredExpenses]
   );
-  const netSurplus = totalMemberGiving - totalExp;
+  const netSurplus = totalMemberGiving + totalChurchIncome - totalExp;
 
   const tithesTotal = useMemo(
     () =>

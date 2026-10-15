@@ -137,28 +137,15 @@ export function recordPledgePayment(
     syncWithGiving?: boolean;
   }
 ) {
-  let affectedPledge: PledgeRecord | null = null;
-  setPledges((prev) =>
-    prev.map((p) => {
-      if (p.id === pledgeId) {
-        const newPaid = p.amount_paid + amount;
-        const newBalance = Math.max(0, p.amount_pledged - newPaid);
-        const newStatus: PledgeStatus = newBalance === 0 ? 'completed' : newPaid > 0 ? 'partially_paid' : 'active';
-        const updated = {
-          ...p,
-          amount_paid: newPaid,
-          balance: newBalance,
-          status: newStatus,
-          updated_at: new Date().toISOString(),
-        };
-        affectedPledge = updated;
-        logAction('PLEDGE_PAYMENT', 'Pledges', `Received installment of GH₵ ${amount.toFixed(2)} on pledge by ${p.member_name} (${p.campaign_name})`, pledgeId);
-        dbSyncUpsert('pledges', updated);
-        return updated;
-      }
-      return p;
-    })
-  );
+  const existing=pledges.find(row=>row.id===pledgeId);
+  if(!existing)throw new Error('Pledge not found. Refresh and try again.');
+  if(!Number.isFinite(amount)||amount<=0||amount>existing.balance)throw new Error('Enter a payment within the remaining pledge balance.');
+  const paid=Math.round((existing.amount_paid+amount)*100)/100;
+  const affectedPledge:PledgeRecord={...existing,amount_paid:paid,balance:Math.max(0,existing.amount_pledged-paid),
+    status:paid>=existing.amount_pledged?'completed':'partially_paid',updated_at:new Date().toISOString()};
+  setPledges(pledges.map(row=>row.id===pledgeId?affectedPledge:row));
+  logAction('PLEDGE_PAYMENT','Pledges',`Recorded GH₵ ${amount.toFixed(2)} on pledge by ${existing.member_name}`,pledgeId);
+  dbSyncUpsert('pledges',affectedPledge);
 
   if (paymentDetails?.syncWithGiving && affectedPledge) {
     const plg = affectedPledge as PledgeRecord;

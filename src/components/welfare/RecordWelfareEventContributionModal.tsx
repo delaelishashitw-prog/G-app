@@ -69,7 +69,7 @@ export const RecordWelfareEventContributionModal: React.FC<
   const [paymentChannel, setPaymentChannel] = useState('MTN Mobile Money');
   const [referenceNo, setReferenceNo] = useState('');
   const [notes, setNotes] = useState('');
-  const [paymentStatus, setPaymentStatus] = useState<'confirmed' | 'pending' | 'failed'>('confirmed');
+  const [paymentStatus, setPaymentStatus] = useState<'confirmed' | 'pending' | 'failed' | 'voided'>('confirmed');
 
   // Finance Integration State
   const [linkToChurchFinance, setLinkToChurchFinance] = useState(true);
@@ -112,7 +112,8 @@ export const RecordWelfareEventContributionModal: React.FC<
       setReferenceNo(contributionToEdit.reference_no || '');
       setNotes(contributionToEdit.notes || '');
       setPaymentStatus(contributionToEdit.payment_status);
-      setLinkToChurchFinance(false);
+      setLinkToChurchFinance(contributionToEdit.finance_linked || Boolean(contributionToEdit.finance_transaction_id));
+      if(contributionToEdit.finance_account_id)setSelectedAccountId(contributionToEdit.finance_account_id);
       setShowDuplicateWarning(false);
       setConfirmDuplicateProceed(false);
     } else {
@@ -231,6 +232,8 @@ export const RecordWelfareEventContributionModal: React.FC<
         reference_no: referenceNo.trim() || undefined,
         notes: notes.trim() || undefined,
         payment_status: paymentStatus,
+        finance_linked:linkToChurchFinance,
+        finance_account_id:selectedAccountId || undefined,
       });
 
       success(
@@ -282,6 +285,8 @@ export const RecordWelfareEventContributionModal: React.FC<
         reference_no: referenceNo.trim() || undefined,
         notes: notes.trim() || undefined,
         payment_status: paymentStatus,
+        finance_linked:linkToChurchFinance,
+        finance_account_id:selectedAccountId || undefined,
         recorded_by: recordedBy,
       },
       {

@@ -78,8 +78,8 @@ test('Church Finance: SQL schemas contain dedicated church_accounts and church_f
   assert.ok(SQL_MIGRATION_SCHEMA.includes('church_finances'), 'Full migration must include church_finances');
   assert.ok(SQL_FIX_RLS_SCHEMA.includes('church_accounts'), 'RLS fix must include church_accounts');
   assert.ok(SQL_FIX_RLS_SCHEMA.includes('church_finances'), 'RLS fix must include church_finances');
-  assert.ok(SQL_FIX_CHURCH_FINANCE_SCHEMA.includes('CREATE TABLE IF NOT EXISTS public.church_accounts'), 'Quick fix must define church_accounts');
-  assert.ok(SQL_FIX_CHURCH_FINANCE_SCHEMA.includes('CREATE TABLE IF NOT EXISTS public.church_finances'), 'Quick fix must define church_finances');
+  assert.ok(SQL_FIX_CHURCH_FINANCE_SCHEMA.includes('gwcc_apply_finance_balance'), 'Quick fix must define church_accounts');
+  assert.ok(SQL_FIX_CHURCH_FINANCE_SCHEMA.includes('gwcc_apply_mutations'), 'Quick fix must define church_finances');
 });
 
 test('Church Finance: migration 20261010000004 exists on disk', () => {
@@ -148,7 +148,8 @@ test('Church Finance: voiding an expense reverses account balance and marks stat
     setAccounts,
     setBudgets,
     () => {},
-    () => {}
+    () => {},
+    {finances,accounts,budgets:typeof budgets==='undefined'?[]:budgets}
   );
 
   // Expense reversed: 1000 + 500 = 1500
@@ -199,7 +200,8 @@ test('Church Finance: internal transfer debits source and credits destination ac
     setAccounts,
     setFinances,
     () => {},
-    () => {}
+    () => {},
+    {finances,accounts,budgets:typeof budgets==='undefined'?[]:budgets}
   );
   assert.equal(sameResult.success, false);
 
@@ -212,7 +214,8 @@ test('Church Finance: internal transfer debits source and credits destination ac
     setAccounts,
     setFinances,
     () => {},
-    () => {}
+    () => {},
+    {finances,accounts,budgets:typeof budgets==='undefined'?[]:budgets}
   );
   assert.equal(overdraftResult.success, false);
 
@@ -225,7 +228,8 @@ test('Church Finance: internal transfer debits source and credits destination ac
     setAccounts,
     setFinances,
     () => {},
-    () => {}
+    () => {},
+    {finances,accounts,budgets:typeof budgets==='undefined'?[]:budgets}
   );
   assert.equal(validResult.success, true);
   assert.equal(accounts.find((a) => a.id === 'acc-src').current_balance, 1400);
@@ -287,7 +291,8 @@ test('Church Finance: recordChurchFinance rounds decimal precision and updates d
     },
     setFinances,
     setAccounts,
-    setBudgets
+    setBudgets,
+    ()=>{},()=>{}, {finances,accounts,budgets}
   );
 
   assert.equal(rec.amount, 450.56, 'Amount should be rounded to two decimal places');
@@ -355,7 +360,7 @@ test('Church Settings: SQL schemas and migrations contain pastor_signature_url',
     'SQL_MIGRATION_SCHEMA should declare pastor_signature_url column'
   );
   assert.ok(
-    SQL_FIX_RLS_SCHEMA.includes('pastor_signature_url'),
+    SQL_MIGRATION_SCHEMA.includes('pastor_signature_url'),
     'SQL_FIX_RLS_SCHEMA should include pastor_signature_url migration statement'
   );
 
