@@ -56,6 +56,7 @@ import { CreateWelfareEventModal } from '../components/welfare/CreateWelfareEven
 import { RecordWelfareEventContributionModal } from '../components/welfare/RecordWelfareEventContributionModal';
 import { WelfareEventDetailModal } from '../components/welfare/WelfareEventDetailModal';
 import { PrintWelfareEventReportModal } from '../components/welfare/PrintWelfareEventReportModal';
+import { paidWelfareAmount, summarizeWelfare } from '../features/welfare/welfareSummary';
 
 export const WelfarePage: React.FC = () => {
   const {
@@ -137,19 +138,10 @@ export const WelfarePage: React.FC = () => {
   const [calcMonthsContributed, setCalcMonthsContributed] = useState<number>(6);
 
   // Aggregations
-  const totalDuesCollected = useMemo(() => {
-    return welfareContributions.reduce((sum, c) => sum + c.amount, 0);
-  }, [welfareContributions]);
-
-  const disbursedClaims = useMemo(() => {
-    return welfareClaims.filter((c) => c.status === 'disbursed');
-  }, [welfareClaims]);
-
-  const totalDisbursed = useMemo(() => {
-    return disbursedClaims.reduce((sum, c) => sum + (c.amount_approved || c.amount_requested), 0);
-  }, [disbursedClaims]);
-
-  const fundBalance = Math.max(0, totalDuesCollected - totalDisbursed + 15400.0); // Baseline church welfare reserve
+  const { totalDuesCollected, paidClaims, totalDisbursed, fundBalance } = useMemo(
+    () => summarizeWelfare(welfareContributions, welfareClaims),
+    [welfareContributions, welfareClaims],
+  );
 
   const pendingClaimsCount = useMemo(() => {
     return welfareClaims.filter((c) => c.status === 'pending' || c.status === 'under_review').length;
@@ -240,9 +232,8 @@ export const WelfarePage: React.FC = () => {
       .filter((m) => !m.is_archived)
       .map((m) => {
         const memContributions = welfareContributions.filter((c) => c.member_id === m.id);
-        const memClaims = welfareClaims.filter((c) => c.member_id === m.id && c.status === 'disbursed');
-        const duesSum = memContributions.reduce((s, c) => s + c.amount, 0);
-        const aidSum = memClaims.reduce((s, c) => s + (c.amount_approved || c.amount_requested), 0);
+        const memClaims = welfareClaims.filter((c) => c.member_id === m.id && paidWelfareAmount(c) > 0);
+        const { totalDuesCollected: duesSum, totalDisbursed: aidSum } = summarizeWelfare(memContributions, memClaims);
         const count = memContributions.length;
 
         // Article 2 Standing: >= 3 months = Good Standing
@@ -289,12 +280,12 @@ export const WelfarePage: React.FC = () => {
 
     return categories.map((cat) => {
       const claimsInCat = welfareClaims.filter((c) => c.category === cat.key);
-      const disbursedInCat = claimsInCat.filter((c) => c.status === 'disbursed');
-      const amount = disbursedInCat.reduce((s, c) => s + (c.amount_approved || c.amount_requested), 0);
+      const paidInCat = claimsInCat.filter((c) => paidWelfareAmount(c) > 0);
+      const amount = summarizeWelfare([], paidInCat).totalDisbursed;
       return {
         ...cat,
         totalClaims: claimsInCat.length,
-        disbursedClaims: disbursedInCat.length,
+        paidClaims: paidInCat.length,
         amount,
         percentage: totalDisbursed > 0 ? (amount / totalDisbursed) * 100 : 0,
       };
@@ -553,14 +544,14 @@ export const WelfarePage: React.FC = () => {
         {/* Total Fund Balance */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
           <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-semibold uppercase tracking-wider">Fund Reserve Balance</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">Welfare Dues Balance</span>
             <Wallet className="w-4 h-4 text-emerald-600" />
           </div>
-          <div className="text-2xl font-black text-slate-900">
+          <div className={`text-2xl font-black ${fundBalance < 0 ? 'text-rose-700' : 'text-slate-900'}`}>
             GH₵ {fundBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className="text-[11px] text-emerald-700 font-semibold mt-1">
-            Capital base + reserve
+            Recorded dues less recorded payouts
           </div>
         </div>
 
@@ -609,7 +600,7 @@ export const WelfarePage: React.FC = () => {
             GH₵ {totalDisbursed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className="text-[11px] text-slate-500 mt-1">
-            {disbursedClaims.length} compassion grants paid out
+            {paidClaims.length} claims with recorded payouts
           </div>
         </div>
 
@@ -1628,7 +1619,7 @@ export const WelfarePage: React.FC = () => {
                       />
                     </div>
                     <div className="flex justify-between text-[10px] text-slate-400">
-                      <span>{cat.disbursedClaims} grants disbursed</span>
+                      <span>{cat.paidClaims} claims with payouts</span>
                       <span>{cat.totalClaims} total claims filed</span>
                     </div>
                   </div>
@@ -1641,7 +1632,7 @@ export const WelfarePage: React.FC = () => {
               <div>
                 <h3 className="text-base font-bold text-slate-900">Mutual Fund Sustainability</h3>
                 <p className="text-xs text-slate-500">
-                  GWCC Welfare reserve capital and solvency metrics
+                  Recorded welfare dues and relief payouts
                 </p>
               </div>
 
@@ -1651,34 +1642,34 @@ export const WelfarePage: React.FC = () => {
                     Capital Inflow to Disbursement Ratio
                   </span>
                   <div className="text-xl font-black text-slate-900">
-                    {totalDisbursed > 0 ? (totalDuesCollected / totalDisbursed).toFixed(2) : '100%'} : 1.00
+                    {totalDisbursed > 0 ? `${(totalDuesCollected / totalDisbursed).toFixed(2)} : 1.00` : '—'}
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Fund dues collection exceeds lifetime disbursements, keeping fund fully solvent.
+                    {totalDisbursed === 0 ? 'No payouts have been recorded.' : fundBalance >= 0 ? 'Recorded dues cover the recorded payouts.' : 'Recorded payouts exceed recorded dues. Reconcile funding and opening records.'}
                   </p>
                 </div>
 
                 <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
                   <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
-                    Average Disbursed Grant Size
+                    Average Paid per Claim
                   </span>
                   <div className="text-xl font-black text-slate-900">
-                    GH₵ {disbursedClaims.length > 0 ? (totalDisbursed / disbursedClaims.length).toFixed(2) : '0.00'}
+                    GH₵ {paidClaims.length > 0 ? (totalDisbursed / paidClaims.length).toFixed(2) : '0.00'}
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Calculated over {disbursedClaims.length} approved benevolence interventions.
+                    Calculated over {paidClaims.length} claims with recorded payouts.
                   </p>
                 </div>
 
                 <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 space-y-1">
                   <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider block">
-                    Available Liquid Reserve
+                    Recorded Dues Balance
                   </span>
                   <div className="text-xl font-black text-emerald-900">
                     GH₵ {fundBalance.toFixed(2)}
                   </div>
                   <p className="text-[11px] text-emerald-700">
-                    Sufficient to fund approximately {Math.floor(fundBalance / 1000)} emergency relief interventions.
+                    Dues receipts less recorded relief payouts. Reconcile with Church Finance before further payments.
                   </p>
                 </div>
               </div>

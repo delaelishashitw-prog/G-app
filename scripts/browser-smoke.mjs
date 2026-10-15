@@ -35,6 +35,8 @@ try{
   const token=`${Buffer.from(JSON.stringify({alg:'HS256',typ:'JWT'})).toString('base64url')}.${Buffer.from(JSON.stringify({sub:id,role:'authenticated',exp})).toString('base64url')}.test-signature`;
   const session={user,access_token:token,refresh_token:'qa-refresh-token',expires_at:exp,expires_in:3600,token_type:'bearer'};
   const data={members:[{...sampleMembers[0],id:'qa-member',first_name:'QA',last_name:'Member',member_id:'GWCC-900001',auth_user_id:null}],settings:[{id:'gwcc_global_settings',...initialSettings}],profiles:[profile]};
+  data.welfare_contributions=[{id:'qa-dues',member_id:'qa-member',member_name:'QA Member',amount:10895,date:'2026-10-15',month:'2026-10',payment_method:'cash',recorded_by:'QA',created_at:'2026-10-15T00:00:00Z'}];
+  data.welfare_claims=[];
   const context=await browser.newContext({viewport:{width:1440,height:1000}});
   await context.addInitScript(({session})=>{localStorage.setItem('gwcc_supabase_url','https://gwcc-e2e.supabase.co');localStorage.setItem('gwcc_supabase_anon_key','test-public-key');localStorage.setItem('gwcc-church-auth-token',JSON.stringify(session));},{session});
   let rejectWrites=true;const mutationRequests=[];
@@ -62,7 +64,27 @@ try{
   });
   const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
   const pages=['/','/members','/giving','/church-finance','/welfare','/pledges','/services','/reports','/users','/settings','/inventory','/pastoral-care','/communication'];
-  for(const path of pages){await page.goto(`${origin}${path}`);await page.locator('main').waitFor();await page.waitForTimeout(100);assert.ok(!new URL(page.url()).pathname.startsWith('/login'),`Authenticated route failed: ${path}`);}
+  for(const path of pages){
+    await page.goto(`${origin}${path}`);await page.locator('main').waitFor();await page.waitForTimeout(100);
+    assert.ok(!new URL(page.url()).pathname.startsWith('/login'),`Authenticated route failed: ${path}`);
+    if(path==='/welfare'){
+      const balanceCard=()=>page.getByText('Welfare Dues Balance',{exact:true}).locator('..').locator('..');
+      await balanceCard().getByText('GH₵ 10,895.00',{exact:true}).waitFor();
+      assert.equal(await page.getByText('GH₵ 26,295.00',{exact:true}).count(),0);
+      await page.getByRole('button',{name:'Audit Report',exact:true}).click();
+      const report=()=>page.getByRole('dialog',{name:'GWCC Welfare & Benevolence Mutual Fund Statement'});
+      await report().getByText('Welfare Dues Balance',{exact:true}).locator('..').getByText('GH₵ 10895.00',{exact:true}).waitFor();
+      await report().getByRole('button',{name:'Close welfare audit report'}).click();
+      data.welfare_claims=[{id:'qa-claim',claim_number:'BEN-QA',member_id:'qa-member',member_name:'QA Member',category:'emergency_relief',title:'QA relief',description:'Synthetic browser check',amount_requested:1500,amount_approved:1000,amount_disbursed:250,status:'approved',emergency_level:'normal',date_submitted:'2026-10-15',created_at:'2026-10-15T00:00:00Z'}];
+      await page.reload();
+      await balanceCard().getByText('GH₵ 10,645.00',{exact:true}).waitFor();
+      await page.getByText('Benevolence Disbursed',{exact:true}).locator('..').locator('..').getByText('GH₵ 250.00',{exact:true}).waitFor();
+      await page.getByRole('button',{name:'Audit Report',exact:true}).click();
+      await report().getByText('Welfare Dues Balance',{exact:true}).locator('..').getByText('GH₵ 10645.00',{exact:true}).waitFor();
+      await report().getByText('Relief Disbursed',{exact:true}).locator('..').getByText('GH₵ 250.00',{exact:true}).waitFor();
+      await report().getByRole('button',{name:'Close welfare audit report'}).click();
+    }
+  }
   await page.getByLabel('Title',{exact:true}).fill('QA saved draft');
   await page.getByLabel('Message',{exact:true}).fill('This is a draft. Nothing was sent.');
   await page.getByRole('button',{name:'Save draft',exact:true}).click();

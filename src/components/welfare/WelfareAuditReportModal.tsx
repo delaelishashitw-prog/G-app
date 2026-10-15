@@ -2,6 +2,7 @@ import React from 'react';
 import { X, Printer, HeartHandshake, ShieldCheck, Download, Calendar, TrendingUp, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { WelfareClaim, WelfareContribution } from '../../types/database.types';
+import { paidWelfareAmount, summarizeWelfare } from '../../features/welfare/welfareSummary';
 
 interface WelfareAuditReportModalProps {
   isOpen: boolean;
@@ -13,10 +14,7 @@ export const WelfareAuditReportModal: React.FC<WelfareAuditReportModalProps> = (
 
   if (!isOpen) return null;
 
-  const totalDuesCollected = welfareContributions.reduce((sum, c) => sum + c.amount, 0);
-  const disbursedClaims = welfareClaims.filter((c) => c.status === 'disbursed');
-  const totalDisbursed = disbursedClaims.reduce((sum, c) => sum + (c.amount_approved || c.amount_requested), 0);
-  const fundReserve = Math.max(0, totalDuesCollected - totalDisbursed + 15400.0);
+  const { totalDuesCollected, paidClaims, totalDisbursed, fundBalance } = summarizeWelfare(welfareContributions, welfareClaims);
   const pendingClaims = welfareClaims.filter((c) => c.status === 'pending' || c.status === 'under_review');
   const pendingLiabilities = pendingClaims.reduce((sum, c) => sum + c.amount_requested, 0);
 
@@ -30,8 +28,8 @@ export const WelfareAuditReportModal: React.FC<WelfareAuditReportModalProps> = (
     { key: 'childbirth_naming', label: 'Childbirth & Naming' },
     { key: 'wedding_marriage', label: 'Holy Matrimony' },
   ].map((cat) => {
-    const claimsInCat = welfareClaims.filter((c) => c.category === cat.key && c.status === 'disbursed');
-    const amount = claimsInCat.reduce((s, c) => s + (c.amount_approved || c.amount_requested), 0);
+    const claimsInCat = paidClaims.filter((c) => c.category === cat.key);
+    const amount = summarizeWelfare([], claimsInCat).totalDisbursed;
     return {
       ...cat,
       count: claimsInCat.length,
@@ -52,12 +50,12 @@ export const WelfareAuditReportModal: React.FC<WelfareAuditReportModalProps> = (
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-      <div className="bg-white rounded-2xl max-w-4xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+      <div role="dialog" aria-modal="true" aria-labelledby="welfare-audit-title" className="bg-white rounded-2xl max-w-4xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
         {/* Modal Controls Header (Hidden in Print) */}
         <div className="no-print px-6 py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-2">
             <HeartHandshake className="w-5 h-5 text-emerald-400" />
-            <h3 className="text-sm font-bold tracking-tight">GWCC Welfare & Benevolence Mutual Fund Statement</h3>
+            <h3 id="welfare-audit-title" className="text-sm font-bold tracking-tight">GWCC Welfare & Benevolence Mutual Fund Statement</h3>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -69,6 +67,7 @@ export const WelfareAuditReportModal: React.FC<WelfareAuditReportModalProps> = (
             </button>
             <button
               onClick={onClose}
+              aria-label="Close welfare audit report"
               className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
             >
               <X className="w-5 h-5" />
@@ -108,12 +107,12 @@ export const WelfareAuditReportModal: React.FC<WelfareAuditReportModalProps> = (
             <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Relief Disbursed</span>
               <span className="text-lg font-black text-slate-900 block mt-1">GH₵ {totalDisbursed.toFixed(2)}</span>
-              <span className="text-[11px] text-slate-500">{disbursedClaims.length} grants authorized</span>
+              <span className="text-[11px] text-slate-500">{paidClaims.length} claims with payouts</span>
             </div>
             <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Fund Reserve</span>
-              <span className="text-lg font-black text-emerald-700 block mt-1">GH₵ {fundReserve.toFixed(2)}</span>
-              <span className="text-[11px] text-slate-500">Includes seed capital</span>
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Welfare Dues Balance</span>
+              <span className={`text-lg font-black block mt-1 ${fundBalance < 0 ? 'text-rose-700' : 'text-emerald-700'}`}>GH₵ {fundBalance.toFixed(2)}</span>
+              <span className="text-[11px] text-slate-500">Recorded dues less recorded payouts</span>
             </div>
             <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Pending Requests</span>
@@ -132,7 +131,7 @@ export const WelfareAuditReportModal: React.FC<WelfareAuditReportModalProps> = (
                 <div key={cat.key} className="p-3 border border-slate-200 rounded-xl flex items-center justify-between">
                   <div>
                     <span className="font-bold text-slate-800 block">{cat.label}</span>
-                    <span className="text-[11px] text-slate-500">{cat.count} grants issued</span>
+                    <span className="text-[11px] text-slate-500">{cat.count} claims with payouts</span>
                   </div>
                   <div className="text-right">
                     <span className="font-mono font-bold text-slate-900 block">GH₵ {cat.amount.toFixed(2)}</span>
@@ -146,7 +145,7 @@ export const WelfareAuditReportModal: React.FC<WelfareAuditReportModalProps> = (
           {/* Recent Disbursements Table */}
           <div className="space-y-3">
             <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-              Recent Benevolence Disbursements Log
+              Claims with Recorded Payments
             </h3>
             <div className="border border-slate-200 rounded-xl overflow-hidden">
               <table className="w-full text-left text-xs">
@@ -160,14 +159,14 @@ export const WelfareAuditReportModal: React.FC<WelfareAuditReportModalProps> = (
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {disbursedClaims.length === 0 ? (
+                  {paidClaims.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="py-4 text-center text-slate-400">
                         No disbursed claims recorded.
                       </td>
                     </tr>
                   ) : (
-                    disbursedClaims.slice(0, 8).map((c) => (
+                    paidClaims.slice(0, 8).map((c) => (
                       <tr key={c.id}>
                         <td className="py-2 px-3 font-mono text-[11px] text-slate-700">
                           {c.disbursement_voucher_no || c.claim_number}
@@ -176,7 +175,7 @@ export const WelfareAuditReportModal: React.FC<WelfareAuditReportModalProps> = (
                         <td className="py-2 px-3 capitalize text-slate-600">{c.category.replace('_', ' ')}</td>
                         <td className="py-2 px-3 text-slate-500">{c.disbursement_date || c.date_submitted}</td>
                         <td className="py-2 px-3 text-right font-mono font-bold text-slate-900">
-                          GH₵ {(c.amount_approved || c.amount_requested).toFixed(2)}
+                          GH₵ {paidWelfareAmount(c).toFixed(2)}
                         </td>
                       </tr>
                     ))
