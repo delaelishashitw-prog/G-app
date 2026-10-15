@@ -13,14 +13,16 @@ This release fixes the reviewed code paths. Production readiness also requires a
 
 For a fresh project, apply all files in `supabase/migrations` in filename order. The generated `SQL_MIGRATION_SCHEMA` in the app contains that same sequence inside one transaction; the final security migration closes the earlier historical access policies. No demo congregation or financial seed data is inserted.
 
-For an existing project with the core church tables already installed, apply the security upgrade followed by the standalone mitigation (inside the same transaction):
+For an existing project with the core church tables already installed, take the private logical snapshot and apply the security upgrade inside the same database-owner transaction. The mitigation and administrator preparation can already be present:
 
 ```
-supabase/migrations/20261015000001_secure_operations.sql
-supabase/migrations/20261015162757_restrict_legacy_public_access.sql
+supabase/release-snapshot.sql
+supabase/migrations/20261015194232_secure_operations_release.sql
 ```
 
 Run it as the project database owner inside a transaction (or through the Supabase migration runner). Check the migration history before running older files. The in-app repair buttons all use the same secure upgrade; old permissive repair instructions must not be reused. The upgrade is repeatable and tests verify that applying repair SQL again neither reopens anonymous access nor changes balances.
+
+The snapshot script locks application writes through cutover and stores the original public table rows, checksums, schema/security definitions and storage metadata in `gwcc_release_backup_20261015`. Browser roles and the service role cannot access this private schema. Repeating the script preserves its first snapshot. This same-database logical recovery copy does not replace a physical backup or point-in-time recovery, and it contains no browser-only pending entries or storage object binaries. Do not automatically restore its old access policies; retain the security restrictions when reconciling individual records.
 
 The standalone mitigation can run first on a legacy project while the complete release is being prepared. It removes unsigned table/routine access and anonymous media policies, fixes existing helper search paths and view execution, and revokes direct profile mutations. Signed-in table grants and account balances are preserved. Legacy code that relies on unsigned database access or writes profiles directly will receive permission errors. This mitigation does not replace the full role/ownership and checked-mutation upgrade.
 
@@ -44,12 +46,14 @@ Configure these variables on the intended deployment:
 | --- | --- |
 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | Public browser configuration, set before building |
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY` | Server authentication against that same Supabase project |
-| `SUPABASE_SERVICE_ROLE_KEY` | Server-only staff invitations and password resets |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only staff invitations and password resets; optional on Vercel when the protected Edge Function is deployed |
 | `APP_ORIGIN` | Canonical HTTPS app origin, used for invitation redirects |
 | `ALLOWED_ORIGINS` | Optional additional trusted origins for API requests |
 | `GEMINI_API_KEY`, `GEMINI_MODEL` | Optional AI provider credentials and enabled model |
 
 Set the Supabase Auth site URL to the app origin. Allow `<APP_ORIGIN>/auth/password` as a redirect URL for invitations and password resets. Configure working Auth email delivery and a minimum password length of at least 12. Test an actual invitation and recovery email with a staging account. Email delivery and external AI calls cannot be established by local mocks.
+
+Deploy `supabase/functions/gwcc-staff` with its `deno.json` and the shared `server/staff.js`, `server/staffWeb.js`, and `server/security.js` dependencies. Its public app origin must match `APP_ORIGIN`. Supabase supplies the server-only credential to the function; Vercel forwards the caller's bearer token to the fixed endpoint for the configured project after checking the reviewed root profile and request origin. The destination verifies Auth and the protected profile again and consumes the persistent quota once. Gateway `verify_jwt` is false to support current user JWT signing keys; the shared `getUser` authentication and reviewed-root checks remain mandatory. No privileged key is sent to Vercel or the browser.
 
 Keep signup either disabled or restricted according to the church's account policy. Public signup, when enabled in Supabase, creates only member access. Staff promotion requires the checked administrator operation.
 

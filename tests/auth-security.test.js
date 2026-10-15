@@ -8,6 +8,7 @@ import {authorizeRequest} from '../server/security.js';
 import {aiHandler} from '../server/ai.js';
 import serverlessAi from '../api/ai/assistant.js';
 import {staffHandler} from '../server/staff.js';
+import {staffWebHandler} from '../server/staffWeb.js';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 function storage(){const items=new Map();return {getItem:key=>items.get(key)??null,setItem:(key,value)=>items.set(key,String(value)),removeItem:key=>items.delete(key),clear:()=>items.clear()};}
@@ -90,4 +91,39 @@ test('staff directory creation supplies required names and password resets selec
     assert.equal(passwordUpdates[0].id,user.id);
     assert.ok(inserts.every(({row})=>!JSON.stringify(row).includes('a-long-test-password')));
   }finally{if(previous===undefined)delete process.env.SUPABASE_SERVICE_ROLE_KEY;else process.env.SUPABASE_SERVICE_ROLE_KEY=previous;}
+});
+
+test('staff forwarding verifies root first, uses only the configured project and leaves quota consumption to the authenticated destination',async()=>{
+  const previous=process.env.SUPABASE_SERVICE_ROLE_KEY;delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_URL='https://server-test.supabase.co';process.env.SUPABASE_ANON_KEY='test-public-key';
+  const calls=[],checks=[];
+  const response=()=>({code:0,body:null,setHeader(){},status(code){this.code=code;return this;},json(body){this.body=body;}});
+  const req={method:'POST',headers:{authorization:'Bearer caller-token'},body:{action:'create',url:'https://untrusted.example.test'}};
+  try {
+    const dependencies={authorizeRequest:async(_req,options)=>{checks.push(options);return {profile:{role:'super_admin'}};},fetch:async(url,options)=>{calls.push({url,options});return Response.json({user:{id:user.id}},{status:201});}};
+    const res=response();await staffHandler(req,res,dependencies);
+    assert.equal(res.code,201);assert.equal(calls[0].url,'https://server-test.supabase.co/functions/v1/gwcc-staff');
+    assert.equal(calls[0].options.headers.Authorization,'Bearer caller-token');assert.equal(calls[0].options.redirect,'error');
+    assert.deepEqual(checks,[{roles:['super_admin'],bucket:null}]);
+    const rejected=response();
+    await staffHandler(req,rejected,{...dependencies,authorizeRequest:async()=>{const error=new (await import('../server/security.js')).HttpError(403,'Not authorized');throw error;}});
+    assert.equal(rejected.code,403);assert.equal(calls.length,1);
+    const unauthenticated=await staffWebHandler(new Request('https://server-test.supabase.co/functions/v1/gwcc-staff',{method:'POST',body:'{}'}));
+    assert.equal(unauthenticated.status,401);
+    const buckets=[];
+    const destination=await staffWebHandler(new Request('https://server-test.supabase.co/functions/v1/gwcc-staff',{method:'POST',body:JSON.stringify({action:'archive',id:user.id})}),{
+      authorizeRequest:async(_req,options)=>{buckets.push(options.bucket);return {client:{rpc:async()=>({data:{id:user.id,is_active:false}})},profile:{role:'super_admin'}};},
+    });
+    assert.equal(destination.status,200);assert.deepEqual(buckets,['staff']);
+  } finally {if(previous===undefined)delete process.env.SUPABASE_SERVICE_ROLE_KEY;else process.env.SUPABASE_SERVICE_ROLE_KEY=previous;}
+});
+
+test('the edge adapter rejects non-POST methods, malformed bodies and oversized streamed UTF-8 before staff writes',async()=>{
+  let invoked=0;const dependencies={authorizeRequest:async()=>{invoked++;throw new Error('Unexpected write');}};
+  const method=await staffWebHandler(new Request('https://edge.example.test'),dependencies);
+  assert.equal(method.status,405);assert.equal(method.headers.get('Allow'),'POST');
+  const malformed=await staffWebHandler(new Request('https://edge.example.test',{method:'POST',body:'{'}),dependencies);
+  assert.equal(malformed.status,400);
+  const large=await staffWebHandler(new Request('https://edge.example.test',{method:'POST',body:JSON.stringify({name:'🙂'.repeat(6000)})}),dependencies);
+  assert.equal(large.status,413);assert.equal(invoked,0);assert.equal(large.headers.get('Cache-Control'),'no-store');
 });

@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
+import process from 'node:process';
 import { authorizeRequest, serverSupabaseConfig, HttpError, requirePost, sendError } from './security.js';
 
 const roles = ['super_admin','senior_pastor','administrator','finance_officer','pastor','ministry_leader','attendance_officer','data_entry','member'];
@@ -8,11 +9,23 @@ const safeFields = ['first_name','last_name','phone','department','job_title','e
 export async function staffHandler(req, res, dependencies = {}) {
   if (!requirePost(req,res)) return;
   try {
-    const { client, profile } = await (dependencies.authorizeRequest || authorizeRequest)(req,{ roles: ['super_admin'], bucket: 'staff' });
-    if (JSON.stringify(req.body || {}).length > 20000) throw new HttpError(413,'The request is too large.');
-    const { action, id, email, password, updates = {} } = req.body || {};
     const config = serverSupabaseConfig();
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const forward = !serviceKey && !dependencies.disableEdgeFallback;
+    const { client, profile } = await (dependencies.authorizeRequest || authorizeRequest)(req,{ roles: ['super_admin'], bucket: forward ? null : 'staff' });
+    if (new TextEncoder().encode(JSON.stringify(req.body || {})).length > 20000) throw new HttpError(413,'The request is too large.');
+    if (forward) {
+      // Supabase supplies the privileged credential inside its own runtime.
+      // Forward only to this project's fixed endpoint, after checking the caller.
+      const response = await (dependencies.fetch || fetch)(`${config.url}/functions/v1/gwcc-staff`,{
+        method:'POST',headers:{ Authorization:req.headers.authorization,apikey:config.key,'Content-Type':'application/json' },
+        body:JSON.stringify(req.body || {}),signal:AbortSignal.timeout(15000),redirect:'error',
+      });
+      let result;try {result=await response.json();} catch {throw new HttpError(503,'Staff account management is temporarily unavailable.');}
+      if(response.status>=500)throw new HttpError(503,'Staff account management is temporarily unavailable.');
+      res.status(response.status).json(result);return;
+    }
+    const { action, id, email, password, updates = {} } = req.body || {};
     // Role/status changes use the caller's checked RPC; invitation/password changes require server-only Auth privileges.
     const admin = serviceKey ? (dependencies.createClient || createClient)(config.url,serviceKey,{ auth:{ persistSession:false,autoRefreshToken:false } }) : null;
     if (action === 'update' || action === 'archive') {
@@ -39,7 +52,8 @@ export async function staffHandler(req, res, dependencies = {}) {
     let newId = randomUUID();
     if (input.has_login_account !== false) {
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) throw new HttpError(400,'A valid staff email is required.');
-      const redirectTo = process.env.APP_ORIGIN ? `${process.env.APP_ORIGIN}/auth/password` : undefined;
+      const appOrigin = dependencies.appOrigin || process.env.APP_ORIGIN;
+      const redirectTo = appOrigin ? `${appOrigin}/auth/password` : undefined;
       const { data,error } = await admin.auth.admin.inviteUserByEmail(cleanEmail,{ redirectTo,data:{ first_name:input.first_name.trim(),last_name:input.last_name.trim() } });
       if (error || !data.user) throw new HttpError(400,error?.message || 'The invitation could not be created.');
       newId=data.user.id;

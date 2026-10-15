@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import process from 'node:process';
 
 export class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -35,9 +36,13 @@ export async function authorizeRequest(req, { roles, bucket = 'ai' } = {}, depen
     try {sameHost=Boolean(requestHost && new URL(origin).host===requestHost);} catch {throw new HttpError(403,'This origin is not allowed.');}
     if (!sameHost && !configured.includes(origin)) throw new HttpError(403, 'This origin is not allowed.');
   }
-  const { data: allowed, error: rateError } = await client.rpc('gwcc_consume_api_limit', { p_bucket: bucket });
-  if (rateError) throw new HttpError(503, 'The security database migration is required.');
-  if (!allowed) throw new HttpError(429, 'Too many requests. Try again in a minute.');
+  // A forwarding server checks identity/origin here; the destination consumes
+  // the quota after repeating these checks. The client cannot select this flag.
+  if (bucket !== null) {
+    const { data: allowed, error: rateError } = await client.rpc('gwcc_consume_api_limit', { p_bucket: bucket });
+    if (rateError) throw new HttpError(503, 'The security database migration is required.');
+    if (!allowed) throw new HttpError(429, 'Too many requests. Try again in a minute.');
+  }
   return { client, profile, user: data.user };
 }
 

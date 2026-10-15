@@ -19,7 +19,7 @@ export async function setupDatabase({beforeSecurityUpgrade}={}) {
     CREATE TABLE storage.objects(id text primary key,bucket_id text,name text);
     ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;`);
   for(const file of fs.readdirSync('supabase/migrations').filter(file=>file.endsWith('.sql')).sort()) {
-    if(file==='20261015000001_secure_operations.sql' && beforeSecurityUpgrade) await beforeSecurityUpgrade(db);
+    if(file.endsWith('_secure_operations_release.sql') && beforeSecurityUpgrade) await beforeSecurityUpgrade(db);
     const sql=fs.readFileSync(`supabase/migrations/${file}`,'utf8').replace(/CREATE EXTENSION IF NOT EXISTS [^;]+;/g,'');
     try {await db.exec(sql);} catch(error) {await db.close();throw new Error(`${file}: ${error.message} ${error.where || ''}`);}
   }
@@ -36,6 +36,25 @@ let op=0;
 const operation=()=>`aaaaaaaa-aaaa-4aaa-8aaa-${String(++op).padStart(12,'0')}`;
 const apply=(db,changes,id=operation())=>db.query('SELECT public.gwcc_apply_mutations($1,$2) AS result',[id,JSON.stringify(changes)]);
 const upsert=(table,record,expected)=>({table,id:record.id,operation:'upsert',record,expected_updated_at:expected});
+
+test('release snapshot preserves original rows privately and a retry cannot overwrite recovery data',async()=>{
+  const snapshot=fs.readFileSync('supabase/release-snapshot.sql','utf8');
+  const db=await setupDatabase({beforeSecurityUpgrade:async db=>{
+    await db.exec("INSERT INTO public.church_accounts(id,name,current_balance) VALUES('snapshot-account','Recovery account',123.45)");
+    await db.exec(snapshot);
+  }});
+  try {
+    const original=(await db.query("SELECT content,checksum FROM gwcc_release_backup_20261015.snapshots WHERE name='public.church_accounts'")).rows[0];
+    assert.equal(original.content[0].current_balance,123.45);
+    await db.exec("UPDATE public.church_accounts SET name='Changed after snapshot'");
+    await db.exec(snapshot);
+    assert.deepEqual((await db.query("SELECT content,checksum FROM gwcc_release_backup_20261015.snapshots WHERE name='public.church_accounts'")).rows[0],original);
+    await asUser(db,root,async()=>await assert.rejects(db.query('SELECT * FROM gwcc_release_backup_20261015.snapshots'),/permission denied/));
+    await db.exec('SET ROLE anon');
+    await assert.rejects(db.query('SELECT * FROM gwcc_release_backup_20261015.snapshots'),/permission denied/);
+    await db.exec('RESET ROLE');
+  } finally {await db.close();}
+});
 
 test('standalone live mitigation removes unsigned access and direct role edits while preserving signed-in access and money',async()=>{
   const db=await setupDatabase({beforeSecurityUpgrade:async db=>{
@@ -80,7 +99,7 @@ test('upgrade preserves legacy directory contacts and balances without inheritin
     await asUser(db,account,async()=>assert.equal((await db.query('SELECT public.current_user_role() AS role')).rows[0].role,'member'));
     await asUser(db,root,async()=>await assert.rejects(db.query("SELECT public.gwcc_manage_profile('old-directory','{\"has_login_account\":true}')"),/directory record cannot become a login/));
     await db.exec("INSERT INTO public.profiles(id,email,role,has_login_account) VALUES('new-directory',NULL,'member',false)");
-    const sql=fs.readFileSync('supabase/migrations/20261015000001_secure_operations.sql','utf8');
+    const sql=fs.readFileSync('supabase/migrations/'+fs.readdirSync('supabase/migrations').find(file=>file.endsWith('_secure_operations_release.sql')),'utf8');
     await db.exec(sql);
     assert.equal((await db.query("SELECT count(*)::int AS n FROM public.profiles WHERE email='legacy@example.test'")).rows[0].n,2);
     assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='existing-account'")).rows[0].current_balance,'123.45');

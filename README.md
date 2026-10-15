@@ -11,7 +11,7 @@ npm ci
 cp .env.example .env
 ```
 
-Set the Supabase browser and server variables to the same project. Keep `SUPABASE_SERVICE_ROLE_KEY` and `GEMINI_API_KEY` on the server; never prefix them with `VITE_`.
+Set the Supabase browser and server variables to the same project. Keep `SUPABASE_SERVICE_ROLE_KEY` and `GEMINI_API_KEY` on the server; never prefix them with `VITE_`. Staff management can instead use the protected `gwcc-staff` Supabase Edge Function, which keeps the Auth administration credential within Supabase.
 
 Apply the database migrations and bootstrap one verified administrator as described in [the rollout guide](docs/SECURITY_ROLLOUT.md). Supabase authentication and the security migration are required. Staff access uses email invitations and protected database profiles. There are no local login fallbacks, shared passwords or demo accounts.
 
