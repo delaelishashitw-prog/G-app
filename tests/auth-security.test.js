@@ -7,6 +7,7 @@ import {readVerifiedProfile} from '../src/lib/authPolicy.ts';
 import {authorizeRequest} from '../server/security.js';
 import {aiHandler} from '../server/ai.js';
 import serverlessAi from '../api/ai/assistant.js';
+import {staffHandler} from '../server/staff.js';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 function storage(){const items=new Map();return {getItem:key=>items.get(key)??null,setItem:(key,value)=>items.set(key,String(value)),removeItem:key=>items.delete(key),clear:()=>items.clear()};}
@@ -68,4 +69,25 @@ test('both AI deployments share a guard that rejects missing tokens, wrong roles
   await assert.rejects(authorizeRequest(req,{roles:['administrator']},deps({record:staff,allowed:false})),error=>error.status===429);
   await assert.rejects(authorizeRequest(req,{roles:['administrator']},deps({record:staff,error:{message:'missing migration'}})),error=>error.status===503);
   assert.equal((await authorizeRequest(req,{roles:['administrator']},deps({record:staff}))).profile.role,'administrator');
+});
+
+test('staff directory creation supplies required names and password resets select the actual login profile',async()=>{
+  process.env.SUPABASE_URL='https://server-test.supabase.co';process.env.SUPABASE_ANON_KEY='test-public-key';
+  const previous=process.env.SUPABASE_SERVICE_ROLE_KEY;process.env.SUPABASE_SERVICE_ROLE_KEY='server-only-test-key';
+  const inserts=[],filters=[],passwordUpdates=[];
+  const admin={from:table=>({insert:async row=>{inserts.push({table,row});return {error:null};}}),auth:{admin:{updateUserById:async(id,patch)=>{passwordUpdates.push({id,patch});return {error:null};}}}};
+  const query={select(){return this;},eq(key,value){filters.push([key,value]);return this;},single:async()=>({data:{id:user.id,role:'finance_officer'}})};
+  const client={from:()=>query,rpc:async(_name,args)=>({data:{id:args.p_id,...args.p_updates}})};
+  const dependencies={authorizeRequest:async()=>({client,profile:{id:'root',role:'super_admin'}}),createClient:()=>admin};
+  const response=()=>({code:0,body:null,setHeader(){},status(code){this.code=code;return this;},json(body){this.body=body;}});
+  try{
+    const res=response();
+    await staffHandler({method:'POST',body:{action:'create',first_name:'Directory',last_name:'Staff',role:'data_entry',has_login_account:false}},res,dependencies);
+    assert.equal(res.code,201);assert.equal(inserts[0].row.first_name,'Directory');assert.equal(inserts[0].row.last_name,'Staff');assert.equal(inserts[0].row.has_login_account,false);
+    const reset=response();
+    await staffHandler({method:'POST',body:{action:'reset_password',email:user.email,password:'a-long-test-password'}},reset,dependencies);
+    assert.equal(reset.code,200);assert.ok(filters.some(([key,value])=>key==='has_login_account' && value===true));
+    assert.equal(passwordUpdates[0].id,user.id);
+    assert.ok(inserts.every(({row})=>!JSON.stringify(row).includes('a-long-test-password')));
+  }finally{if(previous===undefined)delete process.env.SUPABASE_SERVICE_ROLE_KEY;else process.env.SUPABASE_SERVICE_ROLE_KEY=previous;}
 });

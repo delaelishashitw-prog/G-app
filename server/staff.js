@@ -5,16 +5,16 @@ import { authorizeRequest, serverSupabaseConfig, HttpError, requirePost, sendErr
 const roles = ['super_admin','senior_pastor','administrator','finance_officer','pastor','ministry_leader','attendance_officer','data_entry','member'];
 const safeFields = ['first_name','last_name','phone','department','job_title','employment_type','avatar_url','role','is_active','has_login_account','member_id'];
 
-export async function staffHandler(req, res) {
+export async function staffHandler(req, res, dependencies = {}) {
   if (!requirePost(req,res)) return;
   try {
-    const { client, profile } = await authorizeRequest(req,{ roles: ['super_admin'], bucket: 'staff' });
+    const { client, profile } = await (dependencies.authorizeRequest || authorizeRequest)(req,{ roles: ['super_admin'], bucket: 'staff' });
     if (JSON.stringify(req.body || {}).length > 20000) throw new HttpError(413,'The request is too large.');
     const { action, id, email, password, updates = {} } = req.body || {};
     const config = serverSupabaseConfig();
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     // Role/status changes use the caller's checked RPC; invitation/password changes require server-only Auth privileges.
-    const admin = serviceKey ? createClient(config.url,serviceKey,{ auth:{ persistSession:false,autoRefreshToken:false } }) : null;
+    const admin = serviceKey ? (dependencies.createClient || createClient)(config.url,serviceKey,{ auth:{ persistSession:false,autoRefreshToken:false } }) : null;
     if (action === 'update' || action === 'archive') {
       if (!id || typeof id !== 'string') throw new HttpError(400,'A staff account ID is required.');
       const patch = action === 'archive' ? { is_active:false,has_login_account:false } : Object.fromEntries(Object.entries(updates).filter(([key])=>safeFields.includes(key)));
@@ -25,7 +25,7 @@ export async function staffHandler(req, res) {
     if (!admin) throw new HttpError(503,'Staff invitations and password resets require the server authentication key.');
     if (action === 'reset_password') {
       if (typeof email !== 'string' || typeof password !== 'string' || password.length < 12) throw new HttpError(400,'Use a temporary password of at least 12 characters.');
-      const { data: target,error: targetError } = await client.from('profiles').select('id,role').eq('email',email.trim().toLowerCase()).single();
+      const { data: target,error: targetError } = await client.from('profiles').select('id,role').eq('email',email.trim().toLowerCase()).eq('has_login_account',true).single();
       if (targetError || !target) throw new HttpError(404,'Staff account not found.');
       const { error } = await admin.auth.admin.updateUserById(target.id,{ password });
       if (error) throw new HttpError(400,error.message);
@@ -44,7 +44,7 @@ export async function staffHandler(req, res) {
       if (error || !data.user) throw new HttpError(400,error?.message || 'The invitation could not be created.');
       newId=data.user.id;
     } else {
-      const { error } = await admin.from('profiles').insert({ id:newId,email:cleanEmail || null,role:'member',is_active:true,has_login_account:false });
+      const { error } = await admin.from('profiles').insert({ id:newId,email:cleanEmail || null,first_name:input.first_name.trim(),last_name:input.last_name.trim(),role:'member',is_active:true,has_login_account:false });
       if (error) throw new HttpError(400,error.message);
     }
     const patch=Object.fromEntries(safeFields.filter(key=>input[key]!==undefined).map(key=>[key,input[key]]));

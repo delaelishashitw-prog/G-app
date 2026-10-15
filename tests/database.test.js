@@ -7,7 +7,7 @@ const root='11111111-1111-4111-8111-111111111111';
 const member='22222222-2222-4222-8222-222222222222';
 const other='33333333-3333-4333-8333-333333333333';
 
-export async function setupDatabase() {
+export async function setupDatabase({beforeSecurityUpgrade}={}) {
   const db=new PGlite();
   await db.exec(`CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role;
     CREATE SCHEMA auth;CREATE SCHEMA storage;
@@ -19,6 +19,7 @@ export async function setupDatabase() {
     CREATE TABLE storage.objects(id text primary key,bucket_id text,name text);
     ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;`);
   for(const file of fs.readdirSync('supabase/migrations').filter(file=>file.endsWith('.sql')).sort()) {
+    if(file==='20261015000001_secure_operations.sql' && beforeSecurityUpgrade) await beforeSecurityUpgrade(db);
     const sql=fs.readFileSync(`supabase/migrations/${file}`,'utf8').replace(/CREATE EXTENSION IF NOT EXISTS [^;]+;/g,'');
     try {await db.exec(sql);} catch(error) {await db.close();throw new Error(`${file}: ${error.message} ${error.where || ''}`);}
   }
@@ -35,6 +36,56 @@ let op=0;
 const operation=()=>`aaaaaaaa-aaaa-4aaa-8aaa-${String(++op).padStart(12,'0')}`;
 const apply=(db,changes,id=operation())=>db.query('SELECT public.gwcc_apply_mutations($1,$2) AS result',[id,JSON.stringify(changes)]);
 const upsert=(table,record,expected)=>({table,id:record.id,operation:'upsert',record,expected_updated_at:expected});
+
+test('standalone live mitigation removes unsigned access and direct role edits while preserving signed-in access and money',async()=>{
+  const db=await setupDatabase({beforeSecurityUpgrade:async db=>{
+    const legacyUser='44444444-4444-4444-8444-444444444444';
+    await db.exec(`INSERT INTO public.church_accounts(id,name,current_balance) VALUES('legacy','Legacy',123.45);
+      INSERT INTO auth.users(id,email,email_confirmed_at) VALUES('${legacyUser}','finance@example.test',now());
+      INSERT INTO public.profiles(id,first_name,last_name,email,role) VALUES('${legacyUser}','Finance','Staff','finance@example.test','finance_officer');`);
+    const mitigation=fs.readFileSync('supabase/migrations/20261015162757_restrict_legacy_public_access.sql','utf8');
+    await db.exec(mitigation);
+    await db.exec('SET ROLE anon');
+    await assert.rejects(db.query('SELECT * FROM public.members'),/permission denied/);
+    await assert.rejects(db.query("UPDATE public.profiles SET role='super_admin'"),/permission denied/);
+    await db.exec(`RESET ROLE;SET ROLE authenticated;SELECT set_config('request.jwt.claim.sub','${legacyUser}',false)`);
+    assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='legacy'")).rows[0].current_balance,'123.45');
+    await assert.rejects(db.query("UPDATE public.profiles SET role='super_admin'"),/permission denied/);
+    await db.exec('RESET ROLE');
+    assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='legacy'")).rows[0].current_balance,'123.45');
+  }});
+  await db.close();
+});
+
+test('upgrade preserves legacy directory contacts and balances without inheriting email-matched staff authority',async()=>{
+  const account='44444444-4444-4444-8444-444444444444';
+  const db=await setupDatabase({beforeSecurityUpgrade:async db=>{
+    // Observed SQL Editor installation: missing welfare tables, required profile
+    // names, and a globally unique email on a directory ID different from Auth.
+    await db.exec(`DROP TABLE public.welfare_event_contributions; DROP TABLE public.welfare_events;
+      ALTER TABLE public.profiles ALTER COLUMN first_name SET NOT NULL;
+      ALTER TABLE public.profiles ALTER COLUMN last_name SET NOT NULL;
+      ALTER TABLE public.profiles ALTER COLUMN email SET NOT NULL;
+      ALTER TABLE public.profiles ADD CONSTRAINT profiles_email_key UNIQUE(email);
+      INSERT INTO public.profiles(id,first_name,last_name,email,role) VALUES('old-directory','Legacy','Staff','legacy@example.test','super_admin');
+      INSERT INTO auth.users(id,email,email_confirmed_at) VALUES('${account}','legacy@example.test',now());
+      INSERT INTO public.church_accounts(id,name,current_balance) VALUES('existing-account','Existing',123.45);`);
+  }});
+  try{
+    assert.deepEqual((await db.query("SELECT id,email,role,has_login_account FROM public.profiles WHERE email='legacy@example.test' ORDER BY id")).rows,[
+      {id:account,email:'legacy@example.test',role:'member',has_login_account:true},
+      {id:'old-directory',email:'legacy@example.test',role:'super_admin',has_login_account:false},
+    ]);
+    assert.deepEqual((await db.query("SELECT current_balance,opening_balance FROM public.church_accounts WHERE id='existing-account'")).rows,[{current_balance:'123.45',opening_balance:'123.45'}]);
+    await asUser(db,account,async()=>assert.equal((await db.query('SELECT public.current_user_role() AS role')).rows[0].role,'member'));
+    await asUser(db,root,async()=>await assert.rejects(db.query("SELECT public.gwcc_manage_profile('old-directory','{\"has_login_account\":true}')"),/directory record cannot become a login/));
+    await db.exec("INSERT INTO public.profiles(id,email,role,has_login_account) VALUES('new-directory',NULL,'member',false)");
+    const sql=fs.readFileSync('supabase/migrations/20261015000001_secure_operations.sql','utf8');
+    await db.exec(sql);
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM public.profiles WHERE email='legacy@example.test'")).rows[0].n,2);
+    assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='existing-account'")).rows[0].current_balance,'123.45');
+  }finally{await db.close();}
+});
 
 test('committed migrations deny anonymous access and self-promotion, allow own giving, and revoke inactive users',async()=>{
   const db=await setupDatabase();

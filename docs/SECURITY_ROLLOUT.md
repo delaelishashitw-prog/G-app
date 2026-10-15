@@ -13,13 +13,18 @@ This release fixes the reviewed code paths. Production readiness also requires a
 
 For a fresh project, apply all files in `supabase/migrations` in filename order. The generated `SQL_MIGRATION_SCHEMA` in the app contains that same sequence inside one transaction; the final security migration closes the earlier historical access policies. No demo congregation or financial seed data is inserted.
 
-For an existing project with the earlier migrations installed, apply:
+For an existing project with the core church tables already installed, apply the security upgrade followed by the standalone mitigation (inside the same transaction):
 
 ```
 supabase/migrations/20261015000001_secure_operations.sql
+supabase/migrations/20261015162757_restrict_legacy_public_access.sql
 ```
 
 Run it as the project database owner inside a transaction (or through the Supabase migration runner). Check the migration history before running older files. The in-app repair buttons all use the same secure upgrade; old permissive repair instructions must not be reused. The upgrade is repeatable and tests verify that applying repair SQL again neither reopens anonymous access nor changes balances.
+
+The standalone mitigation can run first on a legacy project while the complete release is being prepared. It removes unsigned table/routine access and anonymous media policies, fixes existing helper search paths and view execution, and revokes direct profile mutations. Signed-in table grants and account balances are preserved. Legacy code that relies on unsigned database access or writes profiles directly will receive permission errors. This mitigation does not replace the full role/ownership and checked-mutation upgrade.
+
+The upgrade also handles the inspected SQL Editor installation with no migration history: it creates missing welfare appeal tables without replaying older permissive policies. Legacy directory records keep their IDs, names, contact emails and history, but records without an exact Auth UUID become directory-only. A separate safe member profile is created for each Auth account. Matching email addresses never copy staff authority. Email uniqueness applies to login profiles, so a historical directory contact cannot block the real account's profile. Review the exact Auth profile before authorizing staff. A directory record cannot be converted into a login by toggling a checkbox.
 
 The migration adds checked mutation RPCs, idempotency records, persistent API limits, account-owned records, missing finance/welfare columns and persistent roster notifications. Direct browser writes to public tables are denied. Finance triggers adjust both sides of a transfer in a transaction and reject overdrafts. Existing account balances are preserved as migration baselines. Existing paid welfare claims retain their paid amount as a legacy baseline so they cannot silently become payable again.
 

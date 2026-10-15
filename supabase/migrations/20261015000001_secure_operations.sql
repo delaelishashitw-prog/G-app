@@ -1,10 +1,46 @@
 -- Production security and persistence. Apply after the earlier migrations.
 -- Existing role assignments must be reviewed by the database owner before rollout.
 
+-- Some existing installations were set up with SQL Editor and have no migration
+-- history. Add the missing welfare relations without replaying old open policies.
+CREATE TABLE IF NOT EXISTS public.welfare_events (
+  id varchar(100) PRIMARY KEY, title varchar(255) NOT NULL, category varchar(100) NOT NULL,
+  category_custom varchar(255), member_id varchar(100) NOT NULL, member_name varchar(150) NOT NULL,
+  beneficiary_family_name varchar(200), description text NOT NULL, pastoral_notes text,
+  start_date date NOT NULL DEFAULT CURRENT_DATE, end_date date NOT NULL,
+  target_amount numeric(12,2), minimum_contribution numeric(10,2) NOT NULL DEFAULT 20 CHECK(minimum_contribution>=20),
+  status varchar(50) NOT NULL DEFAULT 'open', created_by varchar(150) NOT NULL,
+  created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS public.welfare_event_contributions (
+  id varchar(100) PRIMARY KEY, event_id varchar(100) NOT NULL REFERENCES public.welfare_events(id) ON DELETE CASCADE,
+  member_id varchar(100) NOT NULL, contributor_name varchar(150) NOT NULL, contributor_phone varchar(50),
+  tithe_number varchar(50), amount numeric(12,2) NOT NULL CHECK(amount>=20),
+  payment_date date NOT NULL DEFAULT CURRENT_DATE, payment_method varchar(50) NOT NULL DEFAULT 'mobile_money',
+  payment_channel varchar(100), reference_no varchar(100), notes text,
+  payment_status varchar(50) NOT NULL DEFAULT 'confirmed', recorded_by varchar(150) NOT NULL,
+  corrected_by varchar(150), finance_transaction_id varchar(100),
+  created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_welfare_events_status ON public.welfare_events(status);
+CREATE INDEX IF NOT EXISTS idx_wec_event_id ON public.welfare_event_contributions(event_id);
+CREATE INDEX IF NOT EXISTS idx_wec_member_id ON public.welfare_event_contributions(member_id);
+
 ALTER TABLE public.profiles ALTER COLUMN role SET DEFAULT 'member';
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS authorization_reviewed_at timestamptz;
 UPDATE public.profiles SET first_name=COALESCE(first_name,'Member'),last_name=COALESCE(last_name,'');
+ALTER TABLE public.profiles ALTER COLUMN first_name SET DEFAULT 'Member';
+ALTER TABLE public.profiles ALTER COLUMN last_name SET DEFAULT '';
+ALTER TABLE public.profiles ALTER COLUMN email DROP NOT NULL;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS has_login_account boolean NOT NULL DEFAULT true;
+-- Preserve legacy directory IDs and contact emails. An email match never copies
+-- their role to an Auth account or turns a directory row into a login identity.
+UPDATE public.profiles p SET has_login_account=false
+  WHERE NOT EXISTS(SELECT 1 FROM auth.users u WHERE u.id::text=p.id);
+ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_email_key;
+UPDATE public.profiles p SET email=u.email FROM auth.users u WHERE p.id=u.id::text;
+CREATE UNIQUE INDEX IF NOT EXISTS profiles_login_email_unique ON public.profiles(lower(email))
+  WHERE has_login_account AND NULLIF(email,'') IS NOT NULL;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS member_id text;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS job_title text;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS employment_type text;
@@ -154,6 +190,14 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authen
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON ROUTINES FROM anon, authenticated, PUBLIC;
 GRANT USAGE ON SCHEMA public TO authenticated;
+-- Existing trigger helpers use built-ins and NEW fields only.
+DO $$ DECLARE f text; BEGIN
+  FOREACH f IN ARRAY ARRAY['handle_updated_at','handle_member_date_sync','handle_pledge_balance'] LOOP
+    IF to_regprocedure(format('public.%I()',f)) IS NOT NULL THEN
+      EXECUTE format('ALTER FUNCTION public.%I() SET search_path = %L',f,'');
+    END IF;
+  END LOOP;
+END $$;
 
 CREATE POLICY gwcc_profile_self_read ON public.profiles FOR SELECT TO authenticated
   USING(id=auth.uid()::text AND is_active IS TRUE);
@@ -222,6 +266,9 @@ BEGIN
     AND NOT EXISTS(SELECT 1 FROM public.profiles WHERE id<>p_id AND role='super_admin' AND is_active AND has_login_account AND authorization_reviewed_at IS NOT NULL) THEN RAISE EXCEPTION 'The last active super administrator is protected'; END IF;
   allowed := p_updates - ARRAY['id','created_at','email'];
   result := jsonb_populate_record(old,allowed || jsonb_build_object('updated_at',now()));
+  IF result.has_login_account AND NOT EXISTS(SELECT 1 FROM auth.users u WHERE u.id::text=p_id) THEN
+    RAISE EXCEPTION 'A directory record cannot become a login. Review the exact Supabase Auth account instead';
+  END IF;
   UPDATE public.profiles SET first_name=result.first_name,last_name=result.last_name,phone=result.phone,
     department=result.department,job_title=result.job_title,employment_type=result.employment_type,
     avatar_url=result.avatar_url,role=result.role,is_active=result.is_active,has_login_account=result.has_login_account,
