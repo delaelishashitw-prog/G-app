@@ -361,7 +361,6 @@ export const UsersPage: React.FC = () => {
       return;
     }
 
-    const defaultPwd = newUserForm.password.trim() || 'Gwcc@2026';
     const result = await createUser({
       first_name: newUserForm.first_name.trim(),
       last_name: newUserForm.last_name.trim(),
@@ -372,7 +371,6 @@ export const UsersPage: React.FC = () => {
       employment_type: newUserForm.employment_type,
       avatar_url: newUserForm.avatar_url || undefined,
       role: newUserForm.role,
-      password: hasLogin ? defaultPwd : undefined,
       has_login_account: hasLogin,
     });
 
@@ -403,7 +401,7 @@ export const UsersPage: React.FC = () => {
   };
 
   // Handle Account Suspension / Activation with Full Audit Logging (SEC-04)
-  const handleToggleStatus = (user: UserProfile) => {
+  const handleToggleStatus = async (user: UserProfile) => {
     if (isElishaRichard(user) && user.is_active) {
       showToast('Protected Account: Senior Pastor Prophet Elisha Richard cannot be suspended.', 'error');
       return;
@@ -429,7 +427,8 @@ export const UsersPage: React.FC = () => {
     }
 
     const nextActive = !user.is_active;
-    toggleUserStatus(user.id);
+    const statusResult = await toggleUserStatus(user.id);
+    if (!statusResult.success) { showToast(statusResult.message, 'error'); return; }
     logAction(
       nextActive ? 'ACTIVATE_STAFF_ACCOUNT' : 'SUSPEND_STAFF_ACCOUNT',
       'Users & Roles',
@@ -461,7 +460,7 @@ export const UsersPage: React.FC = () => {
   };
 
   // Handle Save Edit User
-  const handleSaveEdit = (e: React.FormEvent) => {
+  const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingUser) return;
 
@@ -485,7 +484,7 @@ export const UsersPage: React.FC = () => {
     // SECURITY GUARD: Prevent modifying own role unless super admin
     const finalRole = editingUser.id === currentUser.id && !isSuperAdmin ? editingUser.role : editForm.role;
 
-    updateUser(editingUser.id, {
+    const updateResult = await updateUser(editingUser.id, {
       first_name: editForm.first_name.trim(),
       last_name: editForm.last_name.trim(),
       phone: editForm.phone.trim() || undefined,
@@ -497,6 +496,8 @@ export const UsersPage: React.FC = () => {
       is_active: editForm.is_active,
       has_login_account: editForm.has_login_account,
     });
+
+    if (!updateResult.success) { showToast(updateResult.message, 'error'); return; }
 
     logAction(
       'UPDATE_STAFF_USER',
@@ -516,7 +517,7 @@ export const UsersPage: React.FC = () => {
       return;
     }
     setResetModalUser(user);
-    const generated = `Gwcc@${Math.floor(1000 + Math.random() * 9000)}`;
+    const generated = `Gwcc!${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
     setTempPassword(generated);
   };
 
@@ -552,7 +553,7 @@ export const UsersPage: React.FC = () => {
       `"${u.email || ''}"`,
       `"${u.phone || ''}"`,
       `"${u.has_login_account !== false ? 'Yes' : 'No'}"`,
-      `"${u.is_active ? 'Active' : 'Suspended'}"`,
+      `"${u.role!=='member' && !u.authorization_reviewed_at?'Review required':u.is_active?'Active':'Suspended'}"`,
     ]);
 
     const csvContent =
@@ -601,12 +602,12 @@ export const UsersPage: React.FC = () => {
       `Dispatched password reset instructions for ${resetModalUser.email}`,
       resetModalUser.id
     );
-    showToast(res.message, 'success');
-    setResetModalUser(null);
+    showToast(res.message, res.success ? 'success' : 'error');
+    if (res.success) setResetModalUser(null);
   };
 
   // Handle Delete User
-  const handleDeleteUser = (user: UserProfile) => {
+  const handleDeleteUser = async (user: UserProfile) => {
     if (user.id === currentUser.id) {
       showToast('Cannot delete the currently active logged-in user profile.', 'error');
       return;
@@ -621,7 +622,7 @@ export const UsersPage: React.FC = () => {
     }
 
     if (confirm(`Are you sure you want to remove ${user.first_name} ${user.last_name} (${user.email}) from the staff registry?`)) {
-      const ok = deleteUser(user.id);
+      const ok = await deleteUser(user.id);
       if (ok) {
         logAction('DELETE_STAFF_USER', 'Users & Roles', `Removed staff account ${user.email}`, user.id);
         showToast(`Staff account for ${user.first_name} was removed.`, 'info');
@@ -648,7 +649,7 @@ export const UsersPage: React.FC = () => {
       );
       showToast(`Now simulating system view as ${target.first_name} ${target.last_name} (${target.role.replace('_', ' ').toUpperCase()})`, 'info');
     } else {
-      showToast('Unauthorized: Only Super Administrators can simulate user sessions.', 'error');
+      showToast('Session switching is disabled. Staff must sign in with their own verified account.', 'error');
     }
     setSwitchTargetUser(null);
   };
@@ -1006,6 +1007,7 @@ export const UsersPage: React.FC = () => {
                             Active
                           </span>
                         )}
+                        {u.role!=='member' && !u.authorization_reviewed_at && <span className="text-xs text-amber-800">Review required</span>}
                         {u.has_login_account === false && (
                           <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 shrink-0" title="Personnel catalogued without system login credentials">
                             Directory Only
@@ -1171,7 +1173,7 @@ export const UsersPage: React.FC = () => {
                                   u.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
                                 }`}
                               >
-                                {u.is_active ? 'Active' : 'Suspended'}
+                                {u.role!=='member' && !u.authorization_reviewed_at?'Review required':u.is_active?'Active':'Suspended'}
                               </span>
                               {u.has_login_account === false && (
                                 <span className="text-[9px] font-medium text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200">
@@ -1607,15 +1609,7 @@ export const UsersPage: React.FC = () => {
 
               {newUserForm.has_login_account && (
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Initial Password (Optional)</label>
-                  <input
-                    type="text"
-                    value={newUserForm.password}
-                    onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
-                    placeholder="Defaults to Gwcc@2026"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                  <p className="text-[10px] text-slate-400 mt-1">Staff will be asked to update their password upon first login.</p>
+                  <p className="text-xs text-slate-600">Login accounts receive an email invitation to set their own password.</p>
                 </div>
               )}
 

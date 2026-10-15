@@ -72,6 +72,7 @@ export interface UserProfile {
   job_title?: string;
   employment_type?: 'full_time' | 'part_time' | 'volunteer' | 'contract';
   role: UserRole;
+  authorization_reviewed_at?: string;
   avatar_url?: string;
   is_active: boolean;
   member_id?: string;
@@ -84,6 +85,7 @@ export interface UserProfile {
 }
 
 export interface Member {
+  auth_user_id?: string;
   id: string;
   member_id: string; // e.g. MEMBER-000001
   tithe_number?: string; // T-1042
@@ -614,12 +616,14 @@ export interface WelfareEventContribution {
   payment_channel?: string;
   reference_no?: string;
   notes?: string;
-  payment_status: 'confirmed' | 'pending' | 'failed';
+  payment_status: 'confirmed' | 'pending' | 'failed' | 'voided';
   recorded_by: string;
   corrected_by?: string;
   finance_transaction_id?: string;
   created_at: string;
   updated_at?: string;
+  finance_account_id?: string;
+  finance_linked?: boolean;
 }
 
 export interface WelfareContribution {

@@ -19,7 +19,7 @@ export function addMember(
 
   const newMember: Member = {
     ...data,
-    id: `mem-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    id: crypto.randomUUID(),
     member_id: generateMemberId(),
     tithe_number: finalTithe,
     created_at: now,

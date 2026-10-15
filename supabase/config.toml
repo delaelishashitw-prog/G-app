@@ -1,0 +1,5 @@
+[functions.gwcc-staff]
+# Auth getUser and the reviewed root profile are checked in the handler. This
+# also supports current asymmetric user JWTs, rather than the legacy gateway.
+verify_jwt = false
+entrypoint = "./functions/gwcc-staff/index.js"

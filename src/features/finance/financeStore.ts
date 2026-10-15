@@ -1,3 +1,4 @@
+import { money, planAccountChange, planBudgetChange } from '../../lib/ledgerUtils';
 import type { Dispatch, SetStateAction } from 'react';
 import type { ExpenseRecord, GivingRecord, Member, ChurchAccount, ChurchFinanceRecord, DepartmentBudget } from '../../types/database.types';
 
@@ -219,6 +220,7 @@ export function updateChurchAccount(
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
   dbSyncUpsert: (table: string, record: unknown) => void
 ) {
+  if (updates.current_balance !== undefined) throw new Error('Record an income, expense, or transfer to change an account balance.');
   setChurchAccounts((prev) =>
     prev.map((acc) => {
       if (acc.id === id) {
@@ -251,475 +253,56 @@ export function deleteChurchAccount(
 // -----------------------------------------------------------------------------
 // DEDICATED CHURCH FINANCES (Operating Expenses, Vouchers, Disbursements)
 // -----------------------------------------------------------------------------
-export function recordChurchFinance(
-  data: Omit<ChurchFinanceRecord, 'id' | 'created_at' | 'updated_at'>,
-  setChurchFinances: Dispatch<SetStateAction<ChurchFinanceRecord[]>>,
-  setChurchAccounts: Dispatch<SetStateAction<ChurchAccount[]>>,
-  setDepartmentBudgets?: Dispatch<SetStateAction<DepartmentBudget[]>>,
-  logAction?: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert?: (table: string, record: unknown) => void
-): ChurchFinanceRecord {
-  let approver = data.approved_by?.trim();
-  if (
-    !approver ||
-    approver === 'Rev. Emmanuel Appiah' ||
-    approver.includes('Agyemang-Prempeh') ||
-    approver.includes('Emmanuel Agyemang') ||
-    approver.includes('Emmanuel Appiah')
-  ) {
-    approver = 'Prophet Elisha K. Richard';
-  }
+export interface FinanceSnapshot { finances: ChurchFinanceRecord[]; accounts: ChurchAccount[]; budgets: DepartmentBudget[] }
+type Setter<T> = Dispatch<SetStateAction<T[]>>;
+type Logger = (action:string,module:string,details:string,id?:string)=>void;
+type Sync = (table:string,record:any)=>unknown;
 
-  const numAmount = Math.round((Number(data.amount) || 0) * 100) / 100;
-
-  const newRecord: ChurchFinanceRecord = {
-    ...data,
-    approved_by: approver,
-    amount: numAmount,
-    id: `cfin-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    status: data.status || 'completed',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-
-  setChurchFinances((prev) => [newRecord, ...prev]);
-
-  // If linked to an account, adjust holding account balance automatically
-  if (data.account_id && newRecord.status !== 'voided') {
-    setChurchAccounts((prevAccounts) =>
-      prevAccounts.map((acc) => {
-        if (acc.id === data.account_id) {
-          const delta = data.transaction_type === 'income' || data.transaction_type === 'grant' ? numAmount : -numAmount;
-          const updatedAcc = {
-            ...acc,
-            current_balance: Math.max(0, acc.current_balance + delta),
-            updated_at: new Date().toISOString(),
-          };
-          if (dbSyncUpsert) {
-            dbSyncUpsert('church_accounts', updatedAcc);
-          }
-          return updatedAcc;
-        }
-        return acc;
-      })
-    );
-  }
-
-  // Update matching department budget if applicable
-  if (
-    setDepartmentBudgets &&
-    (data.transaction_type === 'expense' || data.transaction_type === 'disbursement') &&
-    data.department &&
-    newRecord.status !== 'voided'
-  ) {
-    setDepartmentBudgets((prevBudgets) =>
-      prevBudgets.map((b) => {
-        if (b.department.toLowerCase() === data.department!.toLowerCase()) {
-          return {
-            ...b,
-            spent_amount: b.spent_amount + numAmount,
-            updated_at: new Date().toISOString(),
-          };
-        }
-        return b;
-      })
-    );
-  }
-
-  if (logAction) {
-    logAction(
-      'RECORD_CHURCH_FINANCE',
-      'Church Finance',
-      `Recorded ${data.transaction_type.toUpperCase()}: ${data.title} (GH₵ ${numAmount.toFixed(2)}) on ${data.account_name}`,
-      newRecord.id
-    );
-  }
-  if (dbSyncUpsert) {
-    dbSyncUpsert('church_finances', newRecord);
-  }
-  return newRecord;
+function applyReceipt(before:ChurchFinanceRecord|undefined,after:ChurchFinanceRecord,state:FinanceSnapshot|undefined,
+  setFinances:Setter<ChurchFinanceRecord>,setAccounts:Setter<ChurchAccount>,setBudgets:Setter<DepartmentBudget>|undefined,
+  log:Logger|undefined,sync:Sync|undefined) {
+  if(!state) throw new Error('A current finance snapshot is required.');
+  const accounts=planAccountChange(state.accounts,before,after);
+  const budgets=planBudgetChange(state.budgets,before,after);
+  const finances=before?state.finances.map(row=>row.id===after.id?after:row):[after,...state.finances];
+  // All validation/calculation happens before React receives any state update.
+  setFinances(finances);setAccounts(accounts);setBudgets?.(budgets);
+  log?.(before?'UPDATE_CHURCH_FINANCE':'RECORD_CHURCH_FINANCE','Church Finance',`${after.title}: GH₵ ${after.amount.toFixed(2)} (${after.status})`,after.id);
+  sync?.('church_finances',after);
 }
 
-export function updateChurchFinance(
-  id: string,
-  updates: Partial<ChurchFinanceRecord>,
-  setChurchFinances: Dispatch<SetStateAction<ChurchFinanceRecord[]>>,
-  setChurchAccounts: Dispatch<SetStateAction<ChurchAccount[]>>,
-  setDepartmentBudgets: Dispatch<SetStateAction<DepartmentBudget[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void
-) {
-  let sanitizedUpdates = { ...updates };
-  if (sanitizedUpdates.approved_by !== undefined) {
-    const raw = sanitizedUpdates.approved_by?.trim();
-    if (
-      !raw ||
-      raw === 'Rev. Emmanuel Appiah' ||
-      raw.includes('Agyemang-Prempeh') ||
-      raw.includes('Emmanuel Agyemang') ||
-      raw.includes('Emmanuel Appiah')
-    ) {
-      sanitizedUpdates.approved_by = 'Prophet Elisha K. Richard';
-    }
-  }
-
-  setChurchFinances((prevFinances) => {
-    const existing = prevFinances.find((item) => item.id === id);
-    if (!existing) return prevFinances;
-
-    const oldAmount = existing.amount;
-    const newAmount = sanitizedUpdates.amount !== undefined
-      ? Math.round((Number(sanitizedUpdates.amount) || 0) * 100) / 100
-      : oldAmount;
-
-    const oldAccountId = existing.account_id;
-    const newAccountId = sanitizedUpdates.account_id !== undefined ? sanitizedUpdates.account_id : oldAccountId;
-
-    const oldType = existing.transaction_type;
-    const newType = sanitizedUpdates.transaction_type !== undefined ? sanitizedUpdates.transaction_type : oldType;
-
-    const oldDepartment = existing.department;
-    const newDepartment = sanitizedUpdates.department !== undefined ? sanitizedUpdates.department : oldDepartment;
-
-    const isExistingActive = existing.status !== 'voided';
-    const isNewActive = (sanitizedUpdates.status || existing.status) !== 'voided';
-
-    // Update holding account balances if active
-    if (isExistingActive && isNewActive) {
-      setChurchAccounts((prevAccounts) => {
-        let updatedAccounts = [...prevAccounts];
-
-        // 1. If account stayed the same
-        if (oldAccountId && oldAccountId === newAccountId) {
-          const oldEffect = oldType === 'income' || oldType === 'grant' ? oldAmount : -oldAmount;
-          const newEffect = newType === 'income' || newType === 'grant' ? newAmount : -newAmount;
-          const diff = newEffect - oldEffect;
-
-          if (diff !== 0) {
-            updatedAccounts = updatedAccounts.map((acc) => {
-              if (acc.id === oldAccountId) {
-                const u = {
-                  ...acc,
-                  current_balance: Math.max(0, acc.current_balance + diff),
-                  updated_at: new Date().toISOString(),
-                };
-                dbSyncUpsert('church_accounts', u);
-                return u;
-              }
-              return acc;
-            });
-          }
-        } else {
-          // Account changed: reverse old, apply new
-          if (oldAccountId) {
-            const oldReversal = oldType === 'income' || oldType === 'grant' ? -oldAmount : oldAmount;
-            updatedAccounts = updatedAccounts.map((acc) => {
-              if (acc.id === oldAccountId) {
-                const u = {
-                  ...acc,
-                  current_balance: Math.max(0, acc.current_balance + oldReversal),
-                  updated_at: new Date().toISOString(),
-                };
-                dbSyncUpsert('church_accounts', u);
-                return u;
-              }
-              return acc;
-            });
-          }
-          if (newAccountId) {
-            const newEffect = newType === 'income' || newType === 'grant' ? newAmount : -newAmount;
-            updatedAccounts = updatedAccounts.map((acc) => {
-              if (acc.id === newAccountId) {
-                const u = {
-                  ...acc,
-                  current_balance: Math.max(0, acc.current_balance + newEffect),
-                  updated_at: new Date().toISOString(),
-                };
-                dbSyncUpsert('church_accounts', u);
-                return u;
-              }
-              return acc;
-            });
-          }
-        }
-        return updatedAccounts;
-      });
-
-      // Update Department Budget if an expense amount or department changed
-      if ((oldType === 'expense' || oldType === 'disbursement') && (newType === 'expense' || newType === 'disbursement')) {
-        setDepartmentBudgets((prevBudgets) => {
-          return prevBudgets.map((b) => {
-            const isOldMatch = oldDepartment && b.department.toLowerCase() === oldDepartment.toLowerCase();
-            const isNewMatch = newDepartment && b.department.toLowerCase() === newDepartment.toLowerCase();
-
-            if (isOldMatch && isNewMatch) {
-              const diff = newAmount - oldAmount;
-              return { ...b, spent_amount: Math.max(0, b.spent_amount + diff), updated_at: new Date().toISOString() };
-            }
-            if (isOldMatch) {
-              return { ...b, spent_amount: Math.max(0, b.spent_amount - oldAmount), updated_at: new Date().toISOString() };
-            }
-            if (isNewMatch) {
-              return { ...b, spent_amount: b.spent_amount + newAmount, updated_at: new Date().toISOString() };
-            }
-            return b;
-          });
-        });
-      }
-    }
-
-    const updatedRecord: ChurchFinanceRecord = {
-      ...existing,
-      ...sanitizedUpdates,
-      amount: newAmount,
-      updated_at: new Date().toISOString(),
-    };
-
-    logAction(
-      'UPDATE_CHURCH_FINANCE',
-      'Church Finance',
-      `Updated transaction ${updatedRecord.title} (GH₵ ${updatedRecord.amount.toFixed(2)}) on ${updatedRecord.account_name}`,
-      id
-    );
-    dbSyncUpsert('church_finances', updatedRecord);
-
-    return prevFinances.map((f) => (f.id === id ? updatedRecord : f));
-  });
+export function recordChurchFinance(data:Omit<ChurchFinanceRecord,'id'|'created_at'|'updated_at'>,
+  sf:Setter<ChurchFinanceRecord>,sa:Setter<ChurchAccount>,sb?:Setter<DepartmentBudget>,log?:Logger,sync?:Sync,state?:FinanceSnapshot):ChurchFinanceRecord {
+  const now=new Date().toISOString();
+  const record:ChurchFinanceRecord={...data,id:crypto.randomUUID(),amount:money(data.amount),status:data.status||'completed',created_at:now,updated_at:now};
+  applyReceipt(undefined,record,state,sf,sa,sb,log,sync);return record;
 }
-
-export function voidChurchFinance(
-  id: string,
-  voidReason: string,
-  voidedBy: string,
-  setChurchFinances: Dispatch<SetStateAction<ChurchFinanceRecord[]>>,
-  setChurchAccounts: Dispatch<SetStateAction<ChurchAccount[]>>,
-  setDepartmentBudgets: Dispatch<SetStateAction<DepartmentBudget[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void
-) {
-  setChurchFinances((prevFinances) => {
-    const target = prevFinances.find((f) => f.id === id);
-    if (!target) return prevFinances;
-
-    // If already voided, do not double-reverse
-    if (target.status === 'voided') return prevFinances;
-
-    // Reverse holding account balance
-    if (target.account_id) {
-      setChurchAccounts((prevAccounts) =>
-        prevAccounts.map((acc) => {
-          if (acc.id === target.account_id) {
-            // Reversing an expense gives money back; reversing income removes money
-            const isInc = target.transaction_type === 'income' || target.transaction_type === 'grant';
-            const reversalDelta = isInc ? -target.amount : target.amount;
-            const updatedAcc = {
-              ...acc,
-              current_balance: Math.max(0, acc.current_balance + reversalDelta),
-              updated_at: new Date().toISOString(),
-            };
-            dbSyncUpsert('church_accounts', updatedAcc);
-            return updatedAcc;
-          }
-          return acc;
-        })
-      );
-    }
-
-    // Reverse department budget spent amount if it was an expense
-    if (
-      (target.transaction_type === 'expense' || target.transaction_type === 'disbursement') &&
-      target.department
-    ) {
-      setDepartmentBudgets((prevBudgets) =>
-        prevBudgets.map((b) => {
-          if (b.department.toLowerCase() === target.department!.toLowerCase()) {
-            return {
-              ...b,
-              spent_amount: Math.max(0, b.spent_amount - target.amount),
-              updated_at: new Date().toISOString(),
-            };
-          }
-          return b;
-        })
-      );
-    }
-
-    const voidedRecord: ChurchFinanceRecord = {
-      ...target,
-      status: 'voided',
-      void_reason: voidReason.trim() || 'Voided by administrative authority',
-      voided_by: voidedBy.trim() || 'Church Finance Office',
-      updated_at: new Date().toISOString(),
-    };
-
-    logAction(
-      'VOID_CHURCH_FINANCE',
-      'Church Finance',
-      `Voided transaction #${id} "${target.title}" (GH₵ ${target.amount.toFixed(2)}). Reason: ${voidReason}`,
-      id
-    );
-    dbSyncUpsert('church_finances', voidedRecord);
-
-    return prevFinances.map((f) => (f.id === id ? voidedRecord : f));
-  });
+export function updateChurchFinance(id:string,updates:Partial<ChurchFinanceRecord>,sf:Setter<ChurchFinanceRecord>,sa:Setter<ChurchAccount>,sb:Setter<DepartmentBudget>,log:Logger,sync:Sync,state?:FinanceSnapshot) {
+  const existing=state?.finances.find(row=>row.id===id);if(!existing)throw new Error('Transaction not found. Refresh and try again.');
+  if(existing.status==='voided')throw new Error('A voided receipt cannot be edited.');
+  const updated={...existing,...updates,id:existing.id,amount:money(updates.amount??existing.amount),updated_at:new Date().toISOString(),_expected_updated_at:existing.updated_at};
+  applyReceipt(existing,updated,state,sf,sa,sb,log,sync);
 }
-
-export function deleteChurchFinance(
-  id: string,
-  setChurchFinances: Dispatch<SetStateAction<ChurchFinanceRecord[]>>,
-  setChurchAccounts: Dispatch<SetStateAction<ChurchAccount[]>>,
-  setDepartmentBudgets: Dispatch<SetStateAction<DepartmentBudget[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncDelete: (table: string, id: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void
-) {
-  setChurchFinances((prevFinances) => {
-    const target = prevFinances.find((f) => f.id === id);
-
-    // If active (not voided), reverse its balance impact on holding accounts
-    if (target && target.status !== 'voided' && target.account_id) {
-      setChurchAccounts((prevAccounts) =>
-        prevAccounts.map((acc) => {
-          if (acc.id === target.account_id) {
-            const isInc = target.transaction_type === 'income' || target.transaction_type === 'grant';
-            const reversalDelta = isInc ? -target.amount : target.amount;
-            const updatedAcc = {
-              ...acc,
-              current_balance: Math.max(0, acc.current_balance + reversalDelta),
-              updated_at: new Date().toISOString(),
-            };
-            dbSyncUpsert('church_accounts', updatedAcc);
-            return updatedAcc;
-          }
-          return acc;
-        })
-      );
-
-      // Also reverse department budget if applicable
-      if (
-        (target.transaction_type === 'expense' || target.transaction_type === 'disbursement') &&
-        target.department
-      ) {
-        setDepartmentBudgets((prevBudgets) =>
-          prevBudgets.map((b) => {
-            if (b.department.toLowerCase() === target.department!.toLowerCase()) {
-              return {
-                ...b,
-                spent_amount: Math.max(0, b.spent_amount - target.amount),
-                updated_at: new Date().toISOString(),
-              };
-            }
-            return b;
-          })
-        );
-      }
-    }
-
-    logAction('DELETE_CHURCH_FINANCE', 'Church Finance', `Deleted church finance record ${id} ("${target?.title || ''}")`, id);
-    dbSyncDelete('church_finances', id);
-    return prevFinances.filter((f) => f.id !== id);
-  });
+export function voidChurchFinance(id:string,reason:string,actor:string,sf:Setter<ChurchFinanceRecord>,sa:Setter<ChurchAccount>,sb:Setter<DepartmentBudget>,log:Logger,sync:Sync,state?:FinanceSnapshot) {
+  const existing=state?.finances.find(row=>row.id===id);if(!existing)throw new Error('Transaction not found.');
+  if(existing.status==='voided')return;
+  if(!reason.trim())throw new Error('Enter a reason for voiding this receipt.');
+  applyReceipt(existing,{...existing,status:'voided',void_reason:reason.trim(),voided_by:actor,updated_at:new Date().toISOString(),_expected_updated_at:existing.updated_at} as ChurchFinanceRecord,state,sf,sa,sb,log,sync);
 }
-
-// -----------------------------------------------------------------------------
-// INTERNAL TRANSFER BETWEEN CHURCH ACCOUNTS
-// -----------------------------------------------------------------------------
-export function transferBetweenAccounts(
-  fromAccountId: string,
-  toAccountId: string,
-  amount: number,
-  notes: string | undefined,
-  setChurchAccounts: Dispatch<SetStateAction<ChurchAccount[]>>,
-  setChurchFinances: Dispatch<SetStateAction<ChurchFinanceRecord[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void
-): { success: boolean; message: string } {
-  if (fromAccountId === toAccountId) {
-    return { success: false, message: 'Source and destination accounts must be different.' };
-  }
-  const cleanAmount = Math.round((Number(amount) || 0) * 100) / 100;
-  if (cleanAmount <= 0) {
-    return { success: false, message: 'Transfer amount must be greater than zero.' };
-  }
-
-  let fromAccName = 'Source Account';
-  let toAccName = 'Destination Account';
-  let success = false;
-
-  setChurchAccounts((prev) => {
-    const fromAcc = prev.find((a) => a.id === fromAccountId);
-    const toAcc = prev.find((a) => a.id === toAccountId);
-
-    if (!fromAcc || !toAcc) return prev;
-    if (fromAcc.current_balance < cleanAmount) {
-      return prev; // Not enough balance
-    }
-
-    fromAccName = fromAcc.name;
-    toAccName = toAcc.name;
-    success = true;
-
-    const updatedFrom = {
-      ...fromAcc,
-      current_balance: Math.max(0, fromAcc.current_balance - cleanAmount),
-      updated_at: new Date().toISOString(),
-    };
-    const updatedTo = {
-      ...toAcc,
-      current_balance: toAcc.current_balance + cleanAmount,
-      updated_at: new Date().toISOString(),
-    };
-
-    dbSyncUpsert('church_accounts', updatedFrom);
-    dbSyncUpsert('church_accounts', updatedTo);
-
-    return prev.map((a) => {
-      if (a.id === fromAccountId) return updatedFrom;
-      if (a.id === toAccountId) return updatedTo;
-      return a;
-    });
-  });
-
-  if (!success) {
-    return { success: false, message: 'Transfer failed: Insufficient balance or invalid account.' };
-  }
-
-  // Create an audit ledger record in church_finances capturing both legs
-  const transferRecord: ChurchFinanceRecord = {
-    id: `cfin-transfer-${Date.now()}`,
-    transaction_type: 'transfer',
-    account_id: fromAccountId,
-    account_name: fromAccName,
-    to_account_id: toAccountId,
-    to_account_name: toAccName,
-    category: 'Internal Transfer',
-    title: `Transfer to ${toAccName}`,
-    recipient_or_vendor: toAccName,
-    amount: cleanAmount,
-    currency: 'GHS',
-    date: new Date().toISOString().split('T')[0],
-    payment_method: 'internal_transfer',
-    reference_no: `TRF-${Date.now().toString().slice(-6)}`,
-    department: 'Treasury & Administration',
-    notes: notes || `Internal account transfer from ${fromAccName} to ${toAccName}`,
-    approved_by: 'Prophet Elisha K. Richard',
-    recorded_by: 'Church Accounts Office',
-    status: 'completed',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-
-  setChurchFinances((prev) => [transferRecord, ...prev]);
-  dbSyncUpsert('church_finances', transferRecord);
-
-  logAction(
-    'ACCOUNT_TRANSFER',
-    'Church Finance',
-    `Transferred GH₵ ${cleanAmount.toFixed(2)} from ${fromAccName} to ${toAccName}`,
-    transferRecord.id
-  );
-
-  return { success: true, message: `Successfully transferred GH₵ ${cleanAmount.toFixed(2)} from ${fromAccName} to ${toAccName}.` };
+export function deleteChurchFinance(id:string,sf:Setter<ChurchFinanceRecord>,sa:Setter<ChurchAccount>,sb:Setter<DepartmentBudget>,log:Logger,_delete:(table:string,id:string)=>unknown,sync:Sync,state?:FinanceSnapshot) {
+  // Preserve posted history; removal is a documented reversal rather than destruction.
+  voidChurchFinance(id,'Removed by the finance office','Church Finance Office',sf,sa,sb,log,sync,state);
+}
+export function transferBetweenAccounts(fromId:string,toId:string,amount:number,notes:string|undefined,sa:Setter<ChurchAccount>,sf:Setter<ChurchFinanceRecord>,log:Logger,sync:Sync,state?:FinanceSnapshot):{success:boolean;message:string} {
+  try {
+    if(!state)throw new Error('Account state is unavailable. Refresh and try again.');
+    const from=state.accounts.find(a=>a.id===fromId),to=state.accounts.find(a=>a.id===toId);
+    if(!from||!to)throw new Error('Select the source and destination accounts.');
+    recordChurchFinance({transaction_type:'transfer',account_id:fromId,account_name:from.name,to_account_id:toId,to_account_name:to.name,
+      category:'Internal Transfer',title:`Transfer to ${to.name}`,amount:money(amount),currency:'GHS',date:new Date().toISOString().slice(0,10),
+      payment_method:'internal_transfer',notes,status:'completed'},sf,sa,undefined,log,sync,state);
+    return {success:true,message:'Transfer recorded on this device. Cloud confirmation is shown in sync status.'};
+  } catch(error) {return {success:false,message:(error as Error).message};}
 }
 
 // -----------------------------------------------------------------------------

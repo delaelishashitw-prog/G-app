@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { Session, User } from '@supabase/supabase-js';
-import { Member, UserProfile, UserRole } from '../types/database.types';
-import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
-import { sampleUsers, sampleMembers } from '../lib/initialData';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import type { Session } from '@supabase/supabase-js';
+import type { Member, UserProfile, UserRole } from '../types/database.types';
+import { getSupabaseClient, clearPrivateCache, setSyncIdentity } from '../lib/supabase';
+import { readVerifiedProfile, GUEST_PROFILE, clearLegacyCredentials } from '../lib/authPolicy';
+import { apiRequest } from '../lib/apiClient';
 
 interface AuthContextType {
   currentUser: UserProfile;
@@ -53,72 +54,12 @@ interface AuthContextType {
   quickLoginAs: (user: UserProfile) => void;
   logout: () => Promise<void>;
   refreshSession: () => Promise<void>;
-  updateUser: (userId: string, updates: Partial<UserProfile>) => void;
-  deleteUser: (userId: string) => boolean;
-  toggleUserStatus: (userId: string) => void;
+  updateUser: (userId: string, updates: Partial<UserProfile>) => Promise<{ success: boolean; message: string }>;
+  deleteUser: (userId: string) => Promise<boolean>;
+  toggleUserStatus: (userId: string) => Promise<{ success: boolean; message: string }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-const MEMBER_PIN_STORAGE_KEY = 'gwcc_member_passwords_v2';
-const LEGACY_MEMBER_PIN_STORAGE_KEY = 'gwcc_member_passwords';
-
-async function hashMemberPin(pin: string): Promise<string> {
-  const normalized = (pin || '').trim();
-  if (!normalized) return '';
-
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
-    return Array.from(new Uint8Array(digest))
-      .map((byte) => byte.toString(16).padStart(2, '0'))
-      .join('');
-  }
-
-  return normalized;
-}
-
-function readMemberPinMap(): Record<string, string> {
-  try {
-    const sessionValue = sessionStorage.getItem(MEMBER_PIN_STORAGE_KEY);
-    if (sessionValue) {
-      const parsed = JSON.parse(sessionValue);
-      if (parsed && typeof parsed === 'object') {
-        return parsed as Record<string, string>;
-      }
-    }
-  } catch {}
-
-  try {
-    const legacyValue = localStorage.getItem(LEGACY_MEMBER_PIN_STORAGE_KEY);
-    if (legacyValue) {
-      const parsed = JSON.parse(legacyValue);
-      if (parsed && typeof parsed === 'object') {
-        return parsed as Record<string, string>;
-      }
-    }
-  } catch {}
-
-  return {};
-}
-
-function persistMemberPinMap(map: Record<string, string>): void {
-  try {
-    sessionStorage.setItem(MEMBER_PIN_STORAGE_KEY, JSON.stringify(map));
-  } catch {}
-
-  try {
-    localStorage.removeItem(LEGACY_MEMBER_PIN_STORAGE_KEY);
-  } catch {}
-}
-
-const isDemoAuthEnabled = (): boolean => {
-  const configured = (import.meta.env.VITE_ENABLE_DEMO_AUTH ?? '').toString().trim().toLowerCase();
-  if (configured === 'true' || configured === '1' || configured === 'yes') {
-    return true;
-  }
-
-  return import.meta.env.DEV && configured !== 'false' && configured !== '0';
-};
 
 export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   super_admin: [
@@ -228,1340 +169,186 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   ],
 };
 
-export const isElishaRichard = (
-  user?: Partial<UserProfile> | null,
-  emailCandidate?: string
-): boolean => {
-  if (!user && !emailCandidate) return false;
-  const cleanEmail = (emailCandidate || user?.email || '').trim().toLowerCase();
-  const elishaEmails = [
-    'prophet@greaterworkscitychurch.org',
-    'senior.pastor@greaterworkscitychurch.org',
-    'delaelishashitw@gmail.com',
-  ];
-  if (cleanEmail && elishaEmails.includes(cleanEmail)) return true;
 
-  const firstName = (user?.first_name || '').trim().toLowerCase();
-  const lastName = (user?.last_name || '').trim().toLowerCase();
-  if (firstName.includes('elisha') && (lastName.includes('richard') || user?.id === 'usr-1' || user?.id === 'usr-001')) {
-    return true;
-  }
-  if (user?.id === 'usr-1' || user?.id === 'usr-001') return true;
-  return false;
-};
-
-function mapSupabaseUserToProfile(
-  user: User,
-  existingProfiles: UserProfile[]
-): UserProfile {
-  const cleanEmail = (user.email || '').trim().toLowerCase();
-  const isElisha = isElishaRichard(undefined, cleanEmail);
-
-  // Check existing profiles first
-  const existing = existingProfiles.find(
-    (u) =>
-      u.id === user.id ||
-      (Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail) ||
-      (isElisha && isElishaRichard(u))
-  );
-  if (existing) {
-    const role: UserRole = isElisha || isElishaRichard(existing) ? 'super_admin' : existing.role;
-    return {
-      ...existing,
-      id: existing.id || user.id,
-      email: cleanEmail || existing.email,
-      role,
-      member_id: existing.member_id || (isElisha ? 'GWCC-0013' : undefined),
-    };
-  }
-
-  // Derive from Supabase metadata
-  const meta = user.user_metadata || {};
-  const firstName = meta.first_name || (isElisha ? 'Elisha' : cleanEmail ? cleanEmail.split('@')[0].replace('.', ' ') : 'Staff');
-  const lastName = meta.last_name || (isElisha ? 'Richard' : 'Member');
-  const role: UserRole = isElisha || isElishaRichard({ first_name: firstName, last_name: lastName })
-    ? 'super_admin'
-    : ((meta.role as UserRole) || 'member');
-  const phone = meta.phone || user.phone || undefined;
-  const department = meta.department || (isElisha ? 'Senior Pastoral Board & Executive Council' : undefined);
-
-  return {
-    id: user.id,
-    first_name: firstName,
-    last_name: lastName,
-    email: cleanEmail,
-    role,
-    phone,
-    department,
-    member_id: isElisha ? 'GWCC-0013' : undefined,
-    is_active: true,
-    created_at: user.created_at || new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-}
+// Retained for presentation compatibility. Names/emails never establish privileges.
+export const isElishaRichard = (user?: Partial<UserProfile> | null, _email?: string): boolean => user?.role === 'super_admin';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [usersList, setUsersList] = useState<UserProfile[]>(() => {
-    const saved = localStorage.getItem('gwcc_registered_users');
-    let list = sampleUsers;
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          list = parsed;
-        }
-      } catch {
-        // fallback
-      }
-    }
-
-    // Always enforce super_admin role for Elisha Richard across local/saved accounts
-    const withSuperAdmin = list.map((u) => {
-      if (isElishaRichard(u)) {
-        return {
-          ...u,
-          role: 'super_admin' as UserRole,
-          department: u.department || 'Senior Pastoral Board & Executive Council',
-        };
-      }
-      return u;
-    });
-
-    if (!withSuperAdmin.some((u) => isElishaRichard(u))) {
-      return [sampleUsers[0], ...withSuperAdmin];
-    }
-    return withSuperAdmin;
-  });
-
-  const [currentUser, setCurrentUser] = useState<UserProfile>(() => {
-    const saved = localStorage.getItem('gwcc_active_user');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.first_name && parsed.email !== 'guest@local') {
-          if (isElishaRichard(parsed)) {
-            return {
-              ...parsed,
-              role: 'super_admin' as UserRole,
-              department: parsed.department || 'Senior Pastoral Board & Executive Council',
-            };
-          }
-          return parsed;
-        }
-      } catch {
-        // fallback
-      }
-    }
-    return sampleUsers[0];
-  });
-
+  const [currentUser, setCurrentUser] = useState<UserProfile>(GUEST_PROFILE);
+  const [usersList, setUsersList] = useState<UserProfile[]>([]);
   const [session, setSession] = useState<Session | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [currentMember, setCurrentMember] = useState<Member | null>(null);
+  const generation = useRef(0);
+  const isAuthenticated = Boolean(session && currentUser.id && currentUser.is_active);
 
-  const [currentMember, setCurrentMember] = useState<Member | null>(() => {
-    const activeMemberId = localStorage.getItem('gwcc_active_member_id');
-    if (!activeMemberId) return null;
-    try {
-      const stored = localStorage.getItem('gwcc_members');
-      if (stored) {
-        const parsed: Member[] = JSON.parse(stored);
-        const found = parsed.find((m) => m.id === activeMemberId || m.member_id === activeMemberId);
-        if (found) return found;
-      }
-    } catch {}
-    const sampleFound = sampleMembers.find((m) => m.id === activeMemberId || m.member_id === activeMemberId);
-    if (sampleFound) return sampleFound;
-    return null;
-  });
-
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    const stored = localStorage.getItem('gwcc_auth_authenticated');
-    if (stored === null) {
-      return false; // Require explicit login in production.
-    }
-    return stored === 'true';
-  });
-
-  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
-
-  // Tracks active simulation session started by an authenticated super_admin
-  const [impersonatingAdmin, setImpersonatingAdmin] = useState<UserProfile | null>(() => {
-    try {
-      const stored = sessionStorage.getItem('gwcc_impersonating_admin');
-      return stored ? JSON.parse(stored) : null;
-    } catch {
-      return null;
-    }
-  });
-
-  // Sync users list to localStorage
-  useEffect(() => {
-    localStorage.setItem('gwcc_registered_users', JSON.stringify(usersList));
-  }, [usersList]);
-
-  // Sync active user to localStorage
-  useEffect(() => {
-    localStorage.setItem('gwcc_active_user', JSON.stringify(currentUser));
-  }, [currentUser]);
-
-  // Sync auth flag to localStorage
-  useEffect(() => {
-    localStorage.setItem('gwcc_auth_authenticated', isAuthenticated ? 'true' : 'false');
-  }, [isAuthenticated]);
-
-  // Handle Supabase session lifecycle and persistence
-  useEffect(() => {
-    let isMounted = true;
-    const client = getSupabaseClient();
-
-    if (!client) {
-      setIsAuthLoading(false);
-      return;
-    }
-
-    // 1. Initial active session check
-    client.auth.getSession().then(({ data: { session: initialSession }, error }) => {
-      if (!isMounted) return;
-
-      if (error) {
-        console.warn('Supabase getSession notice:', error.message);
-      }
-
-      if (initialSession?.user) {
-        setSession(initialSession);
-        setIsAuthenticated(true);
-        const profile = mapSupabaseUserToProfile(initialSession.user, usersList);
-        setCurrentUser(profile);
-        setUsersList((prev) => {
-          const index = prev.findIndex(
-            (u) =>
-              u.id === profile.id ||
-              (Boolean(u.email && profile.email) && u.email.toLowerCase() === profile.email.toLowerCase())
-          );
-          if (index >= 0) {
-            const next = [...prev];
-            next[index] = profile;
-            return next;
-          }
-          return [profile, ...prev];
-        });
-        localStorage.setItem('gwcc_auth_authenticated', 'true');
-        localStorage.setItem('gwcc_active_user', JSON.stringify(profile));
-      } else {
-        setSession(null);
-        // If Supabase is configured and has no session, check if explicitly signed out
-        const storedAuth = localStorage.getItem('gwcc_auth_authenticated');
-        if (storedAuth === 'false') {
-          setIsAuthenticated(false);
-        }
-      }
-      setIsAuthLoading(false);
-    });
-
-    // 2. Auth state subscription (login, logout, token refresh)
-    try {
-      const {
-        data: { subscription },
-      } = client.auth.onAuthStateChange(async (event, newSession) => {
-        if (!isMounted) return;
-
-        if (
-          (event === 'SIGNED_IN' ||
-            event === 'TOKEN_REFRESHED' ||
-            event === 'INITIAL_SESSION' ||
-            event === 'USER_UPDATED') &&
-          newSession?.user
-        ) {
-          setSession(newSession);
-          setIsAuthenticated(true);
-          const profile = mapSupabaseUserToProfile(newSession.user, usersList);
-          setCurrentUser(profile);
-          setUsersList((prev) => {
-            const index = prev.findIndex(
-              (u) =>
-                u.id === profile.id ||
-                (Boolean(u.email && profile.email) && u.email.toLowerCase() === profile.email.toLowerCase())
-            );
-            if (index >= 0) {
-              const next = [...prev];
-              next[index] = profile;
-              return next;
-            }
-            return [profile, ...prev];
-          });
-          localStorage.setItem('gwcc_auth_authenticated', 'true');
-          localStorage.setItem('gwcc_active_user', JSON.stringify(profile));
-        } else if (event === 'SIGNED_OUT') {
-          setSession(null);
-          setIsAuthenticated(false);
-          localStorage.setItem('gwcc_auth_authenticated', 'false');
-          localStorage.removeItem('gwcc_active_user');
-        }
-      });
-
-      return () => {
-        isMounted = false;
-        subscription.unsubscribe();
-      };
-    } catch (err) {
-      console.warn('Supabase auth state subscription error:', err);
-      setIsAuthLoading(false);
-    }
+  const resetIdentity = useCallback(() => {
+    generation.current++;setIsAuthLoading(false);
+    setSession(null); setCurrentUser(GUEST_PROFILE); setCurrentMember(null); setUsersList([]);
+    clearLegacyCredentials();
+    clearPrivateCache();
   }, []);
 
-  const isSimulating = impersonatingAdmin !== null;
+  const hydrate = useCallback(async (nextSession: Session | null) => {
+    const ticket = ++generation.current;
+    const client = getSupabaseClient();
+    if (!client || !nextSession) { resetIdentity(); setIsAuthLoading(false); return; }
+    setIsAuthLoading(true);
+    try {
+      const { data: { user }, error } = await client.auth.getUser(nextSession.access_token);
+      if (error || !user) throw new Error('Your session has expired. Please sign in again.');
+      const profile = await readVerifiedProfile(client, user);
+      if (ticket !== generation.current) return;
+      // A different identity must never inherit the previous user's cached records.
+      const previousId = sessionStorage.getItem('gwcc_cache_owner');
+      if (previousId && previousId !== profile.id) clearPrivateCache();
+      sessionStorage.setItem('gwcc_cache_owner', profile.id);
+      setSyncIdentity(profile.id,profile.role);
+      setSession(nextSession); setCurrentUser(profile);
+      const directoryRoles: UserRole[] = ['super_admin', 'senior_pastor', 'administrator'];
+      if (directoryRoles.includes(profile.role)) {
+        const { data, error: directoryError } = await client.from('profiles').select('*').order('first_name');
+        if (ticket !== generation.current) return;
+        setUsersList(!directoryError && data ? data : [profile]);
+      } else setUsersList([profile]);
+      if (profile.role === 'member') {
+        const { data, error: memberError } = await client.from('members').select('*').eq('auth_user_id', user.id).maybeSingle();
+        if (ticket !== generation.current) return;
+        setCurrentMember(!memberError && data ? data : null);
+      } else setCurrentMember(null);
+    } catch (error) {
+      if (ticket === generation.current) resetIdentity();
+      throw error;
+    } finally { if (ticket === generation.current) setIsAuthLoading(false); }
+  }, [resetIdentity]);
 
-  const startSimulation = (userId: string): boolean => {
-    // SECURITY GUARD: Only super_admin (or active super_admin simulation) can simulate
-    const effectiveAdmin = impersonatingAdmin || currentUser;
-    if (effectiveAdmin.role !== 'super_admin') {
-      console.warn('Unauthorized simulation blocked: only super_admin can simulate staff views.');
-      return false;
+  useEffect(() => {
+    clearLegacyCredentials();
+    const client = getSupabaseClient();
+    if (!client) { setIsAuthLoading(false); return; }
+    let alive = true;
+    client.auth.getSession().then(({ data, error }) => {
+      if (alive) hydrate(error ? null : data.session).catch(() => {});
+    }).catch(() => { if (alive) { resetIdentity(); setIsAuthLoading(false); } });
+    const { data: { subscription } } = client.auth.onAuthStateChange((_event, nextSession) => {
+      // Supabase holds an auth lock while dispatching this callback. Do DB work afterwards.
+      queueMicrotask(() => { if (alive) hydrate(nextSession).catch(() => {}); });
+    });
+    return () => { alive = false; generation.current++; subscription.unsubscribe(); };
+  }, [hydrate, resetIdentity]);
+
+  useEffect(() => {
+    if (!session || !currentUser.id) return;
+    const client = getSupabaseClient();
+    if (!client) return;
+    const refresh = () => hydrate(session).catch(() => {});
+    const timer = window.setInterval(refresh, 60000);
+    const onFocus = () => { if (document.visibilityState === 'visible') refresh(); };
+    document.addEventListener('visibilitychange', onFocus);
+    const channel = client.channel(`profile-${currentUser.id}`).on('postgres_changes',
+      { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${currentUser.id}` }, refresh).subscribe();
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onFocus); client.removeChannel(channel); };
+  }, [session?.access_token, currentUser.id, hydrate]);
+
+  const login = async (email: string, password?: string) => {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, message: 'Secure sign-in is not configured. Set the Supabase environment variables.' };
+    if (!email.trim() || !password) return { success: false, message: 'Enter your email address and password.' };
+    try {
+      const { data, error } = await client.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
+      if (error || !data.session) throw new Error(error?.message || 'Sign-in failed.');
+      await hydrate(data.session);
+      return { success: true, message: 'Signed in securely.' };
+    } catch (error) {
+      resetIdentity();
+      return { success: false, message: error instanceof Error ? error.message : 'Sign-in failed.' };
     }
-
-    const target = usersList.find((u) => u.id === userId);
-    if (!target) return false;
-
-    // SECURITY GUARD: Never allow simulating or escalating into a super_admin account!
-    if (target.role === 'super_admin') {
-      console.warn('Unauthorized simulation blocked: cannot simulate or escalate to super_admin.');
-      return false;
-    }
-
-    // Preserve original super admin session before switching
-    if (!impersonatingAdmin) {
-      setImpersonatingAdmin(currentUser);
-      sessionStorage.setItem('gwcc_impersonating_admin', JSON.stringify(currentUser));
-    }
-
-    setCurrentUser(target);
-    localStorage.setItem('gwcc_active_user', JSON.stringify(target));
-    return true;
   };
 
-  const exitSimulation = () => {
-    if (!impersonatingAdmin) return;
-    setCurrentUser(impersonatingAdmin);
-    localStorage.setItem('gwcc_active_user', JSON.stringify(impersonatingAdmin));
-    setImpersonatingAdmin(null);
-    sessionStorage.removeItem('gwcc_impersonating_admin');
+  const loginAsMember = async (identifier: string, password?: string) => {
+    if (!identifier.includes('@')) return { success: false, message: 'Sign in with your verified email address and password. Contact the church office if you need an account.' };
+    const result = await login(identifier, password);
+    return result;
   };
 
-  const setCurrentRole = (role: UserRole) => {
-    // SECURITY GUARD: Disallow arbitrary role switching by non-super-admins
-    const effectiveAdmin = impersonatingAdmin || currentUser;
-    if (effectiveAdmin.role !== 'super_admin') {
-      console.warn('Unauthorized role change blocked: user lacks super_admin privileges.');
-      return;
-    }
-    // SECURITY GUARD: Cannot simulate into super_admin role (use exitSimulation instead)
-    if (role === 'super_admin') {
-      console.warn('Unauthorized simulation blocked: cannot simulate into super_admin. Use exitSimulation() instead.');
-      return;
-    }
-    if (!impersonatingAdmin) {
-      setImpersonatingAdmin(currentUser);
-      sessionStorage.setItem('gwcc_impersonating_admin', JSON.stringify(currentUser));
-    }
-    setCurrentUser((prev) => ({
-      ...prev,
-      role,
-    }));
-  };
-
-  const switchUser = (userId: string) => {
-    // SECURITY GUARD: Only super_admin can switch/simulate user sessions
-    startSimulation(userId);
-  };
-
+  const register: AuthContextType['register'] = async () => ({ success: false, message: 'Staff access is invitation-only. Ask the church administrator to create your account.' });
   const refreshSession = useCallback(async () => {
     const client = getSupabaseClient();
     if (!client) return;
+    const { data, error } = await client.auth.refreshSession();
+    if (error) { resetIdentity(); return; }
+    await hydrate(data.session).catch(() => {});
+  }, [hydrate, resetIdentity]);
 
+  const createUser: AuthContextType['createUser'] = async (input) => {
     try {
-      const { data, error } = await client.auth.refreshSession();
-      if (!error && data.session) {
-        setSession(data.session);
-        setIsAuthenticated(true);
-      }
-    } catch (err) {
-      console.warn('Supabase session refresh note:', err);
-    }
-  }, []);
-
-  const login = async (email: string, password?: string): Promise<{ success: boolean; message: string }> => {
-    const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail) {
-      return { success: false, message: 'Please provide a valid email address.' };
-    }
-
-    const client = getSupabaseClient();
-    if (!client && !isDemoAuthEnabled()) {
-      return {
-        success: false,
-        message: 'Production auth is disabled. Configure a secure auth backend before enabling staff sign-in.'
-      };
-    }
-
-    // 1. Attempt Supabase Auth if client is configured
-    if (client && password) {
-      try {
-        const { data, error } = await client.auth.signInWithPassword({
-          email: cleanEmail,
-          password,
-        });
-
-        if (!error && data.user) {
-          setSession(data.session);
-          const profile = mapSupabaseUserToProfile(data.user, usersList);
-          setCurrentUser(profile);
-          setUsersList((prev) => {
-            const index = prev.findIndex(
-              (u) =>
-                u.id === profile.id ||
-                (Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail)
-            );
-            if (index >= 0) {
-              const next = [...prev];
-              next[index] = profile;
-              return next;
-            }
-            return [profile, ...prev];
-          });
-          setIsAuthenticated(true);
-          localStorage.setItem('gwcc_auth_authenticated', 'true');
-          localStorage.setItem('gwcc_active_user', JSON.stringify(profile));
-          return { success: true, message: `Welcome back, ${profile.first_name}! (Supabase Session Active)` };
-        }
-
-        if (error) {
-          const errMsg = String(error.message || '').toLowerCase();
-          const isApiKeyError =
-            errMsg.includes('api key') ||
-            errMsg.includes('apikey') ||
-            errMsg.includes('jwt') ||
-            errMsg.includes('unauthorized') ||
-            (error as any).status === 401 ||
-            (error as any).status === 403;
-
-          // If the cloud database key is rejected or offline, check if user exists in local staff directory
-          const staff = usersList.find(
-            (u) =>
-              (Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail) ||
-              (isElishaRichard(undefined, cleanEmail) && isElishaRichard(u))
-          );
-          if (staff) {
-            if (staff.is_active === false) {
-              return {
-                success: false,
-                message: 'This staff account has been deactivated. Please contact church administration.',
-              };
-            }
-            const effectiveStaff: UserProfile = isElishaRichard(staff, cleanEmail)
-              ? { ...staff, role: 'super_admin' as UserRole }
-              : staff;
-            setCurrentUser(effectiveStaff);
-            setIsAuthenticated(true);
-            localStorage.setItem('gwcc_auth_authenticated', 'true');
-            localStorage.setItem('gwcc_active_user', JSON.stringify(effectiveStaff));
-            return {
-              success: true,
-              message: isApiKeyError
-                ? `Welcome back, ${effectiveStaff.first_name}! (Logged in via Local Staff Directory. Note: Supabase API key is invalid/expired).`
-                : `Welcome back, ${effectiveStaff.first_name}!${effectiveStaff.role === 'super_admin' ? ' (Super Admin Access)' : ''}`,
-            };
-          }
-
-          if (isApiKeyError) {
-            return {
-              success: false,
-              message: 'Invalid Supabase API Key. The connected cloud database Anon Key is invalid or expired. You can clear the cloud key on this screen to log in using the offline local church database.',
-            };
-          }
-
-          return { success: false, message: error.message };
-        }
-      } catch (err: any) {
-        console.warn('Supabase sign in exception:', err);
-      }
-    }
-
-    // 2. Check local church staff accounts (offline / local directory)
-    if (!isDemoAuthEnabled()) {
-      return {
-        success: false,
-        message: 'Offline/local staff sign-in is disabled in production. Configure a secure auth provider.'
-      };
-    }
-
-    const staff = usersList.find(
-      (u) =>
-        (Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail) ||
-        (isElishaRichard(undefined, cleanEmail) && isElishaRichard(u))
-    );
-    if (staff) {
-      if (staff.is_active === false) {
-        return {
-          success: false,
-          message: 'This staff account has been deactivated. Please contact church administration.',
-        };
-      }
-      if (!password || password.trim().length < 4) {
-        return { success: false, message: 'Please provide a valid password.' };
-      }
-      const effectiveStaff: UserProfile = isElishaRichard(staff, cleanEmail)
-        ? { ...staff, role: 'super_admin' as UserRole }
-        : staff;
-      setCurrentUser(effectiveStaff);
-      setIsAuthenticated(true);
-      localStorage.setItem('gwcc_auth_authenticated', 'true');
-      localStorage.setItem('gwcc_active_user', JSON.stringify(effectiveStaff));
-      return { success: true, message: `Welcome back, ${effectiveStaff.first_name}!${effectiveStaff.role === 'super_admin' ? ' (Super Admin Access)' : ''}` };
-    }
-
-    return { success: false, message: 'Invalid staff email or password. Please check your credentials or register for an account.' };
+      const result = await apiRequest('/api/staff', { action: 'create', ...input });
+      if (result.user) setUsersList(prev => [result.user, ...prev.filter(u => u.id !== result.user.id)]);
+      return { success: true, message: result.message, user: result.user };
+    } catch (error) { return { success: false, message: String((error as Error).message) }; }
   };
-
-  const register = async (userData: {
-    email: string;
-    password?: string;
-    first_name: string;
-    last_name: string;
-    role: UserRole;
-    phone?: string;
-    department?: string;
-  }): Promise<{ success: boolean; message: string }> => {
-    const cleanEmail = (userData.email || '').trim().toLowerCase();
-
-    if (!isDemoAuthEnabled() && !getSupabaseClient()) {
-      return {
-        success: false,
-        message: 'Self-registration is disabled in production. Contact an administrator to create the staff account.'
-      };
-    }
-
-    // Check if email already exists locally
-    const exists = usersList.some((u) => Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail);
-    if (exists) {
-      return { success: false, message: 'An account with this email address already exists.' };
-    }
-
-    // Attempt Supabase Auth sign-up if configured
-    const client = getSupabaseClient();
-    if (client && userData.password) {
-      try {
-        const { data, error } = await client.auth.signUp({
-          email: cleanEmail,
-          password: userData.password,
-          options: {
-            data: {
-              first_name: userData.first_name.trim(),
-              last_name: userData.last_name.trim(),
-              role: userData.role,
-              phone: userData.phone?.trim(),
-              department: userData.department,
-            },
-          },
-        });
-
-        if (error) {
-          const errMsg = (error.message || '').toLowerCase();
-          const isApiKeyError =
-            errMsg.includes('api key') ||
-            errMsg.includes('apikey') ||
-            errMsg.includes('jwt');
-
-          if (errMsg.includes('already registered') || errMsg.includes('user already registered')) {
-            return { success: false, message: 'An account with this email address already exists. Please sign in.' };
-          }
-
-          if (!isApiKeyError) {
-            return {
-              success: false,
-              message: error.message || 'Unable to register this account. Please verify details or try signing in.',
-            };
-          }
-          console.warn('Supabase sign-up notice, falling back to local registration:', error.message);
-          // Fall through to local registration
-        } else if (data.user) {
-          const profile = mapSupabaseUserToProfile(data.user, usersList);
-          profile.first_name = userData.first_name.trim();
-          profile.last_name = userData.last_name.trim();
-          profile.role = userData.role;
-          profile.phone = userData.phone?.trim();
-          profile.department = userData.department;
-
-          setUsersList((prev) => [profile, ...prev]);
-          setCurrentUser(profile);
-
-          if (data.session) {
-            setSession(data.session);
-            setIsAuthenticated(true);
-            localStorage.setItem('gwcc_auth_authenticated', 'true');
-            localStorage.setItem('gwcc_active_user', JSON.stringify(profile));
-            return {
-              success: true,
-              message: `Account created and session authenticated for ${profile.first_name}!`,
-            };
-          } else {
-            setIsAuthenticated(true);
-            localStorage.setItem('gwcc_auth_authenticated', 'true');
-            localStorage.setItem('gwcc_active_user', JSON.stringify(profile));
-            return {
-              success: true,
-              message: `Account created for ${profile.first_name}! Check your inbox if confirmation was requested.`,
-            };
-          }
-        }
-      } catch (err: any) {
-        console.warn('Supabase sign up error:', err);
-        return { success: false, message: err?.message || 'Failed to complete cloud registration.' };
-      }
-    }
-
-    // Local / Offline fallback registration
-    const newUser: UserProfile = {
-      id: `usr-${Date.now()}`,
-      first_name: userData.first_name.trim(),
-      last_name: userData.last_name.trim(),
-      email: cleanEmail,
-      phone: userData.phone?.trim() || undefined,
-      department: userData.department,
-      role: userData.role,
-      is_active: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    setUsersList((prev) => [newUser, ...prev]);
-    setCurrentUser(newUser);
-    setIsAuthenticated(true);
-    localStorage.setItem('gwcc_auth_authenticated', 'true');
-    localStorage.setItem('gwcc_active_user', JSON.stringify(newUser));
-
-    return {
-      success: true,
-      message: `Account created for ${newUser.first_name} ${newUser.last_name} (${newUser.role.replace('_', ' ')})!`,
-    };
-  };
-
-  const createUser = async (userData: {
-    email?: string;
-    password?: string;
-    first_name: string;
-    last_name: string;
-    role: UserRole;
-    phone?: string;
-    department?: string;
-    job_title?: string;
-    employment_type?: 'full_time' | 'part_time' | 'volunteer' | 'contract';
-    avatar_url?: string;
-    has_login_account?: boolean;
-    member_id?: string;
-  }): Promise<{ success: boolean; message: string; user?: UserProfile }> => {
-    const hasLogin = userData.has_login_account !== false;
-    let cleanEmail = (userData.email || '').trim().toLowerCase();
-    if (!cleanEmail && !hasLogin) {
-      const sanitizedFirst = (userData.first_name || 'staff').toLowerCase().replace(/[^a-z0-9]/g, '');
-      const sanitizedLast = (userData.last_name || 'member').toLowerCase().replace(/[^a-z0-9]/g, '');
-      cleanEmail = `${sanitizedFirst}.${sanitizedLast}@directory.greaterworkscitychurch.org`;
-    }
-
-    if (hasLogin && !isDemoAuthEnabled() && !getSupabaseClient()) {
-      return {
-        success: false,
-        message: 'Staff account creation is disabled in production until a secure backend is configured.'
-      };
-    }
-
-    // Check if email already exists locally (if email is provided)
-    if (cleanEmail) {
-      const exists = usersList.some((u) => Boolean(u.email && cleanEmail) && u.email.toLowerCase() === cleanEmail);
-      if (exists) {
-        return { success: false, message: 'A staff record with this email address already exists.' };
-      }
-    }
-
-    const newUserId = `usr-${Date.now()}`;
-    const newUser: UserProfile = {
-      id: newUserId,
-      first_name: userData.first_name.trim(),
-      last_name: userData.last_name.trim(),
-      email: cleanEmail,
-      phone: userData.phone?.trim() || undefined,
-      department: userData.department || 'Church Administration',
-      job_title: userData.job_title?.trim() || undefined,
-      employment_type: userData.employment_type,
-      avatar_url: userData.avatar_url || undefined,
-      role: userData.role,
-      has_login_account: hasLogin,
-      member_id: userData.member_id || undefined,
-      is_active: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    // Add to staff users directory without overriding active admin session
-    setUsersList((prev) => [newUser, ...prev]);
-
-    // Store local staff password for offline login capability if login is enabled
-    if (hasLogin && userData.password && cleanEmail) {
-      try {
-        const storedPass = localStorage.getItem('gwcc_staff_passwords');
-        const passMap = storedPass ? JSON.parse(storedPass) : {};
-        passMap[cleanEmail] = userData.password;
-        localStorage.setItem('gwcc_staff_passwords', JSON.stringify(passMap));
-      } catch {}
-    }
-
-    // Cloud sync to Supabase (profiles table and auth if available)
-    const client = getSupabaseClient();
-    if (client) {
-      (async () => {
-        try {
-          await client.from('profiles').insert({
-            id: newUser.id,
-            first_name: newUser.first_name,
-            last_name: newUser.last_name,
-            email: newUser.email,
-            phone: newUser.phone,
-            department: newUser.department,
-            job_title: newUser.job_title,
-            employment_type: newUser.employment_type,
-            avatar_url: newUser.avatar_url,
-            role: newUser.role,
-            is_active: true,
-            created_at: newUser.created_at,
-            updated_at: newUser.updated_at,
-          });
-        } catch (err) {
-          console.warn('Supabase profiles insert notice:', err);
-        }
-
-        if (hasLogin && userData.password && cleanEmail) {
-          try {
-            await client.auth.signUp({
-              email: cleanEmail,
-              password: userData.password,
-              options: {
-                data: {
-                  first_name: newUser.first_name,
-                  last_name: newUser.last_name,
-                  role: newUser.role,
-                  phone: newUser.phone,
-                  department: newUser.department,
-                },
-              },
-            });
-          } catch (err) {
-            console.warn('Supabase auth sign up notice:', err);
-          }
-        }
-      })();
-    }
-
-    return {
-      success: true,
-      message: hasLogin
-        ? `Staff account created for ${newUser.first_name} ${newUser.last_name} with login credentials!`
-        : `Staff directory profile created for ${newUser.first_name} ${newUser.last_name} (No login account).`,
-      user: newUser,
-    };
-  };
-
-  const resetPassword = async (email: string): Promise<{ success: boolean; message: string }> => {
-    const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail.includes('@')) {
-      return { success: false, message: 'Please provide a valid email address.' };
-    }
-
-    const client = getSupabaseClient();
-    if (client) {
-      try {
-        const { error } = await client.auth.resetPasswordForEmail(cleanEmail, {
-          redirectTo: `${window.location.origin}/login`,
-        });
-        if (error) {
-          return { success: false, message: error.message };
-        }
-        return {
-          success: true,
-          message: `Official password reset link sent to ${cleanEmail}. Check your inbox.`,
-        };
-      } catch (err: any) {
-        console.warn('Supabase password reset note:', err);
-      }
-    }
-
-    return {
-      success: true,
-      message: `Password reset instructions have been dispatched to ${cleanEmail}. Please check your inbox or contact church administration.`,
-    };
-  };
-
-  const setTemporaryPassword = async (
-    email: string,
-    tempPass: string
-  ): Promise<{ success: boolean; message: string }> => {
-    const cleanEmail = email.trim().toLowerCase();
-    const trimmed = tempPass.trim();
-
-    if (!cleanEmail || !trimmed) {
-      return { success: false, message: 'Email and temporary password are required.' };
-    }
-
-    // 1. Immediately store in local staff credentials store so the user can log in right away
+  const updateUser: AuthContextType['updateUser'] = async (id, updates) => {
     try {
-      const storedPass = localStorage.getItem('gwcc_staff_passwords');
-      const passMap = storedPass ? JSON.parse(storedPass) : {};
-      passMap[cleanEmail] = trimmed;
-      localStorage.setItem('gwcc_staff_passwords', JSON.stringify(passMap));
-    } catch (err) {
-      console.warn('Local staff password update note:', err);
-    }
-
-    // 2. If Supabase client is connected, try to update in auth service
+      const result = await apiRequest('/api/staff', { action: 'update', id, updates });
+      setUsersList(prev => prev.map(u => u.id === id ? result.user : u));
+      if (id === currentUser.id) await refreshSession();
+      return { success: true, message: 'Staff record updated.' };
+    } catch (error) { return { success: false, message: (error as Error).message }; }
+  };
+  const toggleUserStatus: AuthContextType['toggleUserStatus'] = async id => {
+    const target = usersList.find(u => u.id === id);
+    if (!target) return { success: false, message: 'Staff account not found.' };
+    return updateUser(id, { is_active: !target.is_active });
+  };
+  const deleteUser: AuthContextType['deleteUser'] = async id => {
+    try { await apiRequest('/api/staff', { action: 'archive', id }); setUsersList(prev => prev.filter(u => u.id !== id)); return true; }
+    catch { return false; }
+  };
+  const resetPassword = async (email: string) => {
     const client = getSupabaseClient();
-    if (client) {
-      try {
-        // If current session is the user, updateUser works directly
-        if (currentUser?.email?.toLowerCase() === cleanEmail) {
-          await client.auth.updateUser({ password: trimmed });
-        }
-      } catch (err: any) {
-        console.warn('Supabase auth password update notice:', err);
-      }
-    }
-
-    return {
-      success: true,
-      message: `Temporary password for ${cleanEmail} has been set to "${trimmed}". Staff member can now log in immediately with this credential.`,
-    };
+    if (!client) return { success: false, message: 'Secure sign-in is not configured.' };
+    const { error } = await client.auth.resetPasswordForEmail(email.trim(), { redirectTo: `${window.location.origin}/auth/password` });
+    return { success: !error, message: error?.message || 'If this account exists, password reset instructions have been requested.' };
   };
-
-  const changePassword = async (
-    newPassword: string,
-    _oldPassword?: string
-  ): Promise<{ success: boolean; message: string }> => {
-    const trimmed = (newPassword || '').trim();
-    if (trimmed.length < 6) {
-      return { success: false, message: 'New password must contain at least 6 characters.' };
-    }
-
+  const setTemporaryPassword = async (email: string, password: string) => {
+    try { await apiRequest('/api/staff', { action: 'reset_password', email, password }); return { success: true, message: 'The temporary password was set in the authentication service. Share it privately with the staff member.' }; }
+    catch (error) { return { success: false, message: (error as Error).message }; }
+  };
+  const changePassword = async (password: string,oldPassword?:string) => {
     const client = getSupabaseClient();
-    if (client && session) {
-      try {
-        const { error } = await client.auth.updateUser({
-          password: trimmed,
-        });
-        if (error) {
-          return { success: false, message: error.message };
-        }
-      } catch (err: any) {
-        console.warn('Supabase password change error:', err);
-      }
-    }
-
-    // Save in local staff passwords store for offline/direct staff credentials
-    if (currentUser?.email) {
-      try {
-        const cleanEmail = currentUser.email.trim().toLowerCase();
-        const storedPass = localStorage.getItem('gwcc_staff_passwords');
-        const passMap = storedPass ? JSON.parse(storedPass) : {};
-        passMap[cleanEmail] = trimmed;
-        localStorage.setItem('gwcc_staff_passwords', JSON.stringify(passMap));
-      } catch (e) {
-        console.warn('Error saving local staff password:', e);
-      }
-    }
-
-    return {
-      success: true,
-      message: 'Password successfully updated! Your new password is now active.',
-    };
+    if (!client || !session) return { success: false, message: 'Please sign in again.' };
+    if (password.length < 12) return { success: false, message: 'Use at least 12 characters.' };
+    if(oldPassword){const {error}=await client.auth.signInWithPassword({email:currentUser.email,password:oldPassword});if(error)return {success:false,message:'Your current password was not accepted.'};}
+    const { error } = await client.auth.updateUser({ password });
+    return { success: !error, message: error?.message || 'Password updated securely.' };
   };
-
-  const loginAsMember = async (
-    identifier: string,
-    pinOrPassword?: string
-  ): Promise<{ success: boolean; message: string; member?: Member }> => {
-    const clean = identifier.trim().toLowerCase();
-    if (!clean) {
-      return { success: false, message: 'Please provide your Member ID, Phone Number, or Email address.' };
-    }
-
-    let allMembers: Member[] = [];
-    try {
-      const stored = localStorage.getItem('gwcc_members');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          allMembers = parsed;
-        }
-      }
-    } catch {}
-
-    if (allMembers.length === 0) {
-      allMembers = sampleMembers;
-    }
-
-    const cleanDigits = clean.replace(/[^0-9]/g, '');
-    const cleanAlphaNum = clean.replace(/[^a-z0-9]/g, '');
-
-    // Ghanaian phone normalization helper (e.g. +233 24 123 4567, 024 123 4567, 241234567)
-    const normalizeGhanaPhone = (num: string): string => {
-      const digits = num.replace(/[^0-9]/g, '');
-      if (digits.startsWith('233') && digits.length >= 12) {
-        return digits.slice(3); // e.g. 233241234567 -> 241234567
-      }
-      if (digits.startsWith('0') && digits.length >= 10) {
-        return digits.slice(1); // e.g. 0241234567 -> 241234567
-      }
-      return digits;
-    };
-    const cleanPhoneCore = normalizeGhanaPhone(clean);
-
-    let member = allMembers.find((m) => {
-      const idMatch = (m.id || '').toLowerCase() === clean;
-      const memIdClean = (m.member_id || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      const memberIdMatch =
-        (m.member_id || '').toLowerCase() === clean ||
-        (cleanAlphaNum.length >= 4 && memIdClean.includes(cleanAlphaNum));
-      const titheMatch = m.tithe_number ? m.tithe_number.toLowerCase() === clean : false;
-      const emailMatch = m.email ? m.email.toLowerCase() === clean : false;
-      const phoneDigits = (m.phone || '').replace(/[^0-9]/g, '');
-      const memberPhoneCore = normalizeGhanaPhone(m.phone || '');
-
-      const phoneMatch =
-        (cleanPhoneCore.length >= 4 && memberPhoneCore.includes(cleanPhoneCore)) ||
-        (cleanDigits.length >= 4 && phoneDigits.endsWith(cleanDigits)) ||
-        (m.phone ? m.phone.toLowerCase() === clean : false);
-
-      const fullName = `${m.first_name || ''} ${m.last_name || ''}`.toLowerCase();
-      const nameMatch = fullName === clean;
-      return idMatch || memberIdMatch || titheMatch || emailMatch || phoneMatch || nameMatch;
-    });
-
-    // Cloud Supabase lookup fallback if member not yet cached locally
-    if (!member) {
-      const client = getSupabaseClient();
-      if (client) {
-        try {
-          const { data: remoteMembers } = await client
-            .from('members')
-            .select('*')
-            .or(`member_id.ilike.%${clean}%,phone.ilike.%${cleanDigits || clean}%,email.ilike.%${clean}%`)
-            .limit(1);
-          if (remoteMembers && remoteMembers.length > 0) {
-            member = remoteMembers[0] as Member;
-          }
-        } catch (remoteErr) {
-          console.warn('Supabase remote member lookup notice:', remoteErr);
-        }
-      }
-    }
-
-    if (!member) {
-      return {
-        success: false,
-        message: 'No matching church member record was found for the details entered. Please verify your Member ID (e.g. GWCC-000002), registered phone number, or email.',
-      };
-    }
-
-    const requiresCloudMemberAuth = import.meta.env.PROD && isSupabaseConfigured();
-    const providedPin = (pinOrPassword || '').trim();
-
-    if (requiresCloudMemberAuth) {
-      if (!member.email) {
-        return {
-          success: false,
-          message: 'A verified email address is required for secure member sign-in. Please contact the church office to update your member record.',
-        };
-      }
-      if (!providedPin) {
-        return { success: false, message: 'Enter your Supabase member account password.' };
-      }
-
-      const client = getSupabaseClient();
-      if (!client) {
-        return { success: false, message: 'Secure member sign-in is unavailable. Please try again later.' };
-      }
-
-      try {
-        const { data, error } = await client.auth.signInWithPassword({
-          email: member.email.trim(),
-          password: providedPin,
-        });
-        if (error) {
-          return {
-            success: false,
-            message: 'Member account sign-in failed. Check your email/password, or contact the church office to activate your Supabase member account.',
-          };
-        }
-        if (!data.session || !data.user.email_confirmed_at) {
-          await client.auth.signOut();
-          return {
-            success: false,
-            message: 'Verify your member email address before signing in. Check your inbox or contact the church office.',
-          };
-        }
-      } catch (error) {
-        console.error('Supabase member sign-in failed:', error);
-        return { success: false, message: 'Secure member sign-in failed. Please try again later.' };
-      }
-    } else {
-      try {
-        const pinsMap = readMemberPinMap();
-        const expectedPin = pinsMap[member.id] || pinsMap[member.member_id];
-        const memberPhoneDigits = (member.phone || '').replace(/[^0-9]/g, '');
-        const phoneSuffix = memberPhoneDigits.slice(-4);
-
-        if (!providedPin) {
-          return {
-            success: false,
-            message: 'PIN or Password is required. For first-time login, your default PIN is the last 4 digits of your registered phone number.',
-          };
-        }
-
-        const providedPinHash = await hashMemberPin(providedPin);
-
-        if (expectedPin) {
-          const normalizedStoredPin = expectedPin.trim();
-          const matchesExpected = normalizedStoredPin === providedPin || normalizedStoredPin === providedPinHash;
-          const matchesSuffixRecovery = phoneSuffix.length === 4 && providedPin === phoneSuffix;
-
-          if (!matchesExpected && !matchesSuffixRecovery) {
-            return {
-              success: false,
-              message: 'Incorrect PIN or password. Please enter your 4-digit PIN (or last 4 digits of your registered phone), or contact the church office.',
-            };
-          }
-
-          if (normalizedStoredPin !== providedPinHash && normalizedStoredPin !== providedPin) {
-            pinsMap[member.id] = providedPinHash;
-            pinsMap[member.member_id] = providedPinHash;
-            persistMemberPinMap(pinsMap);
-          }
-        } else {
-          const defaultPin = phoneSuffix.length === 4 ? phoneSuffix : '1234';
-          const matchesDefault = providedPin === defaultPin;
-          const isValidNewPin = /^\d{4,8}$/.test(providedPin);
-
-          if (!matchesDefault && !isValidNewPin) {
-            return {
-              success: false,
-              message: `First-time sign-in requires your 4-digit PIN. Your default PIN is the last 4 digits of your phone (${defaultPin}).`,
-            };
-          }
-
-          pinsMap[member.id] = providedPinHash;
-          pinsMap[member.member_id] = providedPinHash;
-          persistMemberPinMap(pinsMap);
-        }
-      } catch (e) {
-        console.warn('Member PIN verification error:', e);
-      }
-    }
-
-    const memberProfile: UserProfile = {
-      id: `usr-mem-${member.id}`,
-      first_name: member.first_name,
-      last_name: member.last_name,
-      email: member.email || `${(member.member_id || 'member').toLowerCase()}@member.gwcc.org`,
-      phone: member.phone,
-      role: 'member',
-      member_id: member.id,
-      avatar_url: member.profile_photo_url,
-      is_active: true,
-      created_at: member.created_at,
-      updated_at: member.updated_at,
-    };
-
-    setCurrentMember(member);
-    setCurrentUser(memberProfile);
-    setIsAuthenticated(true);
-    localStorage.setItem('gwcc_auth_authenticated', 'true');
-    localStorage.setItem('gwcc_auth_role', 'member');
-    localStorage.setItem('gwcc_active_member_id', member.id);
-    localStorage.setItem('gwcc_active_user', JSON.stringify(memberProfile));
-
-    return {
-      success: true,
-      message: `Welcome, ${member.first_name} ${member.last_name}! Member Portal access granted.`,
-      member,
-    };
-  };
-
-  const setPortalMember = (member: Member | null) => {
-    setCurrentMember(member);
-    if (member) {
-      localStorage.setItem('gwcc_active_member_id', member.id);
-      if (currentUser.role === 'member') {
-        const profile: UserProfile = {
-          ...currentUser,
-          first_name: member.first_name,
-          last_name: member.last_name,
-          email: member.email || currentUser.email,
-          phone: member.phone,
-          member_id: member.id,
-          avatar_url: member.profile_photo_url,
-        };
-        setCurrentUser(profile);
-        localStorage.setItem('gwcc_active_user', JSON.stringify(profile));
-      }
-    } else {
-      localStorage.removeItem('gwcc_active_member_id');
-    }
-  };
-
-  const quickLoginAs = (user: UserProfile) => {
-    const effectiveUser: UserProfile = isElishaRichard(user)
-      ? { ...user, role: 'super_admin' as UserRole }
-      : user;
-    setCurrentUser(effectiveUser);
-    setIsAuthenticated(true);
-    localStorage.setItem('gwcc_auth_authenticated', 'true');
-    localStorage.setItem('gwcc_active_user', JSON.stringify(effectiveUser));
-  };
-
   const logout = async () => {
+    generation.current++;
     const client = getSupabaseClient();
-    if (client) {
-      try {
-        await client.auth.signOut();
-      } catch (err) {
-        console.warn('Supabase sign out notice:', err);
-      }
-    }
-    setSession(null);
-    setIsAuthenticated(false);
-    setCurrentMember(null);
-    setImpersonatingAdmin(null);
-    sessionStorage.removeItem('gwcc_impersonating_admin');
-    localStorage.setItem('gwcc_auth_authenticated', 'false');
-    localStorage.removeItem('gwcc_active_user');
-    localStorage.removeItem('gwcc_active_member_id');
-    localStorage.removeItem('gwcc_auth_role');
+    resetIdentity();
+    // Local identity is cleared even if the network is unavailable.
+    if (client) await client.auth.signOut({ scope: 'local' }).catch(() => {});
   };
-
-  const canAccess = (module: string): boolean => {
-    if (isElishaRichard(currentUser) || currentUser.role === 'super_admin') {
-      return true;
-    }
-    const allowed = ROLE_PERMISSIONS[currentUser.role] || [];
-    return allowed.includes(module);
+  const canAccess = (module: string) => isAuthenticated && (ROLE_PERMISSIONS[currentUser.role] || []).includes(module);
+  const hasRole = (roles: UserRole[]) => isAuthenticated && (currentUser.role === 'super_admin' || roles.includes(currentUser.role));
+  const setPortalMember = (member: Member | null) => {
+    if (!member) { setCurrentMember(null); return; }
+    if (member.auth_user_id === currentUser.id || hasRole(['senior_pastor', 'administrator'])) setCurrentMember(member);
   };
-
-  const hasRole = (roles: UserRole[]): boolean => {
-    if (isElishaRichard(currentUser) || currentUser.role === 'super_admin') {
-      return true;
-    }
-    return roles.includes(currentUser.role);
+  const contextValue: AuthContextType = {
+    currentUser, currentRole: currentUser.role, availableUsers: usersList, isAuthenticated, session, isAuthLoading,
+    currentMember, isMemberPortalUser: currentUser.role === 'member', login, loginAsMember, register, createUser,
+    updateUser, deleteUser, toggleUserStatus, resetPassword, setTemporaryPassword, changePassword, logout, refreshSession,
+    setPortalMember, canAccess, hasRole,
+    // Identity simulation is intentionally unavailable for a real authenticated session.
+    isSimulating: false, impersonatingAdmin: null, startSimulation: () => false, exitSimulation: () => {},
+    setCurrentRole: () => {}, switchUser: () => {}, quickLoginAs: () => {},
   };
-
-  const isMemberPortalUser = currentUser.role === 'member' || currentMember !== null;
-
-  const updateUser = (userId: string, updates: Partial<UserProfile>) => {
-    const caller = impersonatingAdmin || currentUser;
-    const isCallerSuperAdmin = caller.role === 'super_admin' || isElishaRichard(caller);
-    const isCallerAdmin = isCallerSuperAdmin || caller.role === 'administrator';
-
-    if (!isCallerAdmin) {
-      console.warn('Unauthorized updateUser: user lacks administrative permissions.');
-      return;
-    }
-
-    setUsersList((prev) => {
-      const index = prev.findIndex((u) => u.id === userId);
-      if (index === -1) return prev;
-      const targetUser = prev[index];
-      const isTargetElisha = isElishaRichard(targetUser);
-
-      // SECURITY GUARD: Only super_admin can change roles, and cannot escalate non-admins without super_admin
-      let allowedRole = targetUser.role;
-      if (updates.role && updates.role !== targetUser.role) {
-        if (!isCallerSuperAdmin) {
-          console.warn('Unauthorized role change blocked: only super_admin can modify staff roles.');
-        } else if (isTargetElisha) {
-          allowedRole = 'super_admin';
-        } else if (targetUser.role === 'super_admin' && updates.role !== 'super_admin') {
-          // Check if this would leave zero active super admins
-          const otherActiveSuperAdmins = prev.filter(
-            (u) => u.id !== userId && u.role === 'super_admin' && u.is_active
-          );
-          if (otherActiveSuperAdmins.length === 0) {
-            console.warn('Action blocked: Cannot demote the sole active Super Administrator.');
-            allowedRole = 'super_admin';
-          } else {
-            allowedRole = updates.role;
-          }
-        } else {
-          allowedRole = updates.role;
-        }
-      }
-
-      const updatedUser: UserProfile = {
-        ...targetUser,
-        ...updates,
-        role: allowedRole,
-        updated_at: new Date().toISOString(),
-      };
-      const next = [...prev];
-      next[index] = updatedUser;
-      if (currentUser.id === userId) {
-        setCurrentUser(updatedUser);
-        localStorage.setItem('gwcc_active_user', JSON.stringify(updatedUser));
-      }
-      return next;
-    });
-
-    // Sync to Supabase profiles table if available
-    const client = getSupabaseClient();
-    if (client) {
-      (async () => {
-        try {
-          const { error } = await client
-            .from('profiles')
-            .update({
-              ...updates,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', userId);
-          if (error) console.warn('Supabase profile update note:', error.message);
-        } catch {
-          // Ignore offline/network exceptions
-        }
-      })();
-    }
-  };
-
-  const deleteUser = (userId: string): boolean => {
-    const caller = impersonatingAdmin || currentUser;
-    const isCallerSuperAdmin = caller.role === 'super_admin' || isElishaRichard(caller);
-
-    // SECURITY GUARD: Only super_admin can remove staff accounts
-    if (!isCallerSuperAdmin) {
-      console.warn('Unauthorized deleteUser: only super_admin can delete staff accounts.');
-      return false;
-    }
-
-    if (currentUser.id === userId) {
-      return false; // Prevent deleting active logged-in user
-    }
-
-    const targetUser = usersList.find((u) => u.id === userId);
-    if (!targetUser) return false;
-
-    // SECURITY GUARD: Never delete Prophet Elisha or super_admin accounts
-    if (isElishaRichard(targetUser) || targetUser.role === 'super_admin') {
-      console.warn('Protected account: root super_admin accounts cannot be deleted.');
-      return false;
-    }
-
-    setUsersList((prev) => prev.filter((u) => u.id !== userId));
-
-    const client = getSupabaseClient();
-    if (client) {
-      (async () => {
-        try {
-          const { error } = await client
-            .from('profiles')
-            .delete()
-            .eq('id', userId);
-          if (error) console.warn('Supabase profile delete note:', error.message);
-        } catch {
-          // Ignore offline/network exceptions
-        }
-      })();
-    }
-    return true;
-  };
-
-  const toggleUserStatus = (userId: string) => {
-    setUsersList((prev) => {
-      const index = prev.findIndex((u) => u.id === userId);
-      if (index === -1) return prev;
-      const targetUser = prev[index];
-
-      // SECURITY GUARD: Cannot suspend root senior pastor
-      if (isElishaRichard(targetUser) && targetUser.is_active) {
-        console.warn('Protected account: root senior pastor cannot be suspended.');
-        return prev;
-      }
-
-      // SECURITY GUARD: Cannot suspend the last active super_admin
-      if (targetUser.role === 'super_admin' && targetUser.is_active) {
-        const otherActiveSuperAdmins = prev.filter(
-          (u) => u.id !== userId && u.role === 'super_admin' && u.is_active
-        );
-        if (otherActiveSuperAdmins.length === 0) {
-          console.warn('Action blocked: Cannot suspend the last active Super Administrator.');
-          return prev;
-        }
-      }
-
-      const newActive = !targetUser.is_active;
-      const updatedUser: UserProfile = {
-        ...targetUser,
-        is_active: newActive,
-        updated_at: new Date().toISOString(),
-      };
-      const next = [...prev];
-      next[index] = updatedUser;
-      if (currentUser.id === userId) {
-        setCurrentUser(updatedUser);
-        localStorage.setItem('gwcc_active_user', JSON.stringify(updatedUser));
-      }
-      return next;
-    });
-  };
-
-  const contextValue = React.useMemo<AuthContextType>(
-    () => ({
-      currentUser,
-      currentRole: currentUser.role,
-      setCurrentRole,
-      availableUsers: usersList,
-      switchUser,
-      isSimulating,
-      impersonatingAdmin,
-      startSimulation,
-      exitSimulation,
-      canAccess,
-      hasRole,
-      isAuthenticated,
-      session,
-      isAuthLoading,
-      currentMember,
-      isMemberPortalUser,
-      login,
-      loginAsMember,
-      setPortalMember,
-      register,
-      createUser,
-      resetPassword,
-      setTemporaryPassword,
-      changePassword,
-      quickLoginAs,
-      logout,
-      refreshSession,
-      updateUser,
-      deleteUser,
-      toggleUserStatus,
-    }),
-    [currentUser, usersList, isAuthenticated, session, isAuthLoading, currentMember, isMemberPortalUser, refreshSession]
-  );
-
-  return (
-    <AuthContext.Provider value={contextValue}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>;
 };
 
-export const useAuth = () => {
+export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
-};
+}

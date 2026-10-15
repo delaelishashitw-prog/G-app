@@ -1,3 +1,4 @@
+import { isActiveTransaction } from '../lib/ledgerUtils';
 import React from 'react';
 import {
   Users,
@@ -29,7 +30,8 @@ export const DashboardSummary: React.FC<DashboardSummaryProps> = ({
   onOpenQuickAction,
 }) => {
   const navigate = useNavigate();
-  const { members, visitors, attendance, headcounts, services, giving, pledges, settings } = useChurchData();
+  const { members, visitors, attendance, headcounts, services, giving:allGiving, pledges, settings } = useChurchData();
+  const giving=allGiving.filter(isActiveTransaction);
 
   const handleNavigate = (path: string) => {
     if (onNavigateTab) {

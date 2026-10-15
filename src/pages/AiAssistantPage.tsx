@@ -1,3 +1,4 @@
+import { authenticatedFetch } from '../lib/apiClient';
 import React, { useState } from 'react';
 import {
   Sparkles,
@@ -135,7 +136,7 @@ export const AiAssistantPage: React.FC = () => {
         ministries: ministries.map((m) => m.name),
       };
 
-      const response = await fetch('/api/ai/assistant', {
+      const response = await authenticatedFetch('/api/ai/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

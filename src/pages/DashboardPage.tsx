@@ -1,3 +1,4 @@
+import { isActiveTransaction } from '../lib/ledgerUtils';
 import React, { useState } from 'react';
 import {
   Users,
@@ -68,7 +69,7 @@ export const DashboardPage: React.FC = () => {
     visitors,
     attendance,
     headcounts,
-    giving,
+    giving:allGiving,
     pledges,
     events,
     pastoralCare,
@@ -79,6 +80,7 @@ export const DashboardPage: React.FC = () => {
     lastRefreshedAt,
     refreshData,
   } = useChurchData();
+  const giving=allGiving.filter(isActiveTransaction);
 
   const handleRefresh = async () => {
     const res = await refreshData();

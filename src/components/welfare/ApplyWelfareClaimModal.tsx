@@ -1,3 +1,4 @@
+import { getSupabaseClient } from '../../lib/supabase';
 import React, { useState } from 'react';
 import { X, HeartHandshake, Check, AlertCircle, FileText, User, Users, Globe, Phone, MapPin } from 'lucide-react';
 import { useChurchData } from '../../contexts/ChurchDataContext';
@@ -16,8 +17,9 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
   onClose,
   preselectedMemberId,
 }) => {
-  const { members, submitWelfareClaim, settings } = useChurchData();
-  const { currentUser } = useAuth();
+  const { members, submitWelfareClaim, settings, refreshData } = useChurchData();
+  const { currentUser,currentMember } = useAuth();
+  const [busy,setBusy]=useState(false);
   const { success, error: toastError } = useToast();
 
   const activeMembers = members.filter((m) => !m.is_archived);
@@ -88,7 +90,7 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     let beneficiaryId = '';
@@ -115,7 +117,7 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
     }
 
     const numAmount = parseFloat(amountRequested);
-    if (isNaN(numAmount) || numAmount <= 0) {
+    if (!Number.isFinite(numAmount) || numAmount <= 0) {
       toastError('Validation Error', 'Please provide a valid requested amount greater than GH₵ 0.00');
       return;
     }
@@ -125,7 +127,7 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
       return;
     }
 
-    submitWelfareClaim({
+    const request={
       beneficiary_type: beneficiaryType,
       member_id: beneficiaryId,
       member_name: beneficiaryName,
@@ -141,13 +143,24 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
       confidential_pastoral_notes: confidentialNotes.trim() || undefined,
       date_submitted: new Date().toISOString().split('T')[0],
       supporting_documents: supportingDocs.trim() || undefined,
-    });
+    };
+    setBusy(true);
+    try {
+      if(currentUser.role==='member'){
+        if(!currentMember || beneficiaryType!=='member' || beneficiaryId!==currentMember.id)throw new Error('Member applications must be for your own account.');
+        const client=getSupabaseClient();if(!client)throw new Error('Secure sign-in is unavailable.');
+        const {error}=await client.rpc('gwcc_member_action',{p_action:'welfare',p_id:currentMember.id,p_data:request});
+        if(error)throw error;
+        await refreshData();
+      }else {submitWelfareClaim(request as any);}
+
 
     success(
       'Benevolence Case Submitted',
       `Application logged for ${beneficiaryName} (GH₵ ${numAmount.toFixed(2)})`
     );
     onClose();
+    }catch(error){toastError('Application not saved',(error as Error).message);}finally{setBusy(false);}
   };
 
   return (
@@ -408,7 +421,7 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
               Cancel
             </button>
             <button
-              type="submit"
+              type="submit" disabled={busy}
               className="px-5 py-2.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition shadow-sm flex items-center gap-1.5"
             >
               <Check className="w-4 h-4" />

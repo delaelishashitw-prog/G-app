@@ -1,3 +1,4 @@
+import { isActiveTransaction } from '../lib/ledgerUtils';
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   CalendarDays,
@@ -79,7 +80,7 @@ export const ServicesPage: React.FC = () => {
     services,
     attendance,
     headcounts,
-    giving,
+    giving:allGiving,
     members,
     settings,
     createService,
@@ -92,6 +93,7 @@ export const ServicesPage: React.FC = () => {
     batchAddOrUpdateRosterAssignments,
     rosterConflicts,
   } = useChurchData();
+  const giving=useMemo(()=>allGiving.filter(isActiveTransaction),[allGiving]);
   const { success, info, warning } = useToast();
   const { canAccess, currentRole } = useAuth();
   const navigate = useNavigate();

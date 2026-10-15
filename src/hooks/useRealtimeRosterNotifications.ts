@@ -1,3 +1,4 @@
+import { getSupabaseClient } from '../lib/supabase';
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 export interface RosterNotification {
@@ -61,267 +62,47 @@ export interface UseRealtimeRosterOptions {
   onNotificationReceived?: (notification: RosterNotification) => void;
 }
 
-export function useRealtimeRosterNotifications({
-  memberId,
-  memberName,
-  enabled = true,
-  onNotificationReceived,
-}: UseRealtimeRosterOptions) {
-  const [status, setStatus] = useState<ConnectionStatus>('disconnected');
-  const [notifications, setNotifications] = useState<RosterNotification[]>([]);
-  const [latestAlert, setLatestAlert] = useState<RosterNotification | null>(null);
-
-  const socketRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<any>(null);
-  const reconnectAttemptsRef = useRef(0);
-  const pingIntervalRef = useRef<any>(null);
-
-  const unreadCount = notifications.filter((n) => !n.read).length;
-
-  // Fetch initial notifications from REST endpoint on mount/member change
-  const fetchRecentNotifications = useCallback(async () => {
-    if (!memberId) return;
-    try {
-      const res = await fetch(`/api/roster/notifications?memberId=${encodeURIComponent(memberId)}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.notifications)) {
-          setNotifications(data.notifications.reverse());
-        }
-      }
-    } catch {
-      // Ignore network errors
-    }
-  }, [memberId]);
-
-  useEffect(() => {
-    fetchRecentNotifications();
-  }, [fetchRecentNotifications]);
-
-  // Connect WebSocket
-  const connect = useCallback(() => {
-    if (!enabled || !memberId) return;
-
-    if (socketRef.current) {
-      if (
-        socketRef.current.readyState === WebSocket.OPEN ||
-        socketRef.current.readyState === WebSocket.CONNECTING
-      ) {
-        return;
-      }
-      try {
-        socketRef.current.close();
-      } catch {}
-    }
-
-    setStatus('connecting');
-
-    try {
-      const isHttps = window.location.protocol === 'https:';
-      const wsProtocol = isHttps ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
-
-      const ws = new WebSocket(wsUrl);
-      socketRef.current = ws;
-
-      ws.onopen = () => {
-        setStatus('connected');
-        reconnectAttemptsRef.current = 0;
-
-        // Subscribe with member credentials
-        ws.send(
-          JSON.stringify({
-            type: 'subscribe',
-            memberId,
-            memberName,
-          })
-        );
-
-        // Keep-alive heartbeat ping every 25s
-        if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
-        pingIntervalRef.current = setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'ping' }));
-          }
-        }, 25000);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-
-          if (data.type === 'SUBSCRIBED') {
-            if (Array.isArray(data.notifications)) {
-              setNotifications(data.notifications.reverse());
-            }
-          } else if (data.type === 'ROSTER_NOTIFICATION' && data.notification) {
-            const incoming: RosterNotification = data.notification;
-
-            // Idempotent deduplication check
-            setNotifications((prev) => {
-              const alreadyExists = prev.some((n) => n.id === incoming.id);
-              if (alreadyExists) return prev;
-              return [incoming, ...prev];
-            });
-
-            setLatestAlert(incoming);
-            playRosterNotificationSound();
-
-            if (onNotificationReceived) {
-              onNotificationReceived(incoming);
-            }
-          }
-        } catch {
-          // Ignore parse errors
-        }
-      };
-
-      ws.onclose = () => {
-        setStatus('disconnected');
-        if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
-
-        // Reconnect with exponential backoff (1s, 2s, 4s, up to 10s max)
-        const delay = Math.min(1000 * Math.pow(1.5, reconnectAttemptsRef.current), 10000);
-        reconnectAttemptsRef.current += 1;
-
-        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = setTimeout(() => {
-          connect();
-        }, delay);
-      };
-
-      ws.onerror = () => {
-        setStatus('error');
-      };
-    } catch {
-      setStatus('error');
-    }
-  }, [enabled, memberId, memberName, onNotificationReceived]);
-
-  useEffect(() => {
-    connect();
-
-    return () => {
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
-      if (socketRef.current) {
-        try {
-          socketRef.current.close();
-        } catch {}
-      }
+export function useRealtimeRosterNotifications({memberId,memberName,enabled=true,onNotificationReceived}:UseRealtimeRosterOptions) {
+  const [status,setStatus]=useState<ConnectionStatus>('disconnected');
+  const [notifications,setNotifications]=useState<RosterNotification[]>([]);
+  const [latestAlert,setLatestAlert]=useState<RosterNotification|null>(null);
+  const callback=useRef(onNotificationReceived);callback.current=onNotificationReceived;
+  const refreshRef=useRef<()=>Promise<void>>(async()=>{});
+  useEffect(()=>{
+    setNotifications([]);setLatestAlert(null);
+    const client=getSupabaseClient();
+    if(!enabled||!memberId||!client){setStatus('disconnected');return;}
+    let alive=true;let initialized=false;const seen=new Set<string>();
+    const load=async()=>{
+      setStatus(previous=>previous==='connected'?previous:'connecting');
+      const {data,error}=await client.from('roster_notifications').select('*').eq('member_id',memberId).order('created_at',{ascending:false}).limit(100);
+      if(!alive)return;
+      if(error){setStatus('error');return;}
+      const rows:RosterNotification[]=(data||[]).map(row=>({...row.payload,id:row.id,type:row.type,memberId:row.member_id,dutyId:row.duty_id,timestamp:row.created_at,read:Boolean(row.read_at)}));
+      const incoming=rows.filter(row=>!seen.has(row.id));
+      rows.forEach(row=>seen.add(row.id));setNotifications(rows);setStatus('connected');
+      if(initialized && incoming.length){setLatestAlert(incoming[0]);playRosterNotificationSound();callback.current?.(incoming[0]);}
+      initialized=true;
     };
-  }, [connect]);
-
-  // Mark single notification as read
-  const markAsRead = useCallback(async (id: string) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
-    );
-
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: 'mark_read', notificationId: id }));
-    }
-
-    try {
-      await fetch('/api/roster/notifications/mark-read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
-      });
-    } catch {}
-  }, []);
-
-  // Mark all notifications as read
-  const markAllAsRead = useCallback(async () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: 'mark_read', all: true }));
-    }
-
-    try {
-      await fetch('/api/roster/notifications/mark-read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ all: true, memberId }),
-      });
-    } catch {}
-  }, [memberId]);
-
-  const clearLatestAlert = useCallback(() => {
-    setLatestAlert(null);
-  }, []);
-
-  // Dispatch a real-time notification to the server (broadcasts to all active clients)
-  const notifyRosterUpdate = useCallback(
-    async (params: {
-      type: 'ROSTER_ASSIGNED' | 'ROSTER_UPDATED' | 'ROSTER_SUBSTITUTED' | 'ROSTER_CONFIRMED';
-      memberId: string;
-      memberName: string;
-      dutyId: string;
-      serviceName: string;
-      date: string;
-      department: string;
-      roleTitle: string;
-      reportTime: string;
-      notes?: string;
-      message?: string;
-    }) => {
-      try {
-        const res = await fetch('/api/roster/notify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(params),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          return data.notification;
-        }
-      } catch (err) {
-        console.warn('Failed to dispatch roster notification:', err);
-      }
-      return null;
-    },
-    []
-  );
-
-  // Test simulator trigger: sends a real-time test duty assignment to this member
-  const simulateDutyAlert = useCallback(
-    async (customRole?: string, customService?: string) => {
-      if (!memberId) return null;
-      try {
-        const res = await fetch('/api/roster/simulate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            memberId,
-            memberName,
-            roleTitle: customRole,
-            serviceName: customService,
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          return data.notification;
-        }
-      } catch (err) {
-        console.warn('Simulation error:', err);
-      }
-      return null;
-    },
-    [memberId, memberName]
-  );
-
-  return {
-    status,
-    notifications,
-    unreadCount,
-    latestAlert,
-    clearLatestAlert,
-    markAsRead,
-    markAllAsRead,
-    notifyRosterUpdate,
-    simulateDutyAlert,
-    reconnect: connect,
-  };
+    refreshRef.current=load;void load();
+    // Realtime improves latency; polling keeps the serverless deployment functional without it.
+    const channel=client.channel(`roster-notifications-${memberId}`).on('postgres_changes',
+      {event:'*',schema:'public',table:'roster_notifications',filter:`member_id=eq.${memberId}`},()=>void load()).subscribe();
+    const interval=setInterval(()=>void load(),30000);
+    return()=>{alive=false;clearInterval(interval);void client.removeChannel(channel);};
+  },[enabled,memberId]);
+  const mark=useCallback(async(id:string)=>{
+    const client=getSupabaseClient();if(!client)return;
+    const {error}=await client.rpc('gwcc_member_action',{p_action:'notification_read',p_id:id,p_data:{}});
+    if(error){setStatus('error');return;}
+    setNotifications(prev=>prev.map(row=>id==='all'||row.id===id?{...row,read:true}:row));
+  },[]);
+  const simulateDutyAlert=useCallback(async(customRole?:string,customService?:string)=>{
+    if(!memberId)return null;
+    const preview:RosterNotification={id:crypto.randomUUID(),type:'ROSTER_ASSIGNED',memberId,memberName:memberName||'',dutyId:'preview',serviceName:customService||'Preview service',date:new Date().toISOString().slice(0,10),department:'Preview',roleTitle:customRole||'Preview duty',reportTime:'08:00',message:'Preview only: no duty was assigned or message sent.',timestamp:new Date().toISOString(),read:true};
+    setLatestAlert(preview);return preview;
+  },[memberId,memberName]);
+  return {status,notifications,unreadCount:notifications.filter(row=>!row.read).length,latestAlert,
+    clearLatestAlert:()=>setLatestAlert(null),markAsRead:mark,markAllAsRead:()=>mark('all'),
+    simulateDutyAlert,reconnect:()=>refreshRef.current()};
 }

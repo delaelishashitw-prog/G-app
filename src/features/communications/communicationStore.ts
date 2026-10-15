@@ -9,16 +9,17 @@ export function sendSMSMessage(
 ): CommunicationRecord {
   const newRecord: CommunicationRecord = {
     ...data,
-    id: `com-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    id: crypto.randomUUID(),
+    status: 'draft',
     sent_at: new Date().toISOString(),
     created_by: data.sender_id,
   };
 
   setCommunications((prev) => [newRecord, ...prev]);
   logAction(
-    'SEND_COMMUNICATION',
+    'SAVE_COMMUNICATION_DRAFT',
     'Communication',
-    `Sent ${data.channel.toUpperCase()} to ${data.recipient_count} recipients (${data.title})`,
+    `Prepared ${data.channel.toUpperCase()} draft for ${data.recipient_count} intended recipients (${data.title}); no delivery requested`,
     newRecord.id
   );
   dbSyncUpsert('communications', newRecord);

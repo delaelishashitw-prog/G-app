@@ -1,3 +1,5 @@
+import { findPickup } from '../../lib/childSafety';
+import { useAuth } from '../../contexts/AuthContext';
 import React, { useState } from 'react';
 import {
   X,
@@ -38,6 +40,8 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
     summonChildParent,
     settings,
   } = useChurchData();
+  const {currentUser}=useAuth();
+  const [busy,setBusy]=useState(false);
   const { success, warning, error: toastError } = useToast();
 
   const [activeView, setActiveView] = useState<'pass' | 'checkin' | 'checkout'>(
@@ -65,7 +69,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
   // Checkout form states
   const [checkoutCode, setCheckoutCode] = useState('');
   const [collectorName, setCollectorName] = useState('');
-  const [verifiedLeader, setVerifiedLeader] = useState('Sister Evelyn Boateng (Sunday School)');
+  const [verifiedLeader, setVerifiedLeader] = useState(`${currentUser.first_name} ${currentUser.last_name}`);
 
   // Parent summon state
   const [summonReason, setSummonReason] = useState('Child feeling unwell / requesting parent assistance');
@@ -88,7 +92,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
     }
   };
 
-  const handleCreateCheckIn = (e: React.FormEvent) => {
+  const handleCreateCheckIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!childName.trim()) {
       toastError('Validation Error', "Please enter the child's name");
@@ -102,7 +106,10 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
     const currentService = services.find((s) => s.id === selectedServiceId) || services[0];
     const nowTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
-    const newRecord = checkInChild({
+    if(!currentService){toastError('Choose a service','Create a service before checking in children.');return;}
+    setBusy(true);
+    try {
+    const newRecord = await checkInChild({
       child_name: childName.trim(),
       age_group: ageGroup,
       class_room: classRoom,
@@ -129,41 +136,24 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
     setAllergyNotes('');
     setHasAllergyAlert(false);
     setSpecialInstructions('');
+    }catch(error){toastError('Check-in not confirmed',(error as Error).message);}finally{setBusy(false);}
   };
 
-  const handleProcessCheckout = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanCode = checkoutCode.trim().toUpperCase();
-    const found = childCheckIns.find(
-      (c) => c.security_code.toUpperCase() === cleanCode && c.status === 'checked_in'
-    );
-
-    if (!found) {
-      toastError('Invalid Security Code', 'No active child check-in found matching this security tag');
-      return;
-    }
-
-    const collector = collectorName.trim() || found.parent_name;
-    checkOutChild(found.id, {
-      checked_out_to_person: collector,
-      verified_by_leader: verifiedLeader,
-    });
-
-    success(
-      'Child Safely Released',
-      `${found.child_name} safely released to ${collector} (Tag: ${found.security_code})`
-    );
-    setCheckoutCode('');
-    setCollectorName('');
-    setActiveView('pass');
-    setActiveRecord(found);
+  const handleProcessCheckout = async (e:React.FormEvent) => {
+    e.preventDefault();setBusy(true);
+    try {
+      const found=findPickup(childCheckIns,checkoutCode,collectorName);
+      await checkOutChild(found.id,{checked_out_to_person:collectorName.trim(),verified_by_leader:currentUser.id});
+      success('Pickup Confirmed',`${found.child_name} released to ${collectorName.trim()}.`);
+      setActiveRecord({...found,status:'checked_out'});setCheckoutCode('');setCollectorName('');setActiveView('pass');
+    }catch(error){toastError('Pickup not confirmed',(error as Error).message);}finally{setBusy(false);}
   };
 
   const handleTriggerParentSummon = (rec: ChildCheckInRecord) => {
     summonChildParent(rec.id, summonReason);
     warning(
-      'Emergency Parent Alert Dispatched',
-      `Summon alert sent to ${rec.parent_name} (${rec.parent_phone}) for ${rec.child_name}`
+      'Parent contact recorded',
+      `Call ${rec.parent_name} at ${rec.parent_phone}. This app has not sent a message.`
     );
   };
 
@@ -262,7 +252,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                       <div>
                         <span className="font-bold text-amber-900">Need Parent in Children's Church?</span>
                         <p className="text-amber-700 text-[11px]">
-                          Trigger an instant emergency summon to {activeRecord.parent_name} ({activeRecord.parent_phone})
+                          Call the parent directly: {activeRecord.parent_name} ({activeRecord.parent_phone})
                         </p>
                       </div>
                     </div>
@@ -272,7 +262,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                       className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition shadow-2xs shrink-0 flex items-center gap-1.5 text-xs"
                     >
                       <Bell className="w-3.5 h-3.5" />
-                      Summon Parent Now
+                      Record Parent Contact Needed
                     </button>
                   </div>
 
@@ -507,7 +497,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                   Cancel
                 </button>
                 <button
-                  type="submit"
+                  type="submit" disabled={busy}
                   className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs rounded-xl transition shadow-xs flex items-center gap-1.5"
                 >
                   <Check className="w-4 h-4" />
@@ -529,7 +519,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                 </p>
                 <input
                   type="text"
-                  placeholder="e.g. GWCC-K412 or TAG-102"
+                  placeholder="GWCC- followed by 12 characters"
                   value={checkoutCode}
                   onChange={(e) => setCheckoutCode(e.target.value)}
                   required
@@ -573,7 +563,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                   Cancel
                 </button>
                 <button
-                  type="submit"
+                  type="submit" disabled={busy}
                   className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs rounded-xl transition shadow-xs flex items-center gap-1.5"
                 >
                   <UserCheck className="w-4 h-4" />

@@ -31,6 +31,7 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ defa
 const WelfarePage = lazy(() => import('./pages/WelfarePage').then(m => ({ default: m.WelfarePage })));
 const InventoryPage = lazy(() => import('./pages/InventoryPage').then(m => ({ default: m.InventoryPage })));
 const AiAssistantPage = lazy(() => import('./pages/AiAssistantPage').then(m => ({ default: m.AiAssistantPage })));
+const PasswordSetupPage=lazy(()=>import('./pages/PasswordSetupPage').then(m=>({default:m.PasswordSetupPage})));
 const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
 const MemberPortalPage = lazy(() => import('./pages/MemberPortalPage').then(m => ({ default: m.MemberPortalPage })));
 
@@ -45,6 +46,7 @@ export default function App() {
                 <OfflineConnectivityBanner />
                 <Suspense fallback={<LoadingFallback />}>
                   <Routes>
+                    <Route path="/auth/password" element={<PasswordSetupPage/>}/>
                     <Route path="/login" element={<LoginPage />} />
                     <Route path="/portal" element={<MemberPortalPage />} />
                     <Route path="/member-portal" element={<MemberPortalPage />} />

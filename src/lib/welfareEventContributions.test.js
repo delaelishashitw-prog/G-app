@@ -357,6 +357,7 @@ test('4. Correctly integrates confirmed receipts with Church Finance module and 
       financeAccountName: 'Main Operating Account',
       setChurchFinances: setFinances,
       setChurchAccounts: setAccounts,
+      state:{finances,accounts,budgets:[]},
     }
   );
 
@@ -394,6 +395,7 @@ test('4. Correctly integrates confirmed receipts with Church Finance module and 
       financeAccountName: 'Main Operating Account',
       setChurchFinances: setFinances,
       setChurchAccounts: setAccounts,
+      state:{finances,accounts,budgets:[]},
     }
   );
 
