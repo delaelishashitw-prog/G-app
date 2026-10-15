@@ -46,9 +46,11 @@ test('release snapshot preserves original rows privately and a retry cannot over
   try {
     const original=(await db.query("SELECT content,checksum FROM gwcc_release_backup_20261015.snapshots WHERE name='public.church_accounts'")).rows[0];
     assert.equal(original.content[0].current_balance,123.45);
+    await db.exec(`SELECT set_config('gwcc.release_administrator','${root}',false);`+fs.readFileSync('supabase/release-validate.sql','utf8'));
     await db.exec("UPDATE public.church_accounts SET name='Changed after snapshot'");
     await db.exec(snapshot);
     assert.deepEqual((await db.query("SELECT content,checksum FROM gwcc_release_backup_20261015.snapshots WHERE name='public.church_accounts'")).rows[0],original);
+    await assert.rejects(db.exec(fs.readFileSync('supabase/release-validate.sql','utf8')),/changed or lost 1 original rows/);
     await asUser(db,root,async()=>await assert.rejects(db.query('SELECT * FROM gwcc_release_backup_20261015.snapshots'),/permission denied/));
     await db.exec('SET ROLE anon');
     await assert.rejects(db.query('SELECT * FROM gwcc_release_backup_20261015.snapshots'),/permission denied/);

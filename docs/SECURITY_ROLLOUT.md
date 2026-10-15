@@ -1,6 +1,10 @@
 # Security upgrade and release validation
 
-This release fixes the reviewed code paths. Production readiness also requires applying the database upgrade, reviewing existing staff access, configuring hosting secrets, and reconciling historical records. Those live operations have not been performed by the code changes.
+This release fixes the reviewed code paths. The live security migration and confirmed administrator activation were applied on 15 October 2026. A private logical recovery snapshot preserved 5,434 original rows across 24 tables; pre-commit assertions checked original records, balances, protected administrator access and closed client write permissions. Historical record reconciliation, browser-only pending entries, real invitation/recovery delivery and optional providers remain separate acceptance tasks.
+
+The upgraded production build is available at https://g-app-pi.vercel.app. The live release marker is `20261015000001`; the recorded migration version is `20261015195442`. The confirmed administrator's protected profile passes the new role check. Anonymous relation access and unchecked authenticated table writes both have a count of zero. Public staff and AI endpoints reject unsigned requests. No actual staff invitation, recovery email, SMS or paid provider request was sent during deployment.
+
+The post-upgrade security advisor reports no ERROR findings. Its three no-policy INFO findings intentionally deny direct access to internal operation/limit and legacy roster-manager tables. Its ten SECURITY DEFINER warnings describe the explicitly exposed, checked RPCs; these require verified active profiles and enforce their role/ownership rules. Leaked-password protection remains disabled in Supabase Auth and must be enabled in the Auth dashboard if supported by the project's plan. Confirm the canonical site URL, `/auth/password` redirect allowlist and real email delivery there before relying on invitations or recovery. The available connector does not expose those Auth configuration controls.
 
 ## Before deployment
 
@@ -17,10 +21,11 @@ For an existing project with the core church tables already installed, take the 
 
 ```
 supabase/release-snapshot.sql
-supabase/migrations/20261015194232_secure_operations_release.sql
+supabase/migrations/20261015195442_secure_operations_release.sql
+supabase/release-validate.sql
 ```
 
-Run it as the project database owner inside a transaction (or through the Supabase migration runner). Check the migration history before running older files. The in-app repair buttons all use the same secure upgrade; old permissive repair instructions must not be reused. The upgrade is repeatable and tests verify that applying repair SQL again neither reopens anonymous access nor changes balances.
+Run it as the project database owner inside a transaction (or through the Supabase migration runner). Before `release-validate.sql`, set `gwcc.release_administrator` locally to the confirmed verified Auth UUID. The assertions abort cutover if original records, financial balances, administrator access or permission boundaries do not match. Check the migration history before running older files. The in-app repair buttons all use the same secure upgrade; old permissive repair instructions must not be reused. The upgrade is repeatable and tests verify that applying repair SQL again neither reopens anonymous access nor changes balances.
 
 The snapshot script locks application writes through cutover and stores the original public table rows, checksums, schema/security definitions and storage metadata in `gwcc_release_backup_20261015`. Browser roles and the service role cannot access this private schema. Repeating the script preserves its first snapshot. This same-database logical recovery copy does not replace a physical backup or point-in-time recovery, and it contains no browser-only pending entries or storage object binaries. Do not automatically restore its old access policies; retain the security restrictions when reconciling individual records.
 
