@@ -30,6 +30,8 @@ The migration adds checked mutation RPCs, idempotency records, persistent API li
 
 Run `supabase/bootstrap-super-admin.sql` after replacing its `chosen_user` placeholder with the intended **verified Auth UUID**. The script refuses to run with an empty or unverified account. Then sign in as that administrator and review each staff profile through Users & Roles. Authorization requires `authorization_reviewed_at` for staff; it does not accept an old name, email, local role or signup metadata claim.
 
+When administrator activation must precede the coordinated upgrade, apply `supabase/migrations/20261015182900_prepare_reviewed_administrator.sql` first, then run that same bootstrap script for the confirmed verified Auth UUID. This adds the protected review fields and audit attribution without changing another account's role. The full security upgrade preserves the reviewed administrator and must still be deployed with the new application.
+
 Link each member to their verified Auth UUID using `members.auth_user_id`. A super administrator's account invitation can link the selected member. Do not link by a partial name or phone number. Review old staff rows whose IDs differ from Auth UUIDs; preserve directory/history records, but do not authorize those rows as login identities.
 
 The `gwcc-media` storage bucket becomes private. Review any previously distributed public media links and existing storage policies. The upgrade replaces policies with the `gwcc_` prefix; remove any unrelated custom policy that grants broader access to this bucket. External access to old copies cannot be revoked by changing application code.
