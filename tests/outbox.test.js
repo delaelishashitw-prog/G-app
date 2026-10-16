@@ -57,14 +57,55 @@ test('a failed migration retains the legacy queue, never sends it from an unveri
   await box.flush({rpc:async()=>{requests++;return {data:[]};}});
   assert.equal(requests,0);assert.equal(disk.getItem('gwcc_outbox_v2_owner'),JSON.stringify([batch]));assert.match(box.exportPending(),/pending/);assert.match(box.exportPending(),/new-during-storage-failure/);assert.match(box.status.error,/storage could not load/);
 });
-test('a newer memory-only quota backup augments a never-sent legacy batch before review without changing its request ID',async()=>{
+test('a newer memory-only quota backup reconciles a possibly committed legacy batch under a separate durable ID',async()=>{
   const disk=storage(),store=persistence(),original={id:'legacy-unsent',changes:[change('first',1)],createdAt:'2026-10-15',attempts:0};
   disk.setItem('gwcc_outbox_v2_owner',JSON.stringify([original]));const box=new SyncOutbox('owner',disk,()=>{},store);await box.ready;
-  let sent=0;const transport={rpc:async(_name,args)=>{sent++;assert.equal(args.p_operation_id,original.id);assert.equal(args.p_changes.length,2);assert.equal(args.p_changes[0].record.value,2);return {data:acknowledged(args)};}};
+  let sent=0;const transport={rpc:async(name,args)=>{sent++;assert.equal(name,'gwcc_reconcile_sync_operation');assert.equal(args.p_original_operation_id,original.id);assert.notEqual(args.p_recovery_operation_id,original.id);assert.equal(store.snapshot.batches[0].recoveryId,args.p_recovery_operation_id);assert.equal(args.p_changes.length,2);assert.equal(args.p_changes[0].record.value,2);return {data:acknowledged(args)};}};
   await box.flush(transport);assert.equal(sent,0);
   const backup={owner:'owner',batches:[{...original,changes:[change('first',2),change('last-memory-only',3)],attempts:1}]};
   assert.equal(await box.restorePending(JSON.stringify(backup)),2);await box.flush(transport);assert.equal(sent,0);
   assert.equal((await box.flush(transport,()=>{},true)).success,true);assert.equal(sent,1);
+});
+test('a reused operation ID pauses automatic sync, then reconciles all 21 changes with a persisted recovery ID',async()=>{
+  const disk=storage(),store=persistence();let box=new SyncOutbox('owner',disk,()=>{},store);
+  await box.enqueueMany(Array.from({length:21},(_,i)=>change(`member-${i}`)));
+  const original=JSON.parse(box.exportPending()).batches[0],calls=[];
+  const transport={rpc:async(name,args)=>{
+    calls.push({name,args:structuredClone(args)});
+    if(name==='gwcc_apply_mutations')return {error:{message:'Operation ID was reused with different data'}};
+    assert.equal(store.snapshot.batches[0].recoveryId,args.p_recovery_operation_id);
+    assert.equal(args.p_original_operation_id,original.id);assert.deepEqual(args.p_changes,original.changes);
+    return {data:acknowledged(args)};
+  }};
+  const paused=await box.flush(transport);assert.equal(paused.pending,21);assert.match(paused.error,/Retry sync/);assert.equal(calls.length,1);
+  box=new SyncOutbox('owner',disk,()=>{},store);await box.ready;await box.flush(transport);assert.equal(calls.length,1);
+  assert.equal((await box.flush(transport,()=>{},true)).success,true);assert.equal(calls.length,2);
+  assert.equal(calls[1].name,'gwcc_reconcile_sync_operation');assert.notEqual(calls[1].args.p_recovery_operation_id,original.id);
+});
+test('manual retry recovers a reused ID immediately, and an interrupted recovery retries the exact ID and body after reload',async()=>{
+  const disk=storage(),store=persistence();let box=new SyncOutbox('owner',disk,()=>{},store);await box.enqueueMany([change('saved'),change('last-memory-only')]);
+  const calls=[],committed=new Map();let failCleanup=true;
+  store.fail=snapshot=>failCleanup&&snapshot.batches.length===0;
+  const transport={rpc:async(name,args)=>{
+    calls.push({name,args:structuredClone(args)});
+    if(name==='gwcc_apply_mutations')return {error:{message:'Operation ID was reused with different data'}};
+    if(!committed.has(args.p_recovery_operation_id))committed.set(args.p_recovery_operation_id,acknowledged(args));
+    return {data:committed.get(args.p_recovery_operation_id)};
+  }};
+  const failed=await box.flush(transport,()=>{},true);assert.equal(failed.pending,2);assert.match(failed.error,/storage failed/);assert.equal(committed.size,1);
+  const first=calls.at(-1);assert.equal(first.name,'gwcc_reconcile_sync_operation');
+  box=new SyncOutbox('owner',disk,()=>{},store);await box.ready;failCleanup=false;
+  assert.equal((await box.flush(transport,()=>{},true)).success,true);assert.deepEqual(calls.at(-1),first);assert.equal(committed.size,1);
+});
+test('failed or incomplete reconciliation keeps the entire payload exportable and does not send later financial batches',async()=>{
+  const disk=storage(),box=new SyncOutbox('owner',disk);await box.enqueueMany([change('saved'),change('conflict')]);
+  await box.flush({rpc:async()=>({error:{message:'Operation ID was reused with different data'}})});
+  await box.enqueue({...change('receipt',50),table:'church_finances'});const before=JSON.parse(box.exportPending()).batches;
+  let calls=0;await box.flush({rpc:async()=>{calls++;return {error:{message:'Sync conflict: members record conflict differs from the cloud. Pending changes were retained; export them for review.'}};}},()=>{},true);
+  assert.equal(calls,1);assert.equal(box.status.pending,3);assert.match(box.status.error,/Sync conflict/);
+  assert.deepEqual(JSON.parse(box.exportPending()).batches.map(b=>b.changes),before.map(b=>b.changes));
+  await box.flush({rpc:async()=>({data:[{table:'members',record:{id:'saved'}}]})},()=>{},true);
+  assert.equal(box.status.pending,3);assert.match(box.status.error,/confirm every record/);
 });
 test('cloud commit followed by local cleanup failure retries the original request without duplicating the logical write',async()=>{
   const disk=storage(),store=persistence();let box=new SyncOutbox('owner',disk,()=>{},store);await box.enqueue(change('receipt',200));

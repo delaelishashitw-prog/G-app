@@ -7,13 +7,14 @@ export interface Mutation {
   record?: Record<string, any>;
   expected_updated_at?: string | null;
 }
-export interface SyncBatch { id: string; changes: Mutation[]; createdAt: string; error?: string; attempts: number; requiresReview?: boolean; migratedFromLegacy?: boolean }
+export interface SyncBatch { id: string; changes: Mutation[]; createdAt: string; error?: string; attempts: number; requiresReview?: boolean; migratedFromLegacy?: boolean; recoveryId?: string }
 export interface SyncResult { success: boolean; pending: number; error?: string }
 export interface SyncTransport { rpc: (name: string, params: any) => PromiseLike<{ data: any; error: any }> }
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 function validateBatches(value: unknown): asserts value is SyncBatch[] {
   if (!Array.isArray(value) || value.some(batch => !batch || typeof batch.id !== 'string' || !batch.id ||
     typeof batch.createdAt !== 'string' || !Number.isInteger(batch.attempts) || batch.attempts < 0 ||
+    (batch.recoveryId !== undefined && (typeof batch.recoveryId !== 'string' || !batch.recoveryId || batch.recoveryId === batch.id)) ||
     !Array.isArray(batch.changes) || batch.changes.length > 500 || batch.changes.some((change: Mutation) =>
       !change || typeof change.table !== 'string' || !change.table || typeof change.id !== 'string' || !change.id ||
       !['upsert','delete'].includes(change.operation) || (change.operation === 'upsert' && (!change.record || change.record.id !== change.id))))) {
@@ -106,7 +107,7 @@ export class SyncOutbox {
     });
   }
   get status(): SyncResult {
-    const error = this.readFailure || this.legacyConflict || this.storageError || (this.batches.some(batch=>batch.requiresReview)?'Recovered changes are waiting for review. Use Retry sync when ready.':this.batches.find(batch => batch.error)?.error);
+    const error = this.readFailure || this.legacyConflict || this.storageError || this.batches.find(batch=>batch.recoveryId&&batch.error)?.error || (this.batches.some(batch=>batch.requiresReview)?'Recovered changes are waiting for review. Use Retry sync when ready.':this.batches.find(batch=>batch.error)?.error);
     const retiring=this.active && !this.batches.some(batch=>batch.id===this.active)?this.activeChanges:0;
     return { success: !this.loading && !this.active && this.batches.length === 0 && !error, pending: this.batches.reduce((n,b) => n + b.changes.length, 0)+retiring, ...(error ? { error } : {}) };
   }
@@ -162,8 +163,8 @@ export class SyncOutbox {
       const existing = this.batches.find(row => row.id === batch.id);
       if (existing && JSON.stringify(existing.changes) !== JSON.stringify(batch.changes)) {
         if(!existing.migratedFromLegacy || existing.attempts!==0 || !existing.requiresReview)throw new Error('A request ID has different changes in this backup. Keep both copies for review.');
-        // Only an untouched legacy batch that was never sent can accept the old tab's newer export.
-        // Keep records absent from the backup; restoring must not erase newer local work.
+        // A stale attempts=0 snapshot is not proof that the server never saw this ID.
+        // Keep absent records and reconcile the merged intent under a separate ID.
         const merged=structuredClone(existing.changes);
         for(const incoming of batch.changes){
           const index=merged.findIndex(change=>change.table===incoming.table&&change.id===incoming.id);
@@ -171,7 +172,7 @@ export class SyncOutbox {
           else if(JSON.stringify(merged[index])!==JSON.stringify(incoming)){merged[index]=structuredClone(incoming);restored++;}
         }
         if(merged.length>500)throw new Error('The recovered transaction exceeds 500 changes. Keep both backups for review.');
-        replacements.set(existing.id,{...existing,changes:merged,attempts:Math.max(existing.attempts,batch.attempts),requiresReview:true});
+        replacements.set(existing.id,{...existing,changes:merged,attempts:Math.max(existing.attempts,batch.attempts),requiresReview:true,recoveryId:crypto.randomUUID()});
       }
       if (!existing) {additions.push({...structuredClone(batch),requiresReview:true});restored+=batch.changes.length;}
     }
@@ -210,9 +211,20 @@ export class SyncOutbox {
       delete batch.requiresReview;
       try {
         await this.persist();
-        const { data, error } = await client.rpc('gwcc_apply_mutations',{ p_operation_id: batch.id, p_changes: structuredClone(batch.changes) });
+        const reconcile = () => client.rpc('gwcc_reconcile_sync_operation',{
+          p_original_operation_id:batch.id,p_recovery_operation_id:batch.recoveryId,p_changes:structuredClone(batch.changes)
+        });
+        let response = batch.recoveryId ? await reconcile() : await client.rpc('gwcc_apply_mutations',{ p_operation_id: batch.id, p_changes: structuredClone(batch.changes) });
+        if (!batch.recoveryId && response.error?.message?.includes('Operation ID was reused with different data')) {
+          batch.recoveryId=crypto.randomUUID();
+          // Save the new ID BEFORE reconciliation. A network or cleanup failure must
+          // retry the identical recovery, never create another logical transaction.
+          if(!approveRestored){batch.requiresReview=true;throw new Error('The cloud already saved a different version of this request. Use Retry sync to compare the confirmed records and safely recover outstanding changes.');}
+          await this.persist();response=await reconcile();
+        }
+        const {data,error}=response;
         if (error) throw new Error(error.message || 'The database did not accept the changes.');
-        if (!Array.isArray(data) || batch.changes.some(change => change.table !== 'audit_logs' && !data.some(item => item.table === change.table && (item.id || item.record?.id) === change.id && (change.operation !== 'delete' || item.deleted)))) {
+        if (!Array.isArray(data) || batch.changes.some(change => change.table !== 'audit_logs' && !data.some(item => item.table === change.table && (item.id || item.record?.id) === change.id && (change.operation === 'delete' ? item.deleted : item.record?.id === change.id || (batch.recoveryId && item.deleted))))) {
           throw new Error('The database did not confirm every record. Pending changes were retained for a safe retry.');
         }
         for (const item of data) if (item.record?.updated_at) {
@@ -226,6 +238,7 @@ export class SyncOutbox {
       } catch (error) {
         // Cloud may have committed before local cleanup failed. Retain the SAME request ID.
         if (!this.batches.some(row => row.id === batch.id)) this.batches.unshift(batch);
+        if(batch.recoveryId)batch.requiresReview=true;
         batch.error = this.storageError || message(error); this.active = null;this.activeChanges=0;
         try { await this.persist(); } catch { /* The in-memory copy remains exportable and the earlier durable request remains retryable. */ }
         return this.status;

@@ -36,6 +36,85 @@ let op=0;
 const operation=()=>`aaaaaaaa-aaaa-4aaa-8aaa-${String(++op).padStart(12,'0')}`;
 const apply=(db,changes,id=operation())=>db.query('SELECT public.gwcc_apply_mutations($1,$2) AS result',[id,JSON.stringify(changes)]);
 const upsert=(table,record,expected)=>({table,id:record.id,operation:'upsert',record,expected_updated_at:expected});
+const reconcile=(db,original,recovery,changes)=>db.query('SELECT public.gwcc_reconcile_sync_operation($1,$2,$3) AS result',[original,recovery,JSON.stringify(changes)]);
+
+test('legacy recovery confirms 20 saved records and saves only the outstanding 21st record, with immutable retry receipts',async()=>{
+  const db=await setupDatabase();
+  try{await asUser(db,root,async()=>{
+    const original=operation(),recovery=operation();
+    const saved=[upsert('settings',{id:'recovery-settings',church_name:'Recovery Church'}),...Array.from({length:19},(_,i)=>upsert('members',{
+      id:`recovery-${i}`,first_name:'Saved',last_name:String(i),phone:'0240000000',number_of_children:'2',created_at:'2026-10-15T12:00:00.000Z'
+    }))];
+    const receipt=(await apply(db,saved,original)).rows[0].result;
+    const pending=[...saved,upsert('members',{id:'recovery-last',first_name:'Memory',last_name:'Only',phone:'0240000001',profile_photo_url:'data:image/jpeg;base64,'+'A'.repeat(110000)})];
+    await assert.rejects(apply(db,pending,original),/Operation ID was reused/);
+    const versions=await db.query("SELECT id,updated_at FROM public.members WHERE id LIKE 'recovery-%' ORDER BY id");
+    const audits=(await db.query('SELECT count(*)::int AS n FROM public.audit_logs')).rows[0].n;
+    const result=(await reconcile(db,original,recovery,pending)).rows[0].result;
+    assert.equal(result.length,21);assert.equal(result.find(r=>r.record?.id==='recovery-last').record.profile_photo_url,pending.at(-1).record.profile_photo_url);
+    assert.deepEqual((await db.query("SELECT id,updated_at FROM public.members WHERE id LIKE 'recovery-%' AND id<>'recovery-last' ORDER BY id")).rows,versions.rows);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM public.audit_logs')).rows[0].n,audits+1);
+    assert.deepEqual((await reconcile(db,original,recovery,pending)).rows[0].result,result);
+    assert.deepEqual((await apply(db,saved,original)).rows[0].result,receipt);
+    await assert.rejects(reconcile(db,original,recovery,pending.slice(1)),/Recovery request ID was reused/);
+    await assert.rejects(apply(db,pending,original),/Operation ID was reused/);
+  });}finally{await db.close();}
+});
+
+test('recovery respects later edits and deletions, rejects stale or unversioned overwrites atomically, and allows current versions',async()=>{
+  const db=await setupDatabase();
+  try{await asUser(db,root,async()=>{
+    const original=operation(),saved=[upsert('members',{id:'recovery-edited',first_name:'Original',last_name:'Member',phone:'0240000000'})];
+    await apply(db,saved,original);
+    const get=async()=> (await db.query("SELECT to_jsonb(m) AS doc FROM public.members m WHERE id='recovery-edited'")).rows[0]?.doc;
+    const first=await get();
+    await apply(db,[upsert('members',{...first,first_name:'Later'},first.updated_at)]);
+    const later=await get(),newMember=upsert('members',{id:'recovery-atomic',first_name:'New',last_name:'Member',phone:'0240000001'});
+    const result=(await reconcile(db,original,operation(),[...saved,newMember])).rows[0].result;
+    assert.equal(result.find(r=>r.record?.id==='recovery-edited').record.first_name,'Later');assert.equal((await get()).first_name,'Later');
+    const stale=[upsert('members',{id:'recovery-rollback',first_name:'Rollback',last_name:'Member',phone:'0240000002'}),upsert('members',{...first,first_name:'Unsaved'},first.updated_at)];
+    await assert.rejects(reconcile(db,original,operation(),stale),/Sync conflict/);
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM public.members WHERE id='recovery-rollback'")).rows[0].n,0);
+    await assert.rejects(reconcile(db,original,operation(),[upsert('members',{...later,first_name:'Unversioned'})]),/Sync conflict/);
+    await reconcile(db,original,operation(),[upsert('members',{...later,first_name:'Reviewed'},later.updated_at)]);
+    assert.equal((await get()).first_name,'Reviewed');
+    await apply(db,[{table:'members',operation:'delete',id:'recovery-edited'}]);
+    assert.deepEqual((await reconcile(db,original,operation(),saved)).rows[0].result,[{table:'members',id:'recovery-edited',deleted:true}]);
+    await assert.rejects(reconcile(db,original,operation(),[upsert('members',{...first,first_name:'Resurrect'})]),/was removed/);
+  });}finally{await db.close();}
+});
+
+test('recovery denies anonymous, member and inactive access, direct receipt access, mixed financial batches and unrelated ID reuse',async()=>{
+  const db=await setupDatabase(),original=operation(),recovery=operation();
+  const saved=[upsert('members',{id:'recovery-auth',first_name:'Saved',last_name:'Member',phone:'0240000000'})];
+  try{
+    await db.exec('SET ROLE anon');await assert.rejects(reconcile(db,original,recovery,saved),/permission denied/);await db.exec('RESET ROLE');
+    await asUser(db,member,async()=>await assert.rejects(reconcile(db,original,recovery,saved),/Staff authorization/));
+    await asUser(db,root,async()=>{
+      await assert.rejects(db.query('SELECT * FROM gwcc_private.sync_recoveries'),/permission denied/);
+      await apply(db,saved,original);
+      await assert.rejects(reconcile(db,original,recovery,[...saved,upsert('church_finances',{id:'never-replayed',amount:50})]),/financial and other changes have been retained/);
+      await assert.rejects(reconcile(db,original,recovery,[{table:'members',id:'recovery-auth',operation:'delete'}]),/supports member and settings saves only/);
+      await assert.rejects(reconcile(db,original,recovery,[upsert('members',{id:'unrelated',first_name:'Other',last_name:'Member'})]),/does not match/);
+      await assert.rejects(reconcile(db,original,recovery,[...saved,...saved]),/Duplicate records/);
+      await reconcile(db,original,recovery,saved);
+    });
+    await db.exec(`UPDATE public.profiles SET is_active=false WHERE id='${root}'`);
+    await asUser(db,root,async()=>await assert.rejects(reconcile(db,original,recovery,saved),/Staff authorization/));
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM public.church_finances WHERE id='never-replayed'")).rows[0].n,0);
+  }finally{await db.close();}
+});
+
+test('an augmented legacy request never seen by the cloud recovers under the new ID without overwriting unversioned records',async()=>{
+  const db=await setupDatabase();
+  try{await asUser(db,root,async()=>{
+    const original=operation(),recovery=operation(),changes=[upsert('members',{id:'recovery-unsent',first_name:'First',last_name:'Save',phone:'0240000000'})];
+    assert.equal((await reconcile(db,original,recovery,changes)).rows[0].result.length,1);
+    assert.deepEqual((await reconcile(db,original,recovery,changes)).rows[0].result,(await reconcile(db,original,recovery,changes)).rows[0].result);
+    await assert.rejects(reconcile(db,operation(),operation(),[upsert('members',{...changes[0].record,first_name:'Stale'})]),/Sync conflict/);
+    await assert.rejects(reconcile(db,original,recovery,[upsert('members',{...changes[0].record,first_name:'Changed'})]),/Recovery request ID was reused/);
+  });}finally{await db.close();}
+});
 
 test('member login linking is atomic, root-only, identity-specific and cannot reuse another person’s account',async()=>{
   const db=await setupDatabase();
