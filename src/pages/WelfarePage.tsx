@@ -1915,6 +1915,7 @@ export const WelfarePage: React.FC = () => {
       />
 
       <ReviewWelfareClaimModal
+        key={selectedClaimForReview?.id ?? 'no-claim'}
         claim={selectedClaimForReview}
         isOpen={Boolean(selectedClaimForReview)}
         onClose={() => setSelectedClaimForReview(null)}
