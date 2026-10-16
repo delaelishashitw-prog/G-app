@@ -34,8 +34,15 @@ try{
   const exp=Math.floor(Date.now()/1000)+3600;
   const token=`${Buffer.from(JSON.stringify({alg:'HS256',typ:'JWT'})).toString('base64url')}.${Buffer.from(JSON.stringify({sub:id,role:'authenticated',exp})).toString('base64url')}.test-signature`;
   const session={user,access_token:token,refresh_token:'qa-refresh-token',expires_at:exp,expires_in:3600,token_type:'bearer'};
-  const data={members:[{...sampleMembers[0],id:'qa-member',first_name:'QA',last_name:'Member',member_id:'GWCC-900001',auth_user_id:null}],settings:[{id:'gwcc_global_settings',...initialSettings}],profiles:[profile]};
-  data.welfare_contributions=[{id:'qa-dues',member_id:'qa-member',member_name:'QA Member',amount:10895,date:'2026-10-15',month:'2026-10',payment_method:'cash',recorded_by:'QA',created_at:'2026-10-15T00:00:00Z'}];
+  const today=new Date();
+  const month=offset=>new Date(Date.UTC(today.getUTCFullYear(),today.getUTCMonth()+offset,1)).toISOString().slice(0,7);
+  const data={members:[
+    {...sampleMembers[0],id:'qa-member',first_name:'QA',last_name:'Member',member_id:'GWCC-900001',auth_user_id:null,membership_date:`${month(-6)}-01`,is_archived:false},
+    {...sampleMembers[0],id:'qa-current',first_name:'QA',last_name:'Current',member_id:'GWCC-900002',auth_user_id:null,membership_date:`${month(-5)}-01`,is_archived:false},
+    {...sampleMembers[0],id:'qa-new',first_name:'QA',last_name:'New',member_id:'GWCC-900003',auth_user_id:null,membership_date:`${month(0)}-01`,is_archived:false},
+  ],settings:[{id:'gwcc_global_settings',...initialSettings}],profiles:[profile]};
+  const receipt=(id,memberId,offset,amount)=>({id,member_id:memberId,member_name:memberId==='qa-member'?'QA Member':'QA Current',amount,date:`${month(0)}-15`,month:month(offset),payment_method:'cash',recorded_by:'QA',created_at:`${month(0)}-15T00:00:00Z`});
+  data.welfare_contributions=[receipt('qa-1','qa-member',-6,10000),receipt('qa-2','qa-member',-5,400),receipt('qa-3','qa-member',-4,360),receipt('qa-duplicate','qa-member',-4,95),receipt('qa-prepaid','qa-member',2,10),...[-5,-4,-3].map((offset,index)=>receipt(`qa-current-${index}`,'qa-current',offset,10))];
   data.welfare_claims=[];
   const context=await browser.newContext({viewport:{width:1440,height:1000}});
   await context.addInitScript(({session})=>{localStorage.setItem('gwcc_supabase_url','https://gwcc-e2e.supabase.co');localStorage.setItem('gwcc_supabase_anon_key','test-public-key');localStorage.setItem('gwcc-church-auth-token',JSON.stringify(session));},{session});
@@ -83,6 +90,61 @@ try{
       await report().getByText('Welfare Dues Balance',{exact:true}).locator('..').getByText('GH₵ 10645.00',{exact:true}).waitFor();
       await report().getByText('Relief Disbursed',{exact:true}).locator('..').getByText('GH₵ 250.00',{exact:true}).waitFor();
       await report().getByRole('button',{name:'Close welfare audit report'}).click();
+
+      await page.getByRole('button',{name:'Member Standing & Balances',exact:true}).click();
+      await page.getByText('Defaulters: 1 members',{exact:true}).waitFor();
+      const defaulter=page.getByRole('row').filter({has:page.getByText('QA Member',{exact:true})});
+      await defaulter.getByText('Defaulter — Partially eligible',{exact:true}).waitFor();
+      await defaulter.getByText(`3 unpaid month(s) through ${month(-1)}. 3 distinct month(s) paid.`,{exact:true}).waitFor();
+      await defaulter.getByText('View unpaid months',{exact:true}).click();
+      await defaulter.getByText([month(-3),month(-2),month(-1)].join(', '),{exact:true}).waitFor();
+      await page.getByRole('row').filter({has:page.getByText('QA Current',{exact:true})}).getByText('Fully eligible',{exact:true}).waitFor();
+      await page.getByRole('row').filter({has:page.getByText('QA New',{exact:true})}).getByText('Probation — Committee review',{exact:true}).waitFor();
+      await page.getByRole('button',{name:'Show defaulters',exact:true}).click();
+      assert.equal(await page.getByRole('row').filter({has:page.getByText('QA Current',{exact:true})}).count(),0);
+      const downloadPromise=page.waitForEvent('download');await page.getByRole('button',{name:'Export CSV',exact:true}).click();
+      const download=await downloadPromise;const chunks=[];for await(const chunk of await download.createReadStream())chunks.push(chunk);
+      const csv=Buffer.concat(chunks).toString('utf8');assert.match(csv,/Defaulter — Partially eligible/);assert.match(csv,/Unpaid Completed Months/);assert.match(csv,new RegExp(month(-3)));assert.ok(!csv.includes('QA Current'));
+
+      await page.getByRole('button',{name:'Apply for Relief Aid',exact:true}).click();
+      const application=page.getByRole('dialog',{name:'Apply for Benevolence Aid'});
+      await application.getByText('Defaulter — Partially eligible',{exact:true}).waitFor();
+      await application.getByRole('button',{name:'External / Community',exact:true}).click();
+      assert.equal(await application.getByText('Defaulter — Partially eligible',{exact:true}).count(),0);
+      await application.getByRole('button',{name:'Close welfare application'}).click();
+
+      await page.getByRole('button',{name:'Constitution & Eligibility Calculator',exact:true}).click();
+      await page.getByLabel('Unpaid completed months (arrears)',{exact:true}).fill('3');
+      await page.getByText('Defaulter — Partially eligible',{exact:true}).waitFor();
+      await page.getByText('Committee decision required',{exact:true}).waitFor();
+      await page.getByLabel('Unpaid completed months (arrears)',{exact:true}).fill('2');
+      await page.getByText('Fully eligible',{exact:true}).waitFor();
+
+      data.welfare_claims.push({id:'qa-pending',claim_number:'BEN-QA-PARTIAL',member_id:'qa-member',member_name:'QA Member',category:'emergency_relief',title:'QA partial review',description:'Synthetic committee amount check',amount_requested:1000,status:'pending',emergency_level:'normal',date_submitted:`${month(0)}-15`,created_at:`${month(0)}-15T00:00:00Z`});
+      await page.reload();await page.getByRole('button',{name:/Benevolence Aid Claims/}).click();
+      await page.getByRole('row').filter({has:page.getByText('BEN-QA-PARTIAL',{exact:true})}).getByRole('button',{name:'Review',exact:true}).click();
+      const review=page.getByRole('dialog',{name:'Review Benevolence Claim'});
+      await review.getByText('Defaulter — Partially eligible',{exact:true}).waitFor();
+      assert.equal(await review.getByLabel('Approved aid (GHS)',{exact:true}).inputValue(),'');
+      await review.getByLabel('Evaluation decision',{exact:true}).selectOption('approved');
+      assert.equal(await review.getByLabel('Approved aid (GHS)',{exact:true}).evaluate(input=>input.checkValidity()),false);
+      await review.getByLabel('Approved aid (GHS)',{exact:true}).fill('500');
+      assert.equal(await review.getByRole('button',{name:'Generate Payment Voucher',exact:true}).count(),0);
+      rejectWrites=false;const reviewSync=page.waitForResponse(response=>response.url().endsWith('/rpc/gwcc_apply_mutations'));
+      await review.getByRole('button',{name:'Save Review',exact:true}).click();await reviewSync;
+      await page.waitForFunction(id=>JSON.parse(localStorage.getItem(`gwcc_outbox_v2_${id}`)||'[]').length===0,id);
+      assert.ok(mutationRequests.some(request=>request.p_changes.some(change=>change.table==='welfare_claims'&&change.record.id==='qa-pending'&&change.record.amount_approved===500&&change.record.status==='approved')));
+      rejectWrites=true;mutationRequests.length=0;
+      await page.getByRole('row').filter({has:page.getByText('BEN-QA',{exact:true})}).getByRole('button',{name:'Review',exact:true}).click();
+      assert.equal(await review.getByLabel('Approved aid (GHS)',{exact:true}).inputValue(),'1000');
+      await review.getByRole('button',{name:'Close welfare claim review'}).click();
+
+      await page.goto(`${origin}/portal?tab=welfare`);
+      await page.getByRole('button',{name:'Open Staff Preview',exact:true}).click();
+      await page.getByText('Defaulter — Partially eligible',{exact:true}).waitFor();
+      await page.getByText(`3 unpaid month(s) through ${month(-1)}. 3 distinct month(s) paid.`,{exact:true}).waitFor();
+      await page.selectOption('#staff-preview-select','qa-current');
+      await page.getByText('Fully eligible',{exact:true}).waitFor();
     }
   }
   await page.getByLabel('Title',{exact:true}).fill('QA saved draft');
@@ -99,7 +161,7 @@ try{
   await page.getByRole('button',{name:/Sign Out|Log Out|Logout/i}).first().click();await page.waitForURL('**/login');
   assert.equal(await page.evaluate(id=>Object.keys(localStorage).filter(key=>key.startsWith(`gwcc_cache_${id}_`)).length,id),0);
   assert.deepEqual(errors,[]);
-  console.info(`Browser smoke passed: mobile authorization, ${pages.length} signed-in pages, durable draft retry, and logout cache clearing.`);
+  console.info(`Browser smoke passed: mobile authorization, ${pages.length} signed-in pages, welfare arrears/defaulter filters/CSV/partial claim approval/member portal, durable draft retry, and logout cache clearing.`);
 }finally{
   if(browser)await browser.close();child.kill('SIGTERM');
 }

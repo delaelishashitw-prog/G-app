@@ -64,6 +64,8 @@ import {
 } from '../types/database.types';
 import { cleanGhanaPhone } from '../lib/currencyUtils';
 import { ApplyWelfareClaimModal } from '../components/welfare/ApplyWelfareClaimModal';
+import { assessWelfareStanding } from '../features/welfare/welfareEligibility';
+import { WelfareStandingNotice } from '../components/welfare/WelfareStandingNotice';
 import { RecordWelfareEventContributionModal } from '../components/welfare/RecordWelfareEventContributionModal';
 import { MemberCertificateModal } from '../components/portal/MemberCertificateModal';
 import { RequestSubstituteModal } from '../components/portal/RequestSubstituteModal';
@@ -483,6 +485,8 @@ export const MemberPortalPage: React.FC = () => {
   const totalWelfareContributed = useMemo(() => {
     return memberWelfareDues.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
   }, [memberWelfareDues]);
+
+  const memberWelfareStanding = activeMember ? assessWelfareStanding(activeMember, memberWelfareDues) : null;
 
   const memberWelfareClaims = useMemo(() => {
     if (!activeMember) return [];
@@ -2782,14 +2786,9 @@ export const MemberPortalPage: React.FC = () => {
                 <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
                   Mutual Fund Standing
                 </span>
-                <div className="text-2xl font-black text-slate-900 mt-1">
-                  {memberWelfareDues.length >= 2 ? (
-                    <span className="text-emerald-700">Good Standing</span>
-                  ) : (
-                    <span className="text-amber-700">Pending Dues</span>
-                  )}
+                <div className="mt-2">
+                  {memberWelfareStanding && <WelfareStandingNotice standing={memberWelfareStanding} />}
                 </div>
-                <p className="text-[11px] text-slate-500 mt-0.5">Standard dues: GH₵ 50 / month</p>
               </div>
 
               <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs">
