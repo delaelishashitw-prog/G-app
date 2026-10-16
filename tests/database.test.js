@@ -7,7 +7,7 @@ const root='11111111-1111-4111-8111-111111111111';
 const member='22222222-2222-4222-8222-222222222222';
 const other='33333333-3333-4333-8333-333333333333';
 
-export async function setupDatabase({beforeSecurityUpgrade,beforeFinanceControls}={}) {
+export async function setupDatabase({beforeSecurityUpgrade,beforeFinanceControls,beforeCommunicationControls}={}) {
   const db=new PGlite();
   await db.exec(`CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role;
     CREATE SCHEMA auth;CREATE SCHEMA storage;
@@ -21,6 +21,7 @@ export async function setupDatabase({beforeSecurityUpgrade,beforeFinanceControls
   for(const file of fs.readdirSync('supabase/migrations').filter(file=>file.endsWith('.sql')).sort()) {
     if(file.endsWith('_secure_operations_release.sql') && beforeSecurityUpgrade) await beforeSecurityUpgrade(db);
     if(file.endsWith('_finance_receipt_controls.sql') && beforeFinanceControls) await beforeFinanceControls(db);
+    if(file.endsWith('_communication_draft_controls.sql') && beforeCommunicationControls) await beforeCommunicationControls(db);
     const sql=fs.readFileSync(`supabase/migrations/${file}`,'utf8').replace(/CREATE EXTENSION IF NOT EXISTS [^;]+;/g,'');
     try {await db.exec(sql);} catch(error) {await db.close();throw new Error(`${file}: ${error.message} ${error.where || ''}`);}
   }
@@ -499,5 +500,68 @@ test('service history recovery preserves original IDs and overlapping sessions, 
     assert.deepEqual((await db.query('SELECT id,service_id,date,member_id FROM public.attendance ORDER BY id')).rows,before);
     await db.exec(recovery);
     assert.equal((await db.query("SELECT count(*)::int n FROM public.audit_logs WHERE action='RESTORE_SERVICE_REFERENCES'")).rows[0].n,1);
+  }finally{await db.close();}
+});
+
+test('communication upgrade preserves historical drafts and server resolves valid unique audience IDs with authenticated authorship',async()=>{
+  let original;
+  const db=await setupDatabase({beforeCommunicationControls:async db=>{
+    await db.exec("INSERT INTO public.communications(id,title,channel,recipient_type,recipient_count,message,sender_id,status,sent_at,created_by) VALUES('legacy-communication','Old draft','sms','custom',42,'Historical text','GWCC','draft','2026-10-01','Original Author')");
+    original=(await db.query("SELECT to_jsonb(c) AS doc FROM public.communications c WHERE id='legacy-communication'")).rows[0].doc;
+  }});
+  try{
+    const upgraded=(await db.query("SELECT to_jsonb(c)-ARRAY['recipient_group_id','recipient_group_name','recipient_ids','created_at','updated_at','updated_by','archived_at'] AS doc FROM public.communications c WHERE id='legacy-communication'")).rows[0].doc;
+    assert.deepEqual(upgraded,original);
+    await asUser(db,root,async()=>{
+      await apply(db,[upsert('ministries',{id:'comm-ministry',name:'Synthetic Ministry'}),upsert('small_groups',{id:'comm-group',name:'Synthetic Group',meeting_location:'Synthetic hall',meeting_day:'Wednesday',meeting_time:'18:00'})]);
+      await apply(db,[
+        upsert('members',{id:'comm-a',first_name:'One',last_name:'Member',phone:'0240000001',status:'active',ministry_id:'comm-ministry',small_group_id:'comm-group'}),
+        upsert('members',{id:'comm-b',first_name:'Duplicate',last_name:'Member',phone:'+233240000001',status:'active',ministry_id:'comm-ministry',small_group_id:'comm-group'}),
+        upsert('members',{id:'comm-archived',first_name:'Archived',last_name:'Member',phone:'0240000002',status:'active',is_archived:true,ministry_id:'comm-ministry'}),
+        upsert('members',{id:'comm-inactive',first_name:'Inactive',last_name:'Member',phone:'0240000003',status:'inactive',ministry_id:'comm-ministry'}),
+        upsert('members',{id:'comm-bad',first_name:'Short',last_name:'Member',phone:'23324000001',status:'active',ministry_id:'comm-ministry'}),
+        upsert('members',{id:'comm-leader',first_name:'Leader',last_name:'Member',phone:'00233240000004',status:'leader',ministry_id:'comm-ministry'})]);
+      const draft={id:'comm-draft',title:'Notice',message:'Synthetic only',sender_id:'GWCC',channel:'sms',recipient_type:'ministry',recipient_group_id:'comm-ministry',recipient_group_name:'Forged name',recipient_ids:['forged-id'],recipient_count:999,status:'sent',created_by:'Forged Actor'};
+      const op=operation(),response=(await apply(db,[upsert('communications',draft)],op)).rows[0].result;
+      const saved=response[0].record;
+      assert.deepEqual(saved.recipient_ids,['comm-a','comm-leader']);assert.equal(saved.recipient_count,2);assert.equal(saved.recipient_group_name,'Synthetic Ministry');assert.equal(saved.status,'draft');assert.equal(saved.created_by,root);assert.equal(saved.updated_by,root);assert.ok(saved.updated_at);
+      assert.deepEqual((await apply(db,[upsert('communications',draft)],op)).rows[0].result,response);
+      await assert.rejects(apply(db,[upsert('communications',{...saved,title:'Unversioned'})]),/draft version is required/);
+      const edited=(await apply(db,[upsert('communications',{...saved,message:'Edited',created_by:'Impersonator'},saved.updated_at)])).rows[0].result[0].record;
+      assert.equal(edited.created_by,root);assert.equal(edited.sent_at,saved.sent_at);assert.equal(edited.created_at,saved.created_at);
+      await assert.rejects(apply(db,[upsert('communications',{...saved,title:'Stale'},saved.updated_at)]),/changed on another device/);
+      await assert.rejects(apply(db,[upsert('communications',{...draft,id:'bad-title',title:'x'.repeat(201)})]),/too long|1-200/);
+      await assert.rejects(apply(db,[upsert('communications',{...draft,id:'bad-count',recipient_count:-1})]),/non-negative/);
+      await assert.rejects(apply(db,[upsert('communications',{...draft,id:'bad-group',recipient_group_id:'missing'})]),/no longer available/);
+      await assert.rejects(apply(db,[upsert('communications',{...draft,id:'bad-message',message:' '})]),/message with/);
+      const group=(await apply(db,[upsert('communications',{...draft,id:'comm-small',recipient_type:'small_group',recipient_group_id:'comm-group'})])).rows[0].result[0].record;
+      assert.deepEqual(group.recipient_ids,['comm-a']);assert.equal(group.recipient_group_name,'Synthetic Group');
+      await apply(db,[upsert('members',{id:'comm-a',is_archived:true})]);
+      const archived=(await apply(db,[upsert('communications',{...edited,archived_at:'2026-10-16T15:00:00Z'},edited.updated_at)])).rows[0].result[0].record;
+      assert.equal(archived.message,'Edited');assert.deepEqual(archived.recipient_ids,edited.recipient_ids);assert.equal(archived.recipient_count,2);assert.ok(archived.archived_at);
+      await assert.rejects(apply(db,[upsert('communications',{...archived,message:'Hidden edit'},archived.updated_at)]),/Restore this archived/);
+      const restored=(await apply(db,[upsert('communications',{...archived,archived_at:null},archived.updated_at)])).rows[0].result[0].record;
+      assert.equal(restored.archived_at,null);assert.deepEqual(restored.recipient_ids,edited.recipient_ids);
+      const refreshed=(await apply(db,[upsert('communications',{...restored,message:'Reviewed audience'},restored.updated_at)])).rows[0].result[0].record;
+      assert.deepEqual(refreshed.recipient_ids,['comm-b','comm-leader']);
+    });
+  }finally{await db.close();}
+});
+
+test('communication draft RLS matches page permissions while ordinary members and anonymous users remain denied',async()=>{
+  const db=await setupDatabase();
+  try{
+    await asUser(db,root,async()=>await apply(db,[upsert('communications',{id:'private-draft',title:'Private draft',message:'Synthetic private text',recipient_type:'all_members',recipient_count:0,sender_id:'GWCC',channel:'sms',status:'draft'})]));
+    for(const role of ['attendance_officer','data_entry','finance_officer','member','administrator','pastor','ministry_leader','senior_pastor']){
+      await db.exec("SELECT set_config('request.jwt.claim.sub','',false)");await db.query('UPDATE public.profiles SET role=$1,authorization_reviewed_at=now() WHERE id=$2',[role,other]);
+      const allowed=['administrator','pastor','ministry_leader','senior_pastor'].includes(role);
+      await asUser(db,other,async()=>{
+        assert.equal((await db.query("SELECT public.gwcc_can_read('communications') AS allowed")).rows[0].allowed,allowed,role);
+        assert.equal((await db.query('SELECT count(*)::int AS n FROM public.communications')).rows[0].n,allowed?1:0,role);
+        await assert.rejects(db.query("UPDATE public.communications SET title='Direct write' WHERE id='private-draft'"),/permission denied/);
+        if(!allowed)await assert.rejects(apply(db,[upsert('communications',{id:'denied-'+role,title:'Denied',message:'No',channel:'sms',recipient_type:'all_members',recipient_count:0,sender_id:'GWCC'})]),/Not authorized|Staff authorization/);
+      });
+    }
+    await db.exec('SET ROLE anon');await assert.rejects(db.query('SELECT * FROM public.communications'),/permission denied/);await db.exec('RESET ROLE');
   }finally{await db.close();}
 });

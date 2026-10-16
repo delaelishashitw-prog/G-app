@@ -250,13 +250,13 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
       },
       {
         id: 'page-communication',
-        title: 'Communication & Birthday Radar',
+        title: 'Communication drafts',
         path: '/communication',
         module: 'communication',
         group: 'Pastoral Care',
-        description: 'Today’s celebrants, pastoral welcome messages & SMS dispatch',
+        description: 'Saved announcements, recipient previews and WhatsApp drafts',
         icon: MessageSquare,
-        keywords: ['communication', 'sms', 'birthdays', 'celebrants', 'broadcast', 'welcome video'],
+        keywords: ['communication', 'sms', 'announcements', 'drafts', 'whatsapp'],
       },
       {
         id: 'page-assistant',

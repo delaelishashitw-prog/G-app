@@ -8,7 +8,7 @@ export interface Mutation {
   expected_updated_at?: string | null;
 }
 export interface SyncBatch { id: string; changes: Mutation[]; createdAt: string; error?: string; attempts: number; requiresReview?: boolean; migratedFromLegacy?: boolean; recoveryId?: string }
-export interface SyncResult { success: boolean; pending: number; error?: string }
+export interface SyncResult { success: boolean; pending: number; error?: string; durable?: boolean }
 export interface SyncTransport { rpc: (name: string, params: any) => PromiseLike<{ data: any; error: any }> }
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 function validateBatches(value: unknown): asserts value is SyncBatch[] {

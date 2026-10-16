@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import {communicationRecipients} from '../lib/communicationUtils';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   Church,
   Users,
@@ -117,7 +118,7 @@ export const MinistriesPage: React.FC = () => {
     deleteMinistry,
     assignMemberToMinistry,
     removeMemberFromMinistry,
-    sendSMSMessage,
+    saveCommunicationDraft,
   } = useChurchData();
   const { canAccess, currentUser } = useAuth();
   const { success, error: toastError, info } = useToast();
@@ -146,6 +147,8 @@ export const MinistriesPage: React.FC = () => {
 
   // Broadcast Modal State
   const [broadcastMessage, setBroadcastMessage] = useState('');
+  const broadcastDraftId=useRef(crypto.randomUUID());
+  const broadcastAudience=useMemo(()=>communicationRecipients('ministry',selectedMinistryId,members,[]),[selectedMinistryId,members]);
   const [isSendingBroadcast, setIsSendingBroadcast] = useState(false);
 
   // Add / Edit Form State
@@ -427,36 +430,20 @@ export const MinistriesPage: React.FC = () => {
     success('Export Ready', `Downloaded volunteer roster for ${selectedMinistry.name}`);
   };
 
-  // Send Department SMS Notice
-  const handleSendBroadcast = (e: React.FormEvent) => {
+  // Prepare a saved draft; delivery requires a provider integration.
+  const handleSendBroadcast = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!broadcastMessage.trim() || !selectedMinistry) return;
+    if (!broadcastMessage.trim() || !selectedMinistry || isSendingBroadcast) return;
     setIsSendingBroadcast(true);
-
     try {
-      const recipientCount = currentMinistryMembers.length;
-      sendSMSMessage({
-        title: `${selectedMinistry.name} Broadcast`,
-        channel: 'sms',
-        recipient_type: 'ministry',
-        recipient_count: recipientCount || 1,
-        message: broadcastMessage.trim(),
-        sender_id: currentUser?.id || 'usr-admin',
-        created_by: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Ministry Overseer',
-        status: 'sent',
-      });
-
-      success(
-        'Announcement Dispatched',
-        `Broadcast sent to ${recipientCount} active members of ${selectedMinistry.name}.`
-      );
-      setBroadcastMessage('');
-      setActiveTab('roster');
-    } catch (err: any) {
-      toastError('Dispatch Error', err.message || 'Failed to dispatch SMS broadcast');
-    } finally {
-      setIsSendingBroadcast(false);
-    }
+      await saveCommunicationDraft({id:broadcastDraftId.current,title:`${selectedMinistry.name} announcement`.slice(0,200),channel:'sms',
+        recipient_type:'ministry',recipient_group_id:selectedMinistry.id,recipient_group_name:selectedMinistry.name,
+        recipient_ids:broadcastAudience.selected.map(row=>row.id),recipient_count:broadcastAudience.selected.length,
+        message:broadcastMessage.trim(),sender_id:'GWCC',status:'draft'});
+      success('Announcement draft saved',`Prepared for ${broadcastAudience.selected.length} unique valid phone numbers. Awaiting cloud confirmation; no SMS sent.`);
+      broadcastDraftId.current=crypto.randomUUID();setBroadcastMessage('');setActiveTab('roster');
+    } catch (err: any) {toastError('Draft not saved',err.message || 'The draft could not be preserved.');}
+    finally {setIsSendingBroadcast(false);}
   };
 
   return (
@@ -977,7 +964,7 @@ export const MinistriesPage: React.FC = () => {
                 }`}
               >
                 <MessageSquare className="w-4 h-4 text-emerald-700" />
-                <span>Send Department Notice (SMS)</span>
+                <span>Announcement drafts</span>
               </button>
             </div>
 
@@ -1193,10 +1180,10 @@ export const MinistriesPage: React.FC = () => {
             <div className="p-6 max-w-2xl space-y-4">
               <div>
                 <h4 className="font-bold text-slate-900 text-sm">
-                  Send SMS Announcement to {selectedMinistry.name}
+                  Prepare announcement draft for {selectedMinistry.name}
                 </h4>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Direct SMS notification will be delivered to all {currentMinistryMembers.length} active registered volunteers.
+                  Saving prepares a draft for {broadcastAudience.selected.length} unique valid phone numbers. SMS delivery requires a connected provider.
                 </p>
               </div>
 
@@ -1208,14 +1195,16 @@ export const MinistriesPage: React.FC = () => {
                   <textarea
                     rows={4}
                     required
+                    maxLength={5000}
+                    aria-label="Ministry announcement message"
                     value={broadcastMessage}
                     onChange={(e) => setBroadcastMessage(e.target.value)}
                     placeholder={`e.g. Shalom Saints! Please be reminded that our special rehearsal for the upcoming convention begins promptly this Saturday at ${selectedMinistry.meeting_time}. God bless you!`}
                     className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:bg-white focus:border-emerald-600 transition"
                   />
                   <div className="flex items-center justify-between text-[11px] text-slate-400 mt-1">
-                    <span>{broadcastMessage.length} characters (1 SMS segment)</span>
-                    <span>Recipients: {currentMinistryMembers.length} volunteers</span>
+                    <span>{broadcastMessage.length}/5,000 characters</span>
+                    <span>Excluded records: {broadcastAudience.issues.length}</span>
                   </div>
                 </div>
 
@@ -1226,7 +1215,7 @@ export const MinistriesPage: React.FC = () => {
                     className="px-5 py-2.5 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs transition flex items-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
                   >
                     <Megaphone className="w-3.5 h-3.5" />
-                    <span>{isSendingBroadcast ? 'Dispatching SMS...' : 'Send SMS Announcement'}</span>
+                    <span>{isSendingBroadcast ? 'Saving draft…' : 'Save announcement draft'}</span>
                   </button>
                   <button
                     type="button"
