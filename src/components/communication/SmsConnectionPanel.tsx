@@ -12,18 +12,23 @@ type Dispatch={id:string;draft_id:string|null;state:string;created_at:string;est
 type Connection={provider:string;api_key_configured:boolean;sender_id:string|null;enabled:boolean;ready:boolean;provider_verified?:boolean;sms_balance?:number|null;test_message:string};
 const button='border rounded-lg px-3 py-2 text-sm disabled:opacity-50';
 const stateNames:Record<string,string>={accepted:'Accepted · awaiting delivery',delivered:'Delivered',failed:'Delivery failed',rejected:'Rejected by provider',unknown:'Submission unconfirmed'};
-export const SmsConnectionPanel:React.FC<{draft:CommunicationRecord|null;onClose:()=>void}>=({draft,onClose})=>{
+export const SmsConnectionPanel:React.FC<{draft:CommunicationRecord|null;reviewRequest:number;onClose:()=>void}>=({draft,reviewRequest,onClose})=>{
   const {currentRole,isSimulating}=useAuth(),{error:toastError,info}=useToast();
   const canSend=['super_admin','senior_pastor','administrator'].includes(currentRole)&&!isSimulating;
   const [connection,setConnection]=useState<Connection|null>(null),[dispatches,setDispatches]=useState<Dispatch[]>([]),[loadError,setLoadError]=useState('');
   const [working,setWorking]=useState(false),busy=useRef(false),[phone,setPhone]=useState(''),[testConsent,setTestConsent]=useState(false);
   const testOperation=useRef<{phone:string;id:string}|null>(null),[review,setReview]=useState<{preview:Preview;estimate:Estimate;id:string}|null>(null),[consent,setConsent]=useState(false);
   const [reviewing,setReviewing]=useState(false),[reviewError,setReviewError]=useState('');
+  const reviewPanel=useRef<HTMLDivElement>(null);
   const mergeDispatch=(record:Dispatch)=>setDispatches(previous=>[record,...previous.filter(row=>row.id!==record.id)].sort((a,b)=>b.created_at.localeCompare(a.created_at)).slice(0,30));
   const load=useCallback(async()=>{
     const [status,history]=await Promise.all([apiRequest<Connection>('/api/sms',{action:'status'}),apiRequest<{dispatches:Dispatch[]}>('/api/sms',{action:'history'})]);
     setConnection(status);setDispatches(history.dispatches);setLoadError('');
   },[]);
+  const reloadHistory=async()=>{
+    const history=await apiRequest<{dispatches:Dispatch[]}>('/api/sms',{action:'history'});
+    setDispatches(history.dispatches);
+  };
   useEffect(()=>{let active=true;load().catch(error=>{if(active)setLoadError(error.message);});return()=>{active=false;};},[load]);
   useEffect(()=>{
     let active=true;setReview(null);setConsent(false);setReviewError('');setReviewing(false);
@@ -35,7 +40,16 @@ export const SmsConnectionPanel:React.FC<{draft:CommunicationRecord|null;onClose
         .catch(error=>{if(active)setReviewError(error.message);}).finally(()=>{if(active)setReviewing(false);});
     }
     return()=>{active=false;};
-  },[draft?.id,draft?.updated_at,draft?._sync_status,canSend]);
+  },[draft?.id,draft?.updated_at,draft?._sync_status,canSend,reviewRequest]);
+  useEffect(()=>{
+    if(!draft||!canSend)return;
+    const frame=requestAnimationFrame(()=>{
+      const panel=reviewPanel.current;
+      panel?.focus({preventScroll:true});
+      panel?.scrollIntoView({block:'start',behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+    });
+    return()=>cancelAnimationFrame(frame);
+  },[draft?.id,canSend,reviewRequest]);
   const run=async(action:()=>Promise<void>)=>{
     if(busy.current)return;busy.current=true;setWorking(true);
     try{await action();}catch(error){toastError('SMS action incomplete',(error as Error).message);}finally{busy.current=false;setWorking(false);}
@@ -86,7 +100,7 @@ export const SmsConnectionPanel:React.FC<{draft:CommunicationRecord|null;onClose
         <button type="button" onClick={test} disabled={working||!ready||!testConsent} className={button}>Send one test SMS</button>
       </div>}
     </>}
-    {draft&&canSend&&<div role="region" aria-label="Review SMS submission" className="space-y-3 border-2 border-emerald-700 rounded-xl p-3">
+    {draft&&canSend&&<div ref={reviewPanel} tabIndex={-1} role="region" aria-label="Review SMS submission" className="scroll-mt-24 space-y-3 border-2 border-emerald-700 rounded-xl p-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">
       <h3 className="font-semibold break-words [overflow-wrap:anywhere]">Review SMS: {draft.title}</h3>{reviewing&&<p className="text-sm">Checking the current audience…</p>}{reviewError&&<p role="alert" className="text-sm text-rose-800">{reviewError}</p>}
       {review&&<>
         <p className="text-sm">From <strong>{review.preview.sender}</strong> · {review.preview.recipients.length} Ghana mobile recipients</p>
@@ -100,7 +114,7 @@ export const SmsConnectionPanel:React.FC<{draft:CommunicationRecord|null;onClose
       </>}
       <button type="button" disabled={working} onClick={onClose} className={button}>Cancel SMS review</button>
     </div>}
-    <div className="space-y-3 border-t pt-3"><div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold text-sm">SMS delivery history</h3><button type="button" disabled={working} onClick={()=>run(load)} className="text-xs underline">Reload history</button></div>
+    <div className="space-y-3 border-t pt-3"><div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold text-sm">SMS delivery history</h3><button type="button" disabled={working} onClick={()=>run(reloadHistory)} className="text-xs underline">Reload history</button></div>
       {!dispatches.length&&<p className="text-xs text-slate-500">No SMS submissions recorded. Saved drafts are not delivery records.</p>}
       {dispatches.map(row=><article key={row.id} aria-label={`SMS submission: ${row.snapshot.title}`} className="space-y-2 rounded-lg border p-3 text-xs">
         <p className="break-words font-semibold">{row.snapshot.is_test?'Test · ':''}{row.snapshot.title}</p>

@@ -15,11 +15,12 @@ export async function checkCommunication(browser,{origin,settings,sampleMember})
     const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
     await context.grantPermissions(['clipboard-read','clipboard-write'],{origin});await context.addInitScript(watchSyncStatus);
     await context.addInitScript(({session})=>{localStorage.setItem('gwcc_supabase_url','https://gwcc-e2e.supabase.co');localStorage.setItem('gwcc_supabase_anon_key','test-public-key');localStorage.setItem('gwcc-church-auth-token',JSON.stringify(session));window.__openedLinks=[];window.open=url=>{window.__openedLinks.push(url);return null;};},{session});
-    let rejectWrites=true,smsReady=false;const requests=[],reads=[],smsRequests=[],smsWrites=[],smsHistory=[];
+    let rejectWrites=true,smsReady=false,historyFailure=false;const requests=[],reads=[],smsRequests=[],smsWrites=[],smsHistory=[];
     const smsStatus=()=>({provider:'Arkesel',api_key_configured:smsReady,sender_id:smsReady?'GWCC':null,enabled:smsReady,ready:smsReady,test_message:'GWCC SMS connection test. Your church app is connected to Arkesel.'});
     await context.route(origin+'/api/sms',async route=>{
       const request=route.request(),body=request.postDataJSON();smsRequests.push(body);
       assert.equal(request.headers().authorization,`Bearer ${token}`);
+      if(body.action==='history'&&historyFailure){await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Synthetic SMS history unavailable'})});return;}
       let result;
       if(body.action==='status')result=smsStatus();
       else if(body.action==='check')result={...smsStatus(),provider_verified:true,sms_balance:100};
@@ -65,9 +66,9 @@ export async function checkCommunication(browser,{origin,settings,sampleMember})
     });
     const page=await context.newPage(),errors=[];page.setDefaultTimeout(12000);page.on('pageerror',error=>errors.push(error.message));
     await page.goto(origin+'/communication');await page.getByRole('heading',{name:['super_admin','pastor'].includes(role)?'Communication':'Access Restricted',exact:true}).waitFor();
-    return {context,page,data,requests,reads,errors,smsRequests,smsWrites,setSmsReady:value=>{smsReady=value;},setReject:value=>{rejectWrites=value;}};
+    return {context,page,data,requests,reads,errors,smsRequests,smsWrites,setSmsReady:value=>{smsReady=value;},setHistoryFailure:value=>{historyFailure=value;},setReject:value=>{rejectWrites=value;}};
   }
-  const {context,page,data,requests,errors,smsRequests,smsWrites,setSmsReady,setReject}=await setup();
+  const {context,page,data,requests,errors,smsRequests,smsWrites,setSmsReady,setHistoryFailure,setReject}=await setup();
   const saved=title=>page.getByRole('article',{name:'Saved message: '+title,exact:true});
   try{
     await page.getByText('2 unique valid phone numbers · 4 excluded records.',{exact:true}).waitFor();
@@ -112,7 +113,35 @@ export async function checkCommunication(browser,{origin,settings,sampleMember})
     await testSubmission.getByRole('button',{name:'Check delivery reports',exact:true}).click();await testSubmission.getByText('1 delivered · 0 awaiting delivery · 0 failed/rejected · 0 unconfirmed',{exact:true}).waitFor();
     await saved(record.title).getByRole('button',{name:'Review SMS send',exact:true}).click();
     const review=page.getByRole('region',{name:'Review SMS submission',exact:true});await review.getByText('Cloud edit',{exact:true}).waitFor();
+    const assertReviewVisible=async()=>{
+      await page.waitForFunction(()=>{const panel=document.querySelector('[aria-label="Review SMS submission"]');if(!panel)return false;const top=panel.getBoundingClientRect().top;return document.activeElement===panel&&top>=64&&top<innerHeight/2;});
+    };
+    await assertReviewVisible();
     assert.equal(await review.getByRole('button',{name:'Confirm and send to 2 numbers',exact:true}).isDisabled(),true);
+    await page.getByLabel('I have permission to message these recipients and accept the SMS charges.',{exact:true}).check();
+    const confirmSend=review.getByRole('button',{name:'Confirm and send to 2 numbers',exact:true});
+    assert.equal(await confirmSend.isEnabled(),true);
+    const beforeReload=smsRequests.length;
+    await smsPanel.getByRole('button',{name:'Reload history',exact:true}).click();
+    await page.waitForFunction(()=>!document.querySelector('[aria-label="Review SMS submission"] button')?.disabled);
+    assert.deepEqual(smsRequests.slice(beforeReload).map(row=>row.action),['history']);
+    assert.equal(await confirmSend.isEnabled(),true);assert.equal(smsWrites.length,1);
+    await page.getByText('Provider connection checked. Review sender approval in Arkesel before sending.',{exact:true}).waitFor();
+    setHistoryFailure(true);await smsPanel.getByRole('button',{name:'Reload history',exact:true}).click();
+    await page.getByText('Synthetic SMS history unavailable',{exact:true}).first().waitFor();
+    await page.waitForFunction(()=>!document.querySelector('[aria-label="Review SMS submission"] button')?.disabled);
+    assert.equal(await confirmSend.isEnabled(),true);assert.equal(smsWrites.length,1);setHistoryFailure(false);
+    for(const width of [1440,390]){
+      await page.setViewportSize({width,height:width===390?844:1000});
+      await page.emulateMedia({reducedMotion:width===390?'reduce':'no-preference'});
+      await page.waitForFunction(expected=>parseFloat(getComputedStyle(document.querySelector('main').parentElement).paddingLeft)===expected,width===390?0:256);
+      const previewsBefore=smsRequests.filter(row=>row.action==='preview').length;
+      await saved(record.title).getByRole('button',{name:'Review SMS send',exact:true}).click();
+      await review.getByText('Cloud edit',{exact:true}).waitFor();await assertReviewVisible();
+      assert.equal(smsRequests.filter(row=>row.action==='preview').length,previewsBefore+1);
+      assert.equal(await confirmSend.isDisabled(),true);
+    }
+    if(process.env.COMMUNICATION_REVIEW_SCREENSHOT)await page.screenshot({path:process.env.COMMUNICATION_REVIEW_SCREENSHOT});
     await page.getByLabel('I have permission to message these recipients and accept the SMS charges.',{exact:true}).check();
     await review.getByRole('button',{name:'Confirm and send to 2 numbers',exact:true}).evaluate(node=>{node.click();node.click();});
     const sent=page.getByRole('article',{name:'SMS submission: '+record.title,exact:true});await sent.getByText('0 delivered · 2 awaiting delivery · 0 failed/rejected · 0 unconfirmed',{exact:true}).waitFor();assert.equal(smsWrites.length,2);
@@ -125,5 +154,5 @@ export async function checkCommunication(browser,{origin,settings,sampleMember})
   }catch(error){fs.mkdirSync('../rollout-check',{recursive:true});await page.screenshot({path:'../rollout-check/sms-browser-failure.png',fullPage:true});fs.writeFileSync('../rollout-check/sms-browser-failure.txt',await page.locator('body').innerText());fs.writeFileSync('../rollout-check/sms-browser-requests.json',JSON.stringify(smsRequests,null,2));throw error;}finally{await context.close();}
   const denied=await setup('attendance_officer');try{assert.equal(denied.reads.includes('communications'),false);assert.equal(await denied.page.getByText('Old synthetic draft',{exact:true}).count(),0);}finally{await denied.context.close();}
   const readOnly=await setup('pastor');try{await readOnly.page.getByRole('heading',{name:'SMS connection · Arkesel',exact:true}).waitFor();assert.equal(await readOnly.page.getByRole('button',{name:'Send one test SMS',exact:true}).count(),0);assert.equal(readOnly.smsWrites.length,0);}finally{await readOnly.context.close();}
-  console.info('Communication browser checks passed: durable drafts, audiences, provider setup, charged test consent, reviewed sending, duplicate-click prevention, actual delivery refresh, mobile layout, ministry drafts and role restrictions. Provider requests were synthetic.');
+  console.info('Communication browser checks passed: durable drafts, audiences, provider setup, charged test consent, focused mobile/desktop review and reopening, connection-preserving history reload/failure, reviewed sending, duplicate-click prevention, delivery refresh, ministry drafts and role restrictions. Provider requests were synthetic.');
 }
