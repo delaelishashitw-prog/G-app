@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Check, CalendarDays, Clock, MapPin, User, Users } from 'lucide-react';
 import { ChurchService } from '../../types/database.types';
 import { useToast } from '../../contexts/ToastContext';
+import { validateService } from '../../features/services/serviceSchedule';
 
 interface ServiceFormModalProps {
   initialService?: ChurchService | null;
@@ -33,8 +34,10 @@ export const ServiceFormModal: React.FC<ServiceFormModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name.trim()) {
-      error('Missing Name', 'Please provide a name for this church service.');
+    const expectedAttendance = formData.expected_attendance.trim() === '' ? undefined : Number(formData.expected_attendance);
+    const validationError = validateService({ ...formData, expected_attendance: expectedAttendance });
+    if (validationError) {
+      error('Invalid service', validationError);
       return;
     }
 
@@ -48,7 +51,7 @@ export const ServiceFormModal: React.FC<ServiceFormModalProps> = ({
       service_leader: formData.service_leader.trim() || undefined,
       preacher: formData.preacher.trim() || undefined,
       worship_leader: formData.worship_leader.trim() || undefined,
-      expected_attendance: parseInt(formData.expected_attendance, 10) || undefined,
+      expected_attendance: expectedAttendance,
       description: formData.description.trim() || undefined,
       is_active: formData.is_active,
       order_of_service: initialService?.order_of_service,
@@ -57,7 +60,7 @@ export const ServiceFormModal: React.FC<ServiceFormModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
-      <div className="relative w-full max-w-xl bg-white dark:bg-[#0e1726] rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden my-4 max-h-[94vh] flex flex-col">
+      <div role="dialog" aria-modal="true" aria-label={initialService ? 'Edit Church Service' : 'Schedule New Church Service'} className="relative w-full max-w-xl bg-white dark:bg-[#0e1726] rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden my-4 max-h-[94vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 bg-[#064e3b] text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
@@ -73,7 +76,7 @@ export const ServiceFormModal: React.FC<ServiceFormModalProps> = ({
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 text-white/80 hover:text-white rounded-lg transition cursor-pointer">
+          <button onClick={onClose} aria-label="Close service form" className="p-1.5 text-white/80 hover:text-white rounded-lg transition cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -84,6 +87,7 @@ export const ServiceFormModal: React.FC<ServiceFormModalProps> = ({
               Service Name / Title *
             </label>
             <input
+              aria-label="Service name"
               type="text"
               required
               value={formData.name}
@@ -133,6 +137,7 @@ export const ServiceFormModal: React.FC<ServiceFormModalProps> = ({
               <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Start Time (GMT)</label>
               <input
                 type="time"
+                aria-label="Service start time (GMT)"
                 required
                 value={formData.start_time}
                 onChange={(e) => setFormData({ ...formData, start_time: e.target.value })}
@@ -143,6 +148,7 @@ export const ServiceFormModal: React.FC<ServiceFormModalProps> = ({
               <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">End Time (GMT)</label>
               <input
                 type="time"
+                aria-label="Service end time (GMT)"
                 required
                 value={formData.end_time}
                 onChange={(e) => setFormData({ ...formData, end_time: e.target.value })}
@@ -166,6 +172,9 @@ export const ServiceFormModal: React.FC<ServiceFormModalProps> = ({
               <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Expected Attendance</label>
               <input
                 type="number"
+                aria-label="Expected service attendance"
+                min="0"
+                step="1"
                 value={formData.expected_attendance}
                 onChange={(e) => setFormData({ ...formData, expected_attendance: e.target.value })}
                 placeholder="250"

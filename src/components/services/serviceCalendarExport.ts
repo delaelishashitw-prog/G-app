@@ -1,118 +1,44 @@
-import { ChurchService } from '../../types/database.types';
+import type { ChurchService } from '../../types/database.types';
+import { serviceOccurrence } from '../../features/services/serviceSchedule';
 
-const DAY_MAP: Record<string, string> = {
-  sunday: 'SU',
-  monday: 'MO',
-  tuesday: 'TU',
-  wednesday: 'WE',
-  thursday: 'TH',
-  friday: 'FR',
-  saturday: 'SA',
-};
+const DAYS = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+const escapeText = (value: string) => value.replace(/\\/g, '\\\\').replace(/\r\n|\r|\n/g, '\\n').replace(/;/g, '\\;').replace(/,/g, '\\,');
+const timestamp = (date: Date) => date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
 
-function getNextDateForDay(dayName: string): Date {
-  const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  const targetDayIdx = days.indexOf(dayName.toLowerCase().trim());
-  const now = new Date();
-  const currentDayIdx = now.getDay();
-
-  let diff = (targetDayIdx === -1 ? 0 : targetDayIdx) - currentDayIdx;
-  if (diff < 0) diff += 7;
-
-  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
-  return target;
+function foldLine(line: string): string {
+  const encoder = new TextEncoder();
+  const lines: string[] = [];
+  let current = '', bytes = 0;
+  for (const character of line) {
+    const size = encoder.encode(character).length;
+    if (bytes + size > 75) { lines.push(current); current = ' '; bytes = 1; }
+    current += character; bytes += size;
+  }
+  lines.push(current);
+  return lines.join('\r\n');
 }
 
-const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
-
-function formatIcsDateTime(date: Date, timeStr: string): string {
-  const [hours, minutes] = (timeStr || '09:00').split(':').map(Number);
-  const year = date.getFullYear();
-  const month = pad(date.getMonth() + 1);
-  const day = pad(date.getDate());
-  const h = pad(isNaN(hours) ? 9 : hours);
-  const m = pad(isNaN(minutes) ? 0 : minutes);
-  return `${year}${month}${day}T${h}${m}00`;
+export function generateServicesIcs(services: ChurchService[], churchName = 'Greater Works City Church', now = new Date()): string {
+  const events = services.filter(service => service.is_active).flatMap(service => {
+    const occurrence = serviceOccurrence(service, now);
+    if (!occurrence) return [];
+    const description = [service.description || '', 'Preacher: ' + (service.preacher || 'Senior Pastor'),
+      'Service Leader: ' + (service.service_leader || 'Pastoral Board'),
+      ...(service.order_of_service || []).map((item, index) => (index + 1) + '. ' + item.title + ' (' + (item.minister || 'Minister') + ')')].filter(Boolean).join('\n');
+    return ['BEGIN:VEVENT', 'UID:gwcc-svc-' + encodeURIComponent(service.id) + '@gwcc-joma.gh', 'DTSTAMP:' + timestamp(now),
+      'DTSTART:' + timestamp(occurrence.start), 'DTEND:' + timestamp(occurrence.end),
+      'RRULE:FREQ=WEEKLY;BYDAY=' + DAYS[occurrence.start.getUTCDay()],
+      'SUMMARY:' + escapeText(service.name), 'DESCRIPTION:' + escapeText(description),
+      'LOCATION:' + escapeText(service.venue || 'Main Sanctuary, Joma, Accra'), 'STATUS:CONFIRMED', 'END:VEVENT'];
+  });
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Greater Works City Church//Worship Calendar//EN',
+    'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:' + escapeText(churchName) + ' - Worship Schedule',
+    'X-WR-TIMEZONE:Africa/Accra', ...events, 'END:VCALENDAR'].map(foldLine).join('\r\n') + '\r\n';
 }
 
-/**
- * Generates an iCalendar (.ics) string for recurring weekly church services
- */
-export function generateServicesIcs(
-  services: ChurchService[],
-  churchName: string = 'Greater Works City Church'
-): string {
-  const now = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-
-  const vEvents = services
-    .filter((s) => s.is_active)
-    .map((service) => {
-      const nextDate = getNextDateForDay(service.day_of_week || 'Sunday');
-      const dtStart = formatIcsDateTime(nextDate, service.start_time);
-      const dtEnd = formatIcsDateTime(nextDate, service.end_time || service.start_time);
-      const byDay = DAY_MAP[(service.day_of_week || 'sunday').toLowerCase().trim()] || 'SU';
-
-      const programSummary = (service.order_of_service || [])
-        .map((p, idx) => `${idx + 1}. [${p.time || p.duration || ''}] ${p.title} (${p.minister || 'Min.'})`)
-        .join('\\n');
-
-      const description = [
-        service.description || '',
-        `Preacher: ${service.preacher || 'Senior Pastor'}`,
-        `Service Leader: ${service.service_leader || 'Pastoral Board'}`,
-        `Venue: ${service.venue || 'Main Sanctuary, Joma, Accra'}`,
-        `Expected Attendance: ${service.expected_attendance ? `${service.expected_attendance} worshippers` : 'Auditorium Open'}`,
-        programSummary ? `\\nLITURGY / ORDER OF SERVICE:\\n${programSummary}` : '',
-        `\\nGreater Works City Church — Joma Assembly, Accra, Ghana`,
-      ]
-        .filter(Boolean)
-        .join('\\n');
-
-      return [
-        'BEGIN:VEVENT',
-        `UID:gwcc-svc-${service.id}@gwcc-joma.gh`,
-        `DTSTAMP:${now}`,
-        `DTSTART:${dtStart}`,
-        `DTEND:${dtEnd}`,
-        `RRULE:FREQ=WEEKLY;BYDAY=${byDay}`,
-        `SUMMARY:${(service.name || 'Worship Service').replace(/,/g, '\\,')}`,
-        `DESCRIPTION:${description}`,
-        `LOCATION:${(service.venue || 'Main Cathedral Sanctuary, Joma, Accra').replace(/,/g, '\\,')}`,
-        'STATUS:CONFIRMED',
-        'END:VEVENT',
-      ].join('\r\n');
-    });
-
-  const icsLines = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//Greater Works City Church//Worship Calendar//EN',
-    'CALSCALE:GREGORIAN',
-    'METHOD:PUBLISH',
-    `X-WR-CALNAME:${churchName} - Worship Schedule`,
-    'X-WR-TIMEZONE:Africa/Accra',
-    ...vEvents,
-    'END:VCALENDAR',
-  ];
-
-  return icsLines.join('\r\n');
-}
-
-/**
- * Downloads the services schedule as an .ics calendar file
- */
-export function downloadServicesIcs(
-  services: ChurchService[],
-  churchName: string = 'Greater Works City Church'
-) {
-  const icsData = generateServicesIcs(services, churchName);
-  const blob = new Blob([icsData], { type: 'text/calendar;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
+export function downloadServicesIcs(services: ChurchService[], churchName = 'Greater Works City Church') {
+  const url = URL.createObjectURL(new Blob([generateServicesIcs(services, churchName)], { type: 'text/calendar;charset=utf-8' }));
   const link = document.createElement('a');
-  link.href = url;
-  link.setAttribute('download', 'GWCC_Worship_Schedule.ics');
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  link.href = url; link.download = 'GWCC_Worship_Schedule.ics';
+  document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
 }

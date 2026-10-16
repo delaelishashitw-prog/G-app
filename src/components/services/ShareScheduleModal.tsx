@@ -28,7 +28,7 @@ export const ShareScheduleModal: React.FC<ShareScheduleModalProps> = ({
   settings,
   onClose,
 }) => {
-  const { success } = useToast();
+  const { success, error } = useToast();
   const [copied, setCopied] = useState(false);
 
   const activeServices = services.filter((s) => s.is_active);
@@ -62,11 +62,13 @@ ${s.description ? `_${s.description}_\n` : ''}`
 _"I was glad when they said unto me, Let us go into the house of the LORD." — Psalm 122:1_
 All are cordially welcome to fellowship with us in faith, signs and wonders!`;
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(broadcastText);
+  const handleCopy = async () => {
+    try {
+    await navigator.clipboard.writeText(broadcastText);
     setCopied(true);
     success('Schedule Copied', 'Formatted weekly worship schedule copied to clipboard.');
     setTimeout(() => setCopied(false), 2500);
+    } catch { error('Copy failed', 'Allow clipboard access and try again.'); }
   };
 
   const handleDownloadCalendar = () => {
@@ -82,7 +84,7 @@ All are cordially welcome to fellowship with us in faith, signs and wonders!`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
-      <div className="relative w-full max-w-2xl bg-white dark:bg-[#0e1726] rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden my-4 max-h-[94vh] flex flex-col">
+      <div role="dialog" aria-modal="true" aria-label="Share service schedule" className="relative w-full max-w-2xl bg-white dark:bg-[#0e1726] rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden my-4 max-h-[94vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 bg-[#064e3b] text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
@@ -98,6 +100,7 @@ All are cordially welcome to fellowship with us in faith, signs and wonders!`;
           </div>
           <button
             onClick={onClose}
+            aria-label="Close service schedule"
             className="p-1.5 text-white/80 hover:text-white rounded-lg transition hover:bg-emerald-800 cursor-pointer"
           >
             <X className="w-5 h-5" />

@@ -30,8 +30,6 @@ export const PrintRosterModal: React.FC<PrintRosterModalProps> = ({
   selectedDate,
   selectedServiceName,
 }) => {
-  if (!isOpen) return null;
-
   const handlePrint = () => {
     window.print();
   };
@@ -67,6 +65,7 @@ export const PrintRosterModal: React.FC<PrintRosterModalProps> = ({
     }, {} as Record<string, RosterAssignment[]>);
   }, [filteredAssignments]);
 
+  if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
       <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-4 max-h-[94vh] flex flex-col">

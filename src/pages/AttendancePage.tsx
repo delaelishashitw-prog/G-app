@@ -88,7 +88,11 @@ export const AttendancePage: React.FC = () => {
   const [searchParams] = useSearchParams();
 
   // Active service and date selection
-  const [selectedServiceId, setSelectedServiceId] = useState(services[0]?.id || '');
+  const requestedServiceId = searchParams.get('serviceId');
+  const [selectedServiceId, setSelectedServiceId] = useState(requestedServiceId || services[0]?.id || '');
+  React.useEffect(() => {
+    if (requestedServiceId) setSelectedServiceId(requestedServiceId);
+  }, [requestedServiceId]);
   const [selectedDate, setSelectedDate] = useState(() => {
     const urlDate = searchParams.get('date');
     if (urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
@@ -625,6 +629,7 @@ export const AttendancePage: React.FC = () => {
               Select Service
             </label>
             <select
+              aria-label="Attendance service"
               value={selectedServiceId}
               onChange={(e) => setSelectedServiceId(e.target.value)}
               className="text-xs font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 focus:outline-teal-600 focus:bg-white"

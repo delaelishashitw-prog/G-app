@@ -205,9 +205,8 @@ export function batchAddOrUpdateRosterAssignments(
         (assignment) =>
           assignment.service_id === record.service_id &&
           assignment.date === record.date &&
-          (assignment.role_title.toLowerCase() === record.role_title.toLowerCase() ||
-            (assignment.department === record.department &&
-              assignment.role_title.toLowerCase().slice(0, 5) === record.role_title.toLowerCase().slice(0, 5)))
+          assignment.department === record.department &&
+          assignment.role_title.trim().toLowerCase() === record.role_title.trim().toLowerCase()
       );
 
       if (existingIdx >= 0) {

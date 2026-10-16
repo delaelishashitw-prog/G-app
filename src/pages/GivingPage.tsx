@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { resolveServiceId } from '../features/services/serviceInsights';
 import {
   Coins,
   Landmark,
@@ -116,6 +117,8 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 export const GivingPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedServiceId = searchParams.get('serviceId');
   const {
     giving,
     members,
@@ -155,17 +158,24 @@ export const GivingPage: React.FC = () => {
   // If user is a registered member and NOT a church finance officer/admin, scope to self view
   const isMemberSelfView = !isFinanceAdmin && (currentUser?.role === 'member' || Boolean(currentMember));
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'tithers' | 'services'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'tithers' | 'services'>(requestedServiceId ? 'ledger' : 'overview');
 
   // Filters
-  const [dateFilter, setDateFilter] = useState<GivingDateFilterType>('this_month');
+  const [dateFilter, setDateFilter] = useState<GivingDateFilterType>(requestedServiceId ? 'all' : 'this_month');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'voided'>('all');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('all');
-  const [selectedService, setSelectedService] = useState<string>('all');
+  const [selectedService, setSelectedService] = useState<string>(requestedServiceId || 'all');
+  React.useEffect(() => {
+    if (requestedServiceId) {
+      setSelectedService(requestedServiceId);
+      setActiveTab('ledger');
+      setDateFilter('all');
+    }
+  }, [requestedServiceId]);
 
   // Modals state
   const [showRecordModal, setShowRecordModal] = useState(false);
@@ -242,7 +252,7 @@ export const GivingPage: React.FC = () => {
         if (!isDateMatchingFilter(item.date)) return false;
         if (selectedCategory !== 'all' && item.category !== selectedCategory) return false;
         if (selectedPaymentMethod !== 'all' && item.payment_method !== selectedPaymentMethod) return false;
-        if (selectedService !== 'all' && item.service_name !== selectedService) return false;
+        if (selectedService !== 'all' && resolveServiceId(item, services) !== selectedService) return false;
 
         // Transaction Status Filter
         if (statusFilter !== 'all') {
@@ -278,6 +288,7 @@ export const GivingPage: React.FC = () => {
     selectedCategory,
     selectedPaymentMethod,
     selectedService,
+    services,
     searchQuery,
   ]);
 
@@ -1090,13 +1101,14 @@ export const GivingPage: React.FC = () => {
 
             {/* Service Filter */}
             <select
+              aria-label="Filter giving by service"
               value={selectedService}
               onChange={(e) => setSelectedService(e.target.value)}
               className="px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 focus:outline-none"
             >
               <option value="all">All Church Services</option>
               {services.map((srv) => (
-                <option key={srv.id} value={srv.name}>
+                <option key={srv.id} value={srv.id}>
                   {srv.name}
                 </option>
               ))}

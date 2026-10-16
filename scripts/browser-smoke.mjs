@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {chromium} from 'playwright';
 import {initialSettings,sampleMembers} from '../src/lib/initialData.ts';
+import {serviceFixtures,checkServices} from './services-browser-checks.mjs';
 
 const port=Number(process.env.TEST_PORT||3401),origin=`http://127.0.0.1:${port}`;
 const child=spawn(process.execPath,['--import','tsx','server.ts'],{cwd:process.cwd(),env:{...process.env,NODE_ENV:'production',PORT:String(port),SUPABASE_URL:'https://gwcc-e2e.supabase.co',SUPABASE_ANON_KEY:'test-public-key'},stdio:'pipe'});
@@ -45,6 +46,7 @@ try{
   const receipt=(id,memberId,offset,amount)=>({id,member_id:memberId,member_name:data.members.find(member=>member.id===memberId).first_name+' '+data.members.find(member=>member.id===memberId).last_name,amount,date:`${month(Math.min(offset,0))}-01`,month:month(offset),payment_method:'cash',recorded_by:'QA',created_at:`${month(0)}-15T00:00:00Z`});
   data.welfare_contributions=[receipt('qa-1','qa-member',-6,10000),receipt('qa-2','qa-member',-5,400),receipt('qa-3','qa-member',-4,350),receipt('qa-duplicate','qa-member',-4,95),{...receipt('qa-prepaid','qa-member',2,10),date:`${month(0)}-01`},...[-5,-4,-3].map((offset,index)=>receipt(`qa-current-${index}`,'qa-current',offset,10)),{...receipt('qa-first','qa-first-payment',0,10),date:today.toISOString().slice(0,10)}];
   data.welfare_claims=[];
+  const serviceFixture=serviceFixtures(today);Object.assign(data,serviceFixture.tables);
   const context=await browser.newContext({viewport:{width:1440,height:1000}});
   await context.addInitScript(({session})=>{localStorage.setItem('gwcc_supabase_url','https://gwcc-e2e.supabase.co');localStorage.setItem('gwcc_supabase_anon_key','test-public-key');localStorage.setItem('gwcc-church-auth-token',JSON.stringify(session));},{session});
   let rejectWrites=true;const mutationRequests=[];
@@ -75,6 +77,7 @@ try{
   for(const path of pages){
     await page.goto(`${origin}${path}`);await page.locator('main').waitFor();await page.waitForTimeout(100);
     assert.ok(!new URL(page.url()).pathname.startsWith('/login'),`Authenticated route failed: ${path}`);
+    if(path==='/services')await checkServices(page,{origin,data,profile,mutations:mutationRequests,setRejectWrites:value=>{rejectWrites=value;},userId:id,clock:serviceFixture.clock});
     if(path==='/welfare'){
       const balanceCard=()=>page.getByText('Welfare Dues Balance',{exact:true}).locator('..').locator('..');
       await balanceCard().getByText('GH₵ 10,895.00',{exact:true}).waitFor();

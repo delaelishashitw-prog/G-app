@@ -3,6 +3,8 @@ import { X, Check, Users, MessageCircle, Mic, Music, Shield, Radio, Calendar, Ch
 import { ChurchService, Member, RosterAssignment } from '../../types/database.types';
 import { cleanGhanaPhone } from '../../lib/currencyUtils';
 import { useToast } from '../../contexts/ToastContext';
+import { resolveRosterMember } from '../../features/services/serviceInsights';
+import { serviceOccurrence } from '../../features/services/serviceSchedule';
 
 interface DutyRosterModalProps {
   service: ChurchService;
@@ -14,20 +16,6 @@ interface DutyRosterModalProps {
     newAssignments?: Omit<RosterAssignment, 'id' | 'created_at'>[]
   ) => void;
   onClose: () => void;
-}
-
-function getNextServiceDate(dayOfWeek: string): string {
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const targetDay = days.findIndex((d) => d.toLowerCase() === (dayOfWeek || 'Sunday').toLowerCase());
-  const now = new Date();
-  const currentDay = now.getDay();
-  let diff = (targetDay === -1 ? 0 : targetDay) - currentDay;
-  if (diff < 0) diff += 7;
-  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
-  const year = target.getFullYear();
-  const month = String(target.getMonth() + 1).padStart(2, '0');
-  const day = String(target.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 }
 
 function computePriorTime(startTime: string | undefined, priorMins: number): string {
@@ -50,9 +38,9 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
   onSave,
   onClose,
 }) => {
-  const { success } = useToast();
+  const { success, error } = useToast();
 
-  const defaultDate = useMemo(() => getNextServiceDate(service.day_of_week), [service.day_of_week]);
+  const defaultDate = useMemo(() => serviceOccurrence(service)?.occurrenceDate || new Date().toISOString().slice(0, 10), [service]);
   const [targetDate, setTargetDate] = useState(defaultDate);
 
   // Check if assignments already exist for this service and date
@@ -64,7 +52,7 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
     (a) => a.role_title.toLowerCase().includes('preach') || a.role_title.toLowerCase().includes('exhort')
   )?.member_name;
   const existingModerator = assignmentsForDate.find(
-    (a) => a.role_title.toLowerCase().includes('moderator') || a.role_title.toLowerCase().includes('leader') || a.role_title.toLowerCase().includes('mc')
+    (a) => /moderator|service.*leader|\bmc\b/i.test(a.role_title)
   )?.member_name;
   const existingWorship = assignmentsForDate.find(
     (a) => a.role_title.toLowerCase().includes('worship') || a.role_title.toLowerCase().includes('choir') || a.role_title.toLowerCase().includes('music')
@@ -80,69 +68,45 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
   )?.member_name;
   const existingAnnouncementText = assignmentsForDate.find((a) => a.announcement)?.announcement || service.announcements || '';
 
-  const [preacher, setPreacher] = useState(existingPreacher || service.preacher || 'Prophet Elisha K. Richard');
-  const [serviceLeader, setServiceLeader] = useState(existingModerator || service.service_leader || 'Pastor Emmanuel Osei');
-  const [worshipLeader, setWorshipLeader] = useState(existingWorship || service.worship_leader || 'Sister Abena Serwaa');
-  const [headUsher, setHeadUsher] = useState(existingUsher || service.head_usher || 'Kwame Mensah');
-  const [soundMedia, setSoundMedia] = useState(existingSound || service.sound_media || 'Benjamin Antwi');
+  const [preacher, setPreacher] = useState(existingPreacher || service.preacher || '');
+  const [serviceLeader, setServiceLeader] = useState(existingModerator || service.service_leader || '');
+  const [worshipLeader, setWorshipLeader] = useState(existingWorship || service.worship_leader || '');
+  const [headUsher, setHeadUsher] = useState(existingUsher || service.head_usher || '');
+  const [soundMedia, setSoundMedia] = useState(existingSound || service.sound_media || '');
   const [announcementsLeader, setAnnouncementsLeader] = useState(
-    existingAnnouncementsSteward || service.announcements_minister || 'Clara Gaewornu'
+    existingAnnouncementsSteward || service.announcements_minister || ''
   );
   const [announcementText, setAnnouncementText] = useState(existingAnnouncementText);
   const [syncToMemberPortal, setSyncToMemberPortal] = useState(true);
 
   // Synchronize field defaults if existing assignments are loaded for the target date
   React.useEffect(() => {
-    if (existingPreacher) setPreacher(existingPreacher);
-    if (existingModerator) setServiceLeader(existingModerator);
-    if (existingWorship) setWorshipLeader(existingWorship);
-    if (existingUsher) setHeadUsher(existingUsher);
-    if (existingSound) setSoundMedia(existingSound);
-    if (existingAnnouncementsSteward) setAnnouncementsLeader(existingAnnouncementsSteward);
-    if (existingAnnouncementText) setAnnouncementText(existingAnnouncementText);
-  }, [targetDate, existingPreacher, existingModerator, existingWorship, existingUsher, existingSound, existingAnnouncementsSteward, existingAnnouncementText]);
+    setPreacher(existingPreacher || service.preacher || '');
+    setServiceLeader(existingModerator || service.service_leader || '');
+    setWorshipLeader(existingWorship || service.worship_leader || '');
+    setHeadUsher(existingUsher || service.head_usher || '');
+    setSoundMedia(existingSound || service.sound_media || '');
+    setAnnouncementsLeader(existingAnnouncementsSteward || service.announcements_minister || '');
+    setAnnouncementText(existingAnnouncementText);
+  }, [targetDate, existingPreacher, existingModerator, existingWorship, existingUsher, existingSound, existingAnnouncementsSteward, existingAnnouncementText, service]);
 
-  // Find matching member from string with robust title stripping and ID fallback
-  const findMemberByName = (nameStr: string): Member | undefined => {
-    if (!nameStr || !nameStr.trim()) return undefined;
-    const trimmed = nameStr.trim();
-    const byId = members.find((m) => m.id === trimmed || m.member_id.toLowerCase() === trimmed.toLowerCase());
-    if (byId) return byId;
-
-    const byPhone = members.find((m) => m.phone && cleanGhanaPhone(m.phone) === cleanGhanaPhone(trimmed));
-    if (byPhone) return byPhone;
-
-    const clean = trimmed
-      .toLowerCase()
-      .replace(/\b(prophet|pastor|elder|deacon|deaconess|brother|sister|bro|sis|minister|rev|reverend|dr|mrs|mr|ms|evangelist)\b/gi, '')
-      .replace(/\([^)]*\)/g, '')
-      .replace(/[^a-z0-9\s]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    return members.find((m) => {
-      const f = (m.first_name || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-      const l = (m.last_name || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-      const full = `${f} ${l}`.trim();
-      const reverseFull = `${l} ${f}`.trim();
-      return (
-        clean === full ||
-        clean === reverseFull ||
-        clean.includes(full) ||
-        full.includes(clean) ||
-        (f && l && clean.includes(f) && clean.includes(l))
-      );
-    });
-  };
+  const findMemberByName = (value: string) => resolveRosterMember(value, members);
 
   const handleSave = () => {
+    const names = [preacher, serviceLeader, worshipLeader, headUsher, soundMedia, announcementsLeader].filter(name => name.trim());
+    if (!targetDate) { error('Date required', 'Choose the service date.'); return; }
+    if (syncToMemberPortal && names.some(name => !findMemberByName(name))) {
+      error('Member selection required', 'Choose an unambiguous member for each role. For visiting ministers, turn off portal sync and save their names.');
+      return;
+    }
+    const displayName = (value: string) => { const member = findMemberByName(value); return member ? `${member.first_name} ${member.last_name}` : value.trim(); };
     const serviceUpdates: Partial<ChurchService> = {
-      preacher: preacher.trim(),
-      service_leader: serviceLeader.trim(),
-      worship_leader: worshipLeader.trim(),
-      head_usher: headUsher.trim(),
-      sound_media: soundMedia.trim(),
-      announcements_minister: announcementsLeader.trim(),
+      preacher: displayName(preacher),
+      service_leader: displayName(serviceLeader),
+      worship_leader: displayName(worshipLeader),
+      head_usher: displayName(headUsher),
+      sound_media: displayName(soundMedia),
+      announcements_minister: displayName(announcementsLeader),
       announcements: announcementText.trim(),
     };
 
@@ -207,7 +171,7 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
           department: cfg.department,
           role_title: cfg.role_title,
           report_time: cfg.report_time,
-          status: 'confirmed',
+          status: assignmentsForDate.find(row => row.member_id === matchedMember?.id && row.role_title === cfg.role_title)?.status || 'pending',
           notes: cfg.notes,
           announcement: announcementText.trim() || undefined,
         });
@@ -216,22 +180,24 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
 
     onSave(service.id, serviceUpdates, newAssignments);
     success(
-      'Duty Roster Updated & Synchronized',
-      `Ministers on duty for "${service.name}" (${targetDate}) saved and linked to Member Self-Service Portal.`
+      'Duty Roster Saved',
+      syncToMemberPortal ? `${newAssignments.length} assignments saved for ${targetDate}; new assignments await confirmation.` : 'Service roles saved without creating portal assignments.'
     );
     onClose();
   };
 
   const createWhatsAppLink = (ministerName: string, role: string) => {
     const matched = findMemberByName(ministerName);
-    const phone = matched?.phone ? cleanGhanaPhone(matched.phone) : '233240000000';
+    if (!matched?.phone) return undefined;
+    const phone = cleanGhanaPhone(matched.phone);
+    if (!/^233\d{9}$/.test(phone)) return undefined;
     const message = `Calvary greetings from Greater Works City Church! This is a reminder that you are scheduled on duty as [${role}] for ${service.name} on ${targetDate} (${service.day_of_week}, ${service.start_time} - ${service.end_time} GMT) at the Main Sanctuary. Please arrive 30 minutes prior for pre-service prayer. You can also view and confirm this on your Member Portal. God bless you!`;
     return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
-      <div className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-4 max-h-[94vh] flex flex-col">
+      <div role="dialog" aria-modal="true" aria-label="Service duty roster" className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-4 max-h-[94vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 bg-[#064e3b] text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
@@ -243,7 +209,7 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
               <p className="text-xs text-emerald-200">{service.name} • {service.day_of_week}s</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 text-white/80 hover:text-white rounded-lg transition cursor-pointer">
+          <button onClick={onClose} aria-label="Close duty roster" className="p-1.5 text-white/80 hover:text-white rounded-lg transition cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -313,7 +279,7 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
               >
                 <option value="">Choose Member...</option>
                 {members.map((m) => (
-                  <option key={m.id} value={`${m.first_name} ${m.last_name}`}>
+                  <option key={m.id} value={m.id}>
                     {m.first_name} {m.last_name} ({m.member_id})
                   </option>
                 ))}
@@ -369,7 +335,7 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
               >
                 <option value="">Choose Member...</option>
                 {members.map((m) => (
-                  <option key={m.id} value={`${m.first_name} ${m.last_name}`}>
+                  <option key={m.id} value={m.id}>
                     {m.first_name} {m.last_name} ({m.member_id})
                   </option>
                 ))}
@@ -425,7 +391,7 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
               >
                 <option value="">Choose Member...</option>
                 {members.map((m) => (
-                  <option key={m.id} value={`${m.first_name} ${m.last_name}`}>
+                  <option key={m.id} value={m.id}>
                     {m.first_name} {m.last_name} ({m.member_id})
                   </option>
                 ))}
@@ -481,7 +447,7 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
               >
                 <option value="">Choose Member...</option>
                 {members.map((m) => (
-                  <option key={m.id} value={`${m.first_name} ${m.last_name}`}>
+                  <option key={m.id} value={m.id}>
                     {m.first_name} {m.last_name} ({m.member_id})
                   </option>
                 ))}
@@ -537,7 +503,7 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
               >
                 <option value="">Choose Member...</option>
                 {members.map((m) => (
-                  <option key={m.id} value={`${m.first_name} ${m.last_name}`}>
+                  <option key={m.id} value={m.id}>
                     {m.first_name} {m.last_name} ({m.member_id})
                   </option>
                 ))}
@@ -594,7 +560,7 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
               >
                 <option value="">Choose Member...</option>
                 {members.map((m) => (
-                  <option key={m.id} value={`${m.first_name} ${m.last_name}`}>
+                  <option key={m.id} value={m.id}>
                     {m.first_name} {m.last_name} ({m.member_id})
                   </option>
                 ))}
@@ -634,7 +600,7 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
               className="w-full px-3 py-2 border border-amber-200 rounded-lg bg-white text-xs font-medium text-slate-900 focus:outline-emerald-600 resize-none shadow-2xs"
             />
             <p className="text-[11px] text-amber-800 leading-relaxed">
-              These notices will be published alongside duty schedules and delivered directly to stewards on duty for this service.
+              These notices appear alongside the duty schedule in each assigned member’s portal.
             </p>
           </div>
 

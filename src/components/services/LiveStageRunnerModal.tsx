@@ -19,6 +19,7 @@ import {
   Tv,
 } from 'lucide-react';
 import { ChurchService, ServiceProgramItem } from '../../types/database.types';
+import { programDurationSeconds } from '../../features/services/serviceSchedule';
 
 interface LiveStageRunnerModalProps {
   service: ChurchService;
@@ -27,13 +28,7 @@ interface LiveStageRunnerModalProps {
 
 // Parses string like "25 min" or "15" or "10 mins" into seconds
 function parseDurationToSeconds(durationStr?: string): number {
-  if (!durationStr) return 15 * 60; // default 15 mins
-  const match = durationStr.match(/(\d+)/);
-  if (match) {
-    const minutes = parseInt(match[1], 10);
-    return Math.max(1, minutes) * 60;
-  }
-  return 15 * 60;
+  return programDurationSeconds(durationStr);
 }
 
 function formatTime(seconds: number): string {
@@ -78,6 +73,7 @@ export const LiveStageRunnerModal: React.FC<LiveStageRunnerModalProps> = ({
       const now = new Date();
       setCurrentTimeStr(
         now.toLocaleTimeString('en-GB', {
+          timeZone: 'Africa/Accra',
           hour: '2-digit',
           minute: '2-digit',
           second: '2-digit',
@@ -94,14 +90,15 @@ export const LiveStageRunnerModal: React.FC<LiveStageRunnerModalProps> = ({
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
     if (isRunning) {
+      const startedAt = Date.now(), initialRemaining = secondsRemaining, initialElapsed = serviceElapsedTime;
+      let previousRemaining = secondsRemaining;
       interval = setInterval(() => {
-        setSecondsRemaining((prev) => {
-          if (prev === 1 && soundEnabled) {
-            playChime();
-          }
-          return prev - 1;
-        });
-        setServiceElapsedTime((prev) => prev + 1);
+        const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+        const remaining = initialRemaining - elapsed;
+        if (previousRemaining > 0 && remaining <= 0 && soundEnabled) playChime();
+        previousRemaining = remaining;
+        setSecondsRemaining(remaining);
+        setServiceElapsedTime(initialElapsed + elapsed);
       }, 1000);
     }
     return () => {
@@ -124,6 +121,7 @@ export const LiveStageRunnerModal: React.FC<LiveStageRunnerModalProps> = ({
       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.6);
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.6);
+      osc.onended = () => { void ctx.close(); };
     } catch {
       // Audio context might be restricted before interaction
     }
