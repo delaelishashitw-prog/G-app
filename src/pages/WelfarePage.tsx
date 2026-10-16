@@ -139,7 +139,7 @@ export const WelfarePage: React.FC = () => {
   const [calcCategory, setCalcCategory] = useState<WelfareClaimCategory>('bereavement');
   const [calcMonthsContributed, setCalcMonthsContributed] = useState<number>(6);
   const [calcArrearsMonths, setCalcArrearsMonths] = useState<number>(0);
-  const assessmentMonth = new Date().toISOString().slice(0, 7);
+  const assessmentDate = new Date().toISOString().slice(0, 10);
 
   // Aggregations
   const { totalDuesCollected, paidClaims, totalDisbursed, fundBalance } = useMemo(
@@ -237,7 +237,7 @@ export const WelfarePage: React.FC = () => {
         const memContributions = welfareContributions.filter((c) => c.member_id === m.id || c.member_id === m.member_id);
         const memClaims = welfareClaims.filter((c) => (c.member_id === m.id || c.member_id === m.member_id) && c.beneficiary_type !== 'external_community' && paidWelfareAmount(c) > 0);
         const { totalDuesCollected: duesSum, totalDisbursed: aidSum } = summarizeWelfare(memContributions, memClaims);
-        const standing = assessWelfareStanding(m, memContributions, new Date(`${assessmentMonth}-01T00:00:00Z`));
+        const standing = assessWelfareStanding(m, memContributions, new Date(`${assessmentDate}T00:00:00Z`));
 
         return {
           member: m,
@@ -248,7 +248,7 @@ export const WelfarePage: React.FC = () => {
           netPosition: duesSum - aidSum,
         };
       });
-  }, [members, welfareContributions, welfareClaims, assessmentMonth]);
+  }, [members, welfareContributions, welfareClaims, assessmentDate]);
 
   const defaultersCount = allMemberWelfareSummaries.filter(item => item.standing.isDefaulter).length;
   const standingByMemberId = useMemo(() => new Map(allMemberWelfareSummaries.flatMap(item =>
@@ -383,6 +383,7 @@ export const WelfarePage: React.FC = () => {
       'Aid Received (GHS)',
       'Net Standing (GHS)',
       'Eligibility Status',
+      'Welfare Joining Date (First Payment)',
       'Unpaid Completed Months',
       'Unpaid Month List',
       'Assessed From',
@@ -398,6 +399,7 @@ export const WelfarePage: React.FC = () => {
       item.totalReceived.toFixed(2),
       item.netPosition.toFixed(2),
       item.standing.label,
+      item.standing.welfareJoiningDate ?? '',
       item.standing.arrearsCount ?? 'Unknown',
       item.standing.arrearsMonths.join('; '),
       item.standing.startMonth ?? '',
@@ -1514,7 +1516,8 @@ export const WelfarePage: React.FC = () => {
                 <option value="full">Fully eligible</option>
                 <option value="partial">Defaulters — Partially eligible (3+ months arrears)</option>
                 <option value="probation">Probation — Committee review</option>
-                <option value="review">Review needed — Missing joining date</option>
+                <option value="not_enrolled">Not enrolled — No welfare payment</option>
+                <option value="review">Review needed — Payment date missing</option>
               </select>
 
               <button
@@ -1532,7 +1535,7 @@ export const WelfarePage: React.FC = () => {
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Member Benevolence Standing Ledger</h3>
                 <p className="text-xs text-slate-500">
-                  Recorded dues coverage from each member’s joining month through the last completed month. Duplicate receipts count once per month.
+                  Welfare starts on the first dues payment date. Arrears run from that payment month through the last completed month. Duplicate receipts count once per month.
                 </p>
               </div>
               <div className="text-xs text-slate-500">
@@ -1823,7 +1826,8 @@ export const WelfarePage: React.FC = () => {
                   qualify for full benefits after 3 consecutive months of recorded dues, provided arrears are below 3 completed months.
                   Members with 3 or more unpaid completed months are defaulters and remain partially eligible for benefits.
                   The Welfare Committee decides the partial benefit amount; no automatic reduction percentage is assumed.
-                  Arrears count months without a positive dues receipt from the recorded joining month, or the first recorded dues month if the joining date is unavailable.
+                  A member joins the welfare scheme on the date of their first recorded positive welfare dues payment.
+                  Arrears count months without a positive dues receipt from that payment month. Members with no dues payment are not yet enrolled and have no assigned arrears.
                   The current month is not overdue, and repeated receipts for the same month count once.
                 </p>
               </div>

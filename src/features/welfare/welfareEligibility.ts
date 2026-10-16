@@ -1,13 +1,14 @@
 import type { Member, WelfareContribution } from '../../types/database.types';
 
 export const WELFARE_ARREARS_THRESHOLD = 3;
-export type WelfareEligibility = 'full' | 'partial' | 'probation' | 'review';
+export type WelfareEligibility = 'full' | 'partial' | 'probation' | 'not_enrolled' | 'review';
 
 export const welfareEligibilityLabel: Record<WelfareEligibility, string> = {
   full: 'Fully eligible',
   partial: 'Defaulter — Partially eligible',
   probation: 'Probation — Committee review',
-  review: 'Review needed — Joining date missing',
+  not_enrolled: 'Not enrolled — No welfare payment',
+  review: 'Review needed — Payment date missing',
 };
 
 function monthNumber(value: string | undefined): number | null {
@@ -20,11 +21,11 @@ function monthKey(value: number): string {
   return `${Math.floor(value / 12)}-${String(value % 12 + 1).padStart(2, '0')}`;
 }
 
-function joiningMonth(value: string | undefined): number | null {
+function paymentDate(value: string | undefined): string | null {
   if (!value || !/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(value)) return null;
   const date = new Date(value);
   if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value.slice(0, 10)) return null;
-  return monthNumber(value.slice(0, 7));
+  return monthNumber(value.slice(0, 7)) === null ? null : value.slice(0, 10);
 }
 
 export function classifyWelfareEligibility(arrearsMonths: number, consecutivePaidMonths: number): WelfareEligibility {
@@ -34,19 +35,24 @@ export function classifyWelfareEligibility(arrearsMonths: number, consecutivePai
 
 /** Recorded monthly coverage, not a monetary debt calculation. The current month is not overdue. */
 export function assessWelfareStanding(
-  member: Pick<Member, 'id' | 'member_id' | 'membership_date' | 'date_joined'>,
-  contributions: readonly Pick<WelfareContribution, 'member_id' | 'month' | 'amount'>[],
+  member: Pick<Member, 'id' | 'member_id'>,
+  contributions: readonly Pick<WelfareContribution, 'member_id' | 'month' | 'amount' | 'date'>[],
   asOf = new Date(),
 ) {
   const currentMonth = asOf.getUTCFullYear() * 12 + asOf.getUTCMonth();
-  const paid = [...new Set(contributions
+  const today = asOf.toISOString().slice(0, 10);
+  const positiveReceipts = contributions
     .filter(c => c.member_id === member.id || (Boolean(member.member_id) && c.member_id === member.member_id))
-    .filter(c => Number.isFinite(Number(c.amount)) && Number(c.amount) > 0)
+    .filter(c => Number.isFinite(Number(c.amount)) && Number(c.amount) > 0);
+  const datedReceipts = positiveReceipts
+    .map(receipt => ({ receipt, date: paymentDate(receipt.date) }))
+    .filter((item): item is { receipt: typeof positiveReceipts[number]; date: string } => item.date !== null && item.date <= today);
+  const welfareJoiningDate = datedReceipts.map(item => item.date).sort()[0] ?? null;
+  const start = welfareJoiningDate ? monthNumber(welfareJoiningDate.slice(0, 7)) : null;
+  const paid = [...new Set(datedReceipts.map(item => item.receipt)
     .map(c => monthNumber(c.month))
     .filter((month): month is number => month !== null && month <= currentMonth))].sort((a, b) => a - b);
 
-  const joined = joiningMonth(member.membership_date) ?? joiningMonth(member.date_joined);
-  const start = joined ?? paid[0] ?? null;
   const paidSet = new Set(paid);
   const arrearsMonths: string[] = [];
   if (start !== null) {
@@ -61,8 +67,9 @@ export function assessWelfareStanding(
     streak = index > 0 && month === paidSinceJoining[index - 1] + 1 ? streak + 1 : 1;
     consecutivePaidMonths = Math.max(consecutivePaidMonths, streak);
   });
+  const hasUndatedPayment = positiveReceipts.some(receipt => paymentDate(receipt.date) === null);
   const eligibility: WelfareEligibility = start === null
-    ? 'review'
+    ? hasUndatedPayment ? 'review' : 'not_enrolled'
     : classifyWelfareEligibility(arrearsMonths.length, consecutivePaidMonths);
 
   return {
@@ -74,8 +81,9 @@ export function assessWelfareStanding(
     paidMonths: paidSinceJoining.map(monthKey),
     consecutivePaidMonths,
     lastPaidMonth: paid.length ? monthKey(paid[paid.length - 1]) : null,
+    welfareJoiningDate,
     startMonth: start === null ? null : monthKey(start),
-    startBasis: joined !== null ? 'joining date' : paid.length ? 'first recorded dues month' : null,
+    startBasis: welfareJoiningDate ? 'first welfare payment' : null,
     assessedThrough: monthKey(currentMonth - 1),
   };
 }
