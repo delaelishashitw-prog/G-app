@@ -22,6 +22,8 @@ Reviewed, active super administrators, senior pastors and administrators can app
 
 Save the SMS draft and wait for cloud confirmation. **Review SMS send** resolves the current directory audience on the server, shows the exact message, recipients, exclusions and estimated segments, and requires a separate acknowledgement of permission and provider charges. Sender IDs must match the configured approved name. Directory changes require saving/reviewing again; changed phone numbers invalidate the review. Ghana mobile numbers only are supported by this connection; international and landline contacts appear as SMS exclusions. The directory is never rewritten.
 
+Opening or reopening **Review SMS send** focuses the review panel and brings it below the fixed header on mobile and desktop. Reopening checks the audience again and requires fresh consent. **Reload history** refreshes delivery records without clearing a successful connection check, the current review or its consent; a failed history reload preserves those controls too. A full page reload or an explicit SMS status reload still requires a new provider connection check.
+
 Limits are 200 recipients, 10 segments per recipient, 500 estimated segments per submission, 1,000 estimated segments per rolling 24 hours across the app, five submissions per minute and three connection tests per destination in 24 hours. Estimates account for GSM-7 extension characters and UTF-16 Unicode units; the provider determines final billing. Failed and ambiguous attempts count conservatively toward limits.
 
 ## Delivery, retries and records

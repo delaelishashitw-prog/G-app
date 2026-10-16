@@ -20,6 +20,7 @@ export const CommunicationPage:React.FC=()=>{
   const {currentRole,isSimulating}=useAuth();
   const canSendSms=['super_admin','senior_pastor','administrator'].includes(currentRole)&&!isSimulating;
   const [smsDraftId,setSmsDraftId]=useState<string|null>(null);
+  const [smsReviewRequest,setSmsReviewRequest]=useState(0);
   const [form,setForm]=useState(blankForm),[phone,setPhone]=useState(''),[editingId,setEditingId]=useState<string|null>(null);
   const editorId=useRef<string>(crypto.randomUUID()),busy=useRef(false);
   const [saving,setSaving]=useState(false),[search,setSearch]=useState(''),[showArchived,setShowArchived]=useState(false),[limit,setLimit]=useState(20);
@@ -90,7 +91,7 @@ export const CommunicationPage:React.FC=()=>{
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500"><span>{form.message.length}/5,000 characters · {form.title.length}/200 title characters</span><button type="submit" disabled={saving} className="flex gap-2 items-center bg-emerald-800 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"><Save className="w-4 h-4"/>{saving?'Saving…':editingId?'Save changes':'Save draft'}</button></div>
       </form>
       <div className="min-w-0 space-y-6">
-        <SmsConnectionPanel draft={communications.find(row=>row.id===smsDraftId)||null} onClose={()=>setSmsDraftId(null)}/>
+        <SmsConnectionPanel draft={communications.find(row=>row.id===smsDraftId)||null} reviewRequest={smsReviewRequest} onClose={()=>setSmsDraftId(null)}/>
         <section className="min-w-0 space-y-3 bg-white rounded-2xl border border-slate-200 p-5">
           <h2 className="font-bold flex gap-2 items-center"><MessageSquare className="w-5 h-5"/>WhatsApp</h2><p className="text-sm text-slate-600">Use the current message draft to open one conversation. Review and send it in WhatsApp.</p>
           <label htmlFor="communication-phone" className="block text-sm font-medium">Phone number</label><input id="communication-phone" type="tel" value={phone} placeholder="024… or +233… or 00233…" onChange={e=>setPhone(e.target.value)} className={field}/>
@@ -107,7 +108,7 @@ export const CommunicationPage:React.FC=()=>{
             <p className="text-xs text-slate-500">Recorded: {row.created_at||row.sent_at?new Date(row.created_at||row.sent_at).toLocaleString('en-GB',{timeZone:'Africa/Accra'}):'Date unavailable'}</p>
             <div className="flex flex-wrap gap-2 text-xs">
               {row.status==='draft'&&!row.archived_at&&<button type="button" disabled={saving} onClick={()=>openDraft(row)} className="border rounded-lg px-3 py-2">Edit draft</button>}
-              {canSendSms&&row.status==='draft'&&row.channel==='sms'&&!row.archived_at&&<button type="button" disabled={saving||row._sync_status==='pending'||!row.updated_at||!row.recipient_ids} onClick={()=>{setSmsDraftId(row.id);window.scrollTo({top:0,behavior:'smooth'});}} className="border border-emerald-700 text-emerald-900 rounded-lg px-3 py-2">Review SMS send</button>}
+              {canSendSms&&row.status==='draft'&&row.channel==='sms'&&!row.archived_at&&<button type="button" disabled={saving||row._sync_status==='pending'||!row.updated_at||!row.recipient_ids} onClick={()=>{setSmsDraftId(row.id);setSmsReviewRequest(previous=>previous+1);}} className="border border-emerald-700 text-emerald-900 rounded-lg px-3 py-2">Review SMS send</button>}
               <button type="button" disabled={saving} onClick={()=>openDraft(row,true)} className="border rounded-lg px-3 py-2">Copy as new draft</button>
               <button type="button" onClick={()=>copyMessage(row.message)} className="flex items-center gap-1 border rounded-lg px-3 py-2"><Copy className="w-3 h-3"/>Copy message</button>
               {row.status==='draft'&&(row.archived_at?<button type="button" disabled={saving} onClick={()=>archive(row,false)} className="flex items-center gap-1 border rounded-lg px-3 py-2"><RotateCcw className="w-3 h-3"/>Restore draft</button>:confirmArchive===row.id?<><button type="button" disabled={saving} onClick={()=>archive(row,true)} className="border rounded-lg px-3 py-2 text-rose-800">Confirm archive</button><button type="button" onClick={()=>setConfirmArchive(null)}>Cancel archive</button></>:<button type="button" disabled={saving} onClick={()=>setConfirmArchive(row.id)} className="flex items-center gap-1 border rounded-lg px-3 py-2"><Archive className="w-3 h-3"/>Archive draft</button>)}
