@@ -7,6 +7,7 @@ import {attendanceFixtures,checkAttendance} from './attendance-browser-checks.mj
 import {checkPublicMemberLogin,checkMemberAccess,checkMemberPasswordSetup} from './member-access-browser-checks.mjs';
 import {watchSyncStatus,waitForSync} from './sync-browser-utils.mjs';
 import {checkStorageQuota} from './storage-quota-browser-checks.mjs';
+import {checkOperationRecovery} from './operation-recovery-browser-checks.mjs';
 
 const port=Number(process.env.TEST_PORT||3401),origin=`http://127.0.0.1:${port}`;
 const child=spawn(process.execPath,['--import','tsx','server.ts'],{cwd:process.cwd(),env:{...process.env,NODE_ENV:'production',PORT:String(port),SUPABASE_URL:'https://gwcc-e2e.supabase.co',SUPABASE_ANON_KEY:'test-public-key'},stdio:'pipe'});
@@ -25,6 +26,8 @@ try{
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{channel:'chromium'}),args:['--no-sandbox']});
   if(process.env.TEST_SCOPE==='storage'){
     await checkStorageQuota(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  }else if(process.env.TEST_SCOPE==='recovery'){
+    await checkOperationRecovery(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   }else{
   const errors=[];
   const unsigned=await browser.newContext({viewport:{width:390,height:844}});
@@ -190,6 +193,7 @@ try{
   assert.equal(await page.evaluate(id=>Object.keys(localStorage).filter(key=>key.startsWith(`gwcc_cache_${id}_`)).length,id),0);
   assert.deepEqual(errors,[]);
   await checkStorageQuota(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  await checkOperationRecovery(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   console.info(`Browser smoke passed: mobile authorization, ${pages.length} signed-in pages, member invitation/linking/suspension guards/password help/password setup/portal, welfare arrears/defaulter filters/CSV/partial claim approval/member portal, durable draft retry, and logout cache clearing.`);
   }
 }finally{
