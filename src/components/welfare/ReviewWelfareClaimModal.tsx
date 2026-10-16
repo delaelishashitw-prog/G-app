@@ -3,6 +3,8 @@ import { X, CheckCircle2, XCircle, AlertCircle, HeartHandshake, FileText, ArrowR
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { useToast } from '../../contexts/ToastContext';
 import { WelfareClaim, WelfareClaimStatus } from '../../types/database.types';
+import { assessWelfareStanding } from '../../features/welfare/welfareEligibility';
+import { WelfareStandingNotice } from './WelfareStandingNotice';
 
 interface ReviewWelfareClaimModalProps {
   claim: WelfareClaim | null;
@@ -17,42 +19,53 @@ export const ReviewWelfareClaimModal: React.FC<ReviewWelfareClaimModalProps> = (
   onClose,
   onOpenDisburseModal,
 }) => {
-  const { updateWelfareClaim, welfareContributions, settings } = useChurchData();
+  const { updateWelfareClaim, welfareContributions, members, settings } = useChurchData();
   const { success, error: toastError } = useToast();
+  const member = claim?.beneficiary_type !== 'external_community'
+    ? members.find(m => m.id === claim?.member_id || m.member_id === claim?.member_id) : undefined;
+  const standing = member ? assessWelfareStanding(member, welfareContributions) : null;
+  const requiresPartialAmount = Boolean(standing?.isDefaulter);
+  const initialApprovedAmount = claim?.amount_approved != null ? String(claim.amount_approved)
+    : requiresPartialAmount ? '' : claim ? String(claim.amount_requested) : '';
 
   const [status, setStatus] = useState<WelfareClaimStatus>(claim?.status || 'pending');
-  const [amountApproved, setAmountApproved] = useState<string>(
-    claim?.amount_approved
-      ? String(claim.amount_approved)
-      : claim?.amount_requested
-      ? String(claim.amount_requested)
-      : ''
-  );
+  const [amountApproved, setAmountApproved] = useState<string>(initialApprovedAmount);
   const [pastoralNotes, setPastoralNotes] = useState<string>(claim?.pastoral_notes || '');
 
   // Synchronize state when claim prop changes
   useEffect(() => {
     if (claim) {
       setStatus(claim.status);
-      setAmountApproved(
-        claim.amount_approved
-          ? String(claim.amount_approved)
-          : String(claim.amount_requested)
-      );
+      setAmountApproved(initialApprovedAmount);
       setPastoralNotes(claim.pastoral_notes || '');
     }
-  }, [claim]);
+  }, [claim, initialApprovedAmount]);
 
   // ALL HOOKS CALLED UNCONDITIONALLY ABOVE
   if (!isOpen || !claim) return null;
 
   // Member's historical contributions
-  const memberContributions = welfareContributions.filter((c) => c.member_id === claim.member_id);
+  const memberContributions = welfareContributions.filter((c) => c.member_id === claim.member_id || (member && (c.member_id === member.id || c.member_id === member.member_id)));
   const totalDuesPaid = memberContributions.reduce((sum, c) => sum + c.amount, 0);
 
   const handleSaveReview = (e: React.FormEvent) => {
     e.preventDefault();
     const approvedVal = parseFloat(amountApproved);
+    const amountDisbursed = claim.amount_disbursed ?? 0;
+    if ((status === 'approved' || status === 'disbursed') && (!Number.isFinite(approvedVal) || approvedVal <= 0)) {
+      toastError('Approved amount required', requiresPartialAmount
+        ? 'Enter the partial benefit amount agreed by the Welfare Committee.'
+        : 'Enter a valid approved amount greater than zero.');
+      return;
+    }
+    if (amountApproved.trim() && (!Number.isFinite(approvedVal) || approvedVal < 0)) {
+      toastError('Invalid approved amount', 'Enter a valid amount of zero or more.');
+      return;
+    }
+    if (amountDisbursed > 0 && (!Number.isFinite(approvedVal) || approvedVal < amountDisbursed)) {
+      toastError('Amount already paid', 'The approved amount cannot be less than the amount already disbursed.');
+      return;
+    }
 
     updateWelfareClaim(claim.id, {
       status,
@@ -68,7 +81,7 @@ export const ReviewWelfareClaimModal: React.FC<ReviewWelfareClaimModalProps> = (
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-      <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+      <div role="dialog" aria-modal="true" aria-label="Review Benevolence Claim" className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -87,6 +100,7 @@ export const ReviewWelfareClaimModal: React.FC<ReviewWelfareClaimModalProps> = (
           </div>
           <button
             onClick={onClose}
+            aria-label="Close welfare claim review"
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
           >
             <X className="w-5 h-5" />
@@ -128,7 +142,7 @@ export const ReviewWelfareClaimModal: React.FC<ReviewWelfareClaimModalProps> = (
                   <div>
                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Welfare Standing</p>
                     <p className="text-sm font-bold text-emerald-700">GH₵ {totalDuesPaid.toFixed(2)}</p>
-                    <p className="text-[11px] text-slate-500">{memberContributions.length} monthly contributions</p>
+                    <p className="text-[11px] text-slate-500">{standing ? `${standing.paidMonths.length} distinct months paid` : `${memberContributions.length} receipts`}</p>
                   </div>
                 )}
               </div>
@@ -160,6 +174,8 @@ export const ReviewWelfareClaimModal: React.FC<ReviewWelfareClaimModalProps> = (
               </div>
             )}
           </div>
+
+          {standing && <WelfareStandingNotice standing={standing} />}
 
           {/* Description & Justification */}
           <div>
@@ -195,6 +211,7 @@ export const ReviewWelfareClaimModal: React.FC<ReviewWelfareClaimModalProps> = (
                 Evaluation Decision <span className="text-rose-500">*</span>
               </label>
               <select
+                aria-label="Evaluation decision"
                 value={status}
                 onChange={(e) => setStatus(e.target.value as WelfareClaimStatus)}
                 className="w-full text-sm rounded-xl border border-slate-300 py-2.5 px-3 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-semibold"
@@ -214,12 +231,15 @@ export const ReviewWelfareClaimModal: React.FC<ReviewWelfareClaimModalProps> = (
               <div className="relative">
                 <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">GH₵</span>
                 <input
+                  aria-label="Approved aid (GHS)"
                   type="number"
                   step="0.01"
                   min="0"
                   value={amountApproved}
                   onChange={(e) => setAmountApproved(e.target.value)}
                   disabled={status === 'declined'}
+                  required={status === 'approved' || status === 'disbursed'}
+                  placeholder={requiresPartialAmount ? 'Committee-approved partial amount' : ''}
                   className="w-full text-sm rounded-xl border border-slate-300 py-2.5 pl-12 pr-3 bg-white text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-emerald-600 disabled:bg-slate-100 disabled:text-slate-400"
                 />
               </div>
@@ -242,16 +262,12 @@ export const ReviewWelfareClaimModal: React.FC<ReviewWelfareClaimModalProps> = (
 
           {/* Actions */}
           <div className="pt-3 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-100">
-            {claim.status === 'approved' || status === 'approved' ? (
+            {claim.status === 'approved' && status === claim.status && amountApproved === String(claim.amount_approved) ? (
               <button
                 type="button"
                 onClick={() => {
                   onClose();
-                  onOpenDisburseModal({
-                    ...claim,
-                    amount_approved: parseFloat(amountApproved) || claim.amount_requested,
-                    pastoral_notes: pastoralNotes,
-                  });
+                  onOpenDisburseModal(claim);
                 }}
                 className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition flex items-center justify-center gap-1.5"
               >

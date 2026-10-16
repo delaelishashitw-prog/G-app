@@ -1,10 +1,12 @@
 import { getSupabaseClient } from '../../lib/supabase';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, HeartHandshake, Check, AlertCircle, FileText, User, Users, Globe, Phone, MapPin } from 'lucide-react';
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import { WelfareClaimCategory, BeneficiaryType } from '../../types/database.types';
+import { assessWelfareStanding } from '../../features/welfare/welfareEligibility';
+import { WelfareStandingNotice } from './WelfareStandingNotice';
 
 interface ApplyWelfareClaimModalProps {
   isOpen: boolean;
@@ -17,7 +19,7 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
   onClose,
   preselectedMemberId,
 }) => {
-  const { members, submitWelfareClaim, settings, refreshData } = useChurchData();
+  const { members, welfareContributions, submitWelfareClaim, settings, refreshData } = useChurchData();
   const { currentUser,currentMember } = useAuth();
   const [busy,setBusy]=useState(false);
   const { success, error: toastError } = useToast();
@@ -40,7 +42,16 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
   const [supportingDocs, setSupportingDocs] = useState('');
   const [confidentialNotes, setConfidentialNotes] = useState('');
 
+  const defaultMemberId = defaultMember?.id || '';
+  useEffect(() => {
+    if (isOpen) setMemberId(preselectedMemberId || defaultMemberId);
+  }, [isOpen, preselectedMemberId, defaultMemberId]);
+
   if (!isOpen) return null;
+
+  const selectedMember = members.find(m => m.id === memberId);
+  const standing = beneficiaryType === 'member' && selectedMember
+    ? assessWelfareStanding(selectedMember, welfareContributions) : null;
 
   const categoryPresets: Record<WelfareClaimCategory, { defaultTitle: string; suggestedAmount: string; hint: string }> = {
     bereavement: {
@@ -165,7 +176,7 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-      <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+      <div role="dialog" aria-modal="true" aria-label="Apply for Benevolence Aid" className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -179,6 +190,7 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
           </div>
           <button
             onClick={onClose}
+            aria-label="Close welfare application"
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
           >
             <X className="w-5 h-5" />
@@ -227,6 +239,7 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
                 Applicant Member <span className="text-rose-500">*</span>
               </label>
               <select
+                aria-label="Applicant member"
                 value={memberId}
                 onChange={(e) => setMemberId(e.target.value)}
                 required
@@ -287,6 +300,8 @@ export const ApplyWelfareClaimModal: React.FC<ApplyWelfareClaimModalProps> = ({
               </div>
             </div>
           )}
+
+          {standing && <WelfareStandingNotice standing={standing} />}
 
           {/* Category & Urgency */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

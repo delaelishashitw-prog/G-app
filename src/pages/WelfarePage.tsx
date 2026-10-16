@@ -57,6 +57,8 @@ import { RecordWelfareEventContributionModal } from '../components/welfare/Recor
 import { WelfareEventDetailModal } from '../components/welfare/WelfareEventDetailModal';
 import { PrintWelfareEventReportModal } from '../components/welfare/PrintWelfareEventReportModal';
 import { paidWelfareAmount, summarizeWelfare } from '../features/welfare/welfareSummary';
+import { assessWelfareStanding, classifyWelfareEligibility, welfareEligibilityLabel, type WelfareEligibility } from '../features/welfare/welfareEligibility';
+import { WelfareStandingNotice } from '../components/welfare/WelfareStandingNotice';
 
 export const WelfarePage: React.FC = () => {
   const {
@@ -116,7 +118,7 @@ export const WelfarePage: React.FC = () => {
 
   // Search for members tab
   const [memberSearch, setMemberSearch] = useState('');
-  const [memberStandingFilter, setMemberStandingFilter] = useState<'ALL' | 'good' | 'probation' | 'none'>('ALL');
+  const [memberStandingFilter, setMemberStandingFilter] = useState<'ALL' | WelfareEligibility>('ALL');
 
   // Modals state
   const [isApplyModalOpen, setIsApplyModalOpen] = useState(false);
@@ -136,6 +138,8 @@ export const WelfarePage: React.FC = () => {
   // Policy Calculator State
   const [calcCategory, setCalcCategory] = useState<WelfareClaimCategory>('bereavement');
   const [calcMonthsContributed, setCalcMonthsContributed] = useState<number>(6);
+  const [calcArrearsMonths, setCalcArrearsMonths] = useState<number>(0);
+  const assessmentMonth = new Date().toISOString().slice(0, 7);
 
   // Aggregations
   const { totalDuesCollected, paidClaims, totalDisbursed, fundBalance } = useMemo(
@@ -226,45 +230,43 @@ export const WelfarePage: React.FC = () => {
   }, [welfareContributions, duesSearch, duesMonthFilter]);
 
   // Member welfare balances & standing
-  const memberWelfareSummary = useMemo(() => {
-    const q = (memberSearch || '').toLowerCase().trim();
+  const allMemberWelfareSummaries = useMemo(() => {
     return members
       .filter((m) => !m.is_archived)
       .map((m) => {
-        const memContributions = welfareContributions.filter((c) => c.member_id === m.id);
-        const memClaims = welfareClaims.filter((c) => c.member_id === m.id && paidWelfareAmount(c) > 0);
+        const memContributions = welfareContributions.filter((c) => c.member_id === m.id || c.member_id === m.member_id);
+        const memClaims = welfareClaims.filter((c) => (c.member_id === m.id || c.member_id === m.member_id) && c.beneficiary_type !== 'external_community' && paidWelfareAmount(c) > 0);
         const { totalDuesCollected: duesSum, totalDisbursed: aidSum } = summarizeWelfare(memContributions, memClaims);
-        const count = memContributions.length;
-
-        // Article 2 Standing: >= 3 months = Good Standing
-        let standingStatus: 'good' | 'probation' | 'none' = 'none';
-        if (count >= 3) {
-          standingStatus = 'good';
-        } else if (count >= 1) {
-          standingStatus = 'probation';
-        }
+        const standing = assessWelfareStanding(m, memContributions, new Date(`${assessmentMonth}-01T00:00:00Z`));
 
         return {
           member: m,
-          contributionsCount: count,
+          standing,
           totalContributed: duesSum,
           totalReceived: aidSum,
           claimsCount: memClaims.length,
           netPosition: duesSum - aidSum,
-          standingStatus,
         };
-      })
+      });
+  }, [members, welfareContributions, welfareClaims, assessmentMonth]);
+
+  const defaultersCount = allMemberWelfareSummaries.filter(item => item.standing.isDefaulter).length;
+  const standingByMemberId = useMemo(() => new Map(allMemberWelfareSummaries.flatMap(item =>
+    [[item.member.id, item.standing], [item.member.member_id, item.standing]] as const)), [allMemberWelfareSummaries]);
+  const memberWelfareSummary = useMemo(() => {
+    const q = memberSearch.toLowerCase().trim();
+    return allMemberWelfareSummaries
       .filter((item) => {
         const matchSearch =
           !q ||
           `${item.member.first_name} ${item.member.last_name}`.toLowerCase().includes(q) ||
           (item.member.tithe_number && item.member.tithe_number.toLowerCase().includes(q)) ||
           (item.member.phone && item.member.phone.toLowerCase().includes(q));
-        const matchStanding = memberStandingFilter === 'ALL' || item.standingStatus === memberStandingFilter;
+        const matchStanding = memberStandingFilter === 'ALL' || item.standing.eligibility === memberStandingFilter;
         return matchSearch && matchStanding;
       })
       .sort((a, b) => b.totalContributed - a.totalContributed);
-  }, [members, welfareContributions, welfareClaims, memberSearch, memberStandingFilter]);
+  }, [allMemberWelfareSummaries, memberSearch, memberStandingFilter]);
 
   // Category statistics breakdown
   const categoryStats = useMemo(() => {
@@ -381,25 +383,41 @@ export const WelfarePage: React.FC = () => {
       'Aid Received (GHS)',
       'Net Standing (GHS)',
       'Eligibility Status',
+      'Unpaid Completed Months',
+      'Unpaid Month List',
+      'Assessed From',
+      'Assessed Through',
+      'Assessment Basis',
     ];
     const rows = memberWelfareSummary.map((item) => [
-      `"${item.member.first_name} ${item.member.last_name}"`,
+      `${item.member.first_name} ${item.member.last_name}`,
       item.member.tithe_number || '',
       item.member.phone || '',
-      item.contributionsCount,
+      item.standing.paidMonths.length,
       item.totalContributed.toFixed(2),
       item.totalReceived.toFixed(2),
       item.netPosition.toFixed(2),
-      item.standingStatus === 'good' ? 'Eligible (Active)' : item.standingStatus === 'probation' ? 'Probationary' : 'Inactive',
+      item.standing.label,
+      item.standing.arrearsCount ?? 'Unknown',
+      item.standing.arrearsMonths.join('; '),
+      item.standing.startMonth ?? '',
+      item.standing.assessedThrough,
+      item.standing.startBasis ?? 'Review needed',
     ]);
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    const csvCell = (value: string | number) => {
+      const raw = String(value);
+      const safe = typeof value === 'string' && /^[\s]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
+    const csvContent = [headers, ...rows].map(row => row.map(csvCell).join(',')).join('\n');
+    const csvUrl = URL.createObjectURL(new Blob(['\uFEFF', csvContent], { type: 'text/csv;charset=utf-8;' }));
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
+    link.setAttribute('href', csvUrl);
     link.setAttribute('download', `welfare_member_standing_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(csvUrl);
     success('Export Successful', `Exported ${memberWelfareSummary.length} member standing records`);
   };
 
@@ -417,7 +435,7 @@ export const WelfarePage: React.FC = () => {
 
   // Calculator logic
   const calcResult = useMemo(() => {
-    const isEligible = calcMonthsContributed >= 3;
+    const eligibility = classifyWelfareEligibility(calcArrearsMonths, calcMonthsContributed);
     let entitlement = 0;
     let details = '';
     let requiredDocs = '';
@@ -461,12 +479,12 @@ export const WelfarePage: React.FC = () => {
     }
 
     return {
-      isEligible,
+      eligibility,
       entitlement,
       details,
       requiredDocs,
     };
-  }, [calcCategory, calcMonthsContributed]);
+  }, [calcCategory, calcMonthsContributed, calcArrearsMonths]);
 
   return (
     <div className="space-y-6">
@@ -1124,6 +1142,7 @@ export const WelfarePage: React.FC = () => {
                   ) : (
                     filteredClaims.map((claim) => {
                       const isExpanded = expandedClaimId === claim.id;
+                      const standing = claim.beneficiary_type === 'external_community' ? undefined : standingByMemberId.get(claim.member_id);
                       return (
                         <React.Fragment key={claim.id}>
                           <tr className="hover:bg-slate-50 transition cursor-pointer">
@@ -1156,6 +1175,7 @@ export const WelfarePage: React.FC = () => {
                                 {claim.member_phone || 'No phone'}
                                 {claim.beneficiary_community ? ` · ${claim.beneficiary_community}` : ''}
                               </span>
+                              {standing?.isDefaulter && <p className="text-[10px] font-bold text-rose-700">Defaulter — Partially eligible · {standing.arrearsCount} unpaid months</p>}
                             </td>
                             <td className="py-3 px-4">
                               <span className="font-medium capitalize text-slate-800 block">
@@ -1464,6 +1484,13 @@ export const WelfarePage: React.FC = () => {
       {/* TAB 3: MEMBER WELFARE STANDING */}
       {activeTab === 'members' && (
         <div className="space-y-4">
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold text-rose-900">Defaulters: {defaultersCount} members</p>
+              <p className="text-xs text-rose-800">3 or more unpaid completed months: partially eligible. Committee approval determines the benefit amount.</p>
+            </div>
+            <button onClick={() => { setMemberStandingFilter('partial'); setMemberSearch(''); }} className="text-xs font-bold rounded-lg border border-rose-300 bg-white px-3 py-2 text-rose-900">Show defaulters</button>
+          </div>
           <div className="bg-white p-3 rounded-2xl border border-slate-200 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
             <div className="relative flex-1 max-w-md">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
@@ -1478,14 +1505,16 @@ export const WelfarePage: React.FC = () => {
 
             <div className="flex items-center gap-2 flex-wrap">
               <select
+                aria-label="Filter member welfare standing"
                 value={memberStandingFilter}
-                onChange={(e) => setMemberStandingFilter(e.target.value as any)}
+                onChange={(e) => setMemberStandingFilter(e.target.value as 'ALL' | WelfareEligibility)}
                 className="text-xs rounded-xl border border-slate-200 py-1.5 px-2.5 bg-white text-slate-700 font-medium"
               >
                 <option value="ALL">All Standing Levels</option>
-                <option value="good">Eligible (3+ Months Dues)</option>
-                <option value="probation">Probationary (1-2 Months)</option>
-                <option value="none">No Dues Recorded</option>
+                <option value="full">Fully eligible</option>
+                <option value="partial">Defaulters — Partially eligible (3+ months arrears)</option>
+                <option value="probation">Probation — Committee review</option>
+                <option value="review">Review needed — Missing joining date</option>
               </select>
 
               <button
@@ -1503,7 +1532,7 @@ export const WelfarePage: React.FC = () => {
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Member Benevolence Standing Ledger</h3>
                 <p className="text-xs text-slate-500">
-                  Lifetime mutual welfare contributions compared to compassionate benefits claimed
+                  Recorded dues coverage from each member’s joining month through the last completed month. Duplicate receipts count once per month.
                 </p>
               </div>
               <div className="text-xs text-slate-500">
@@ -1533,29 +1562,15 @@ export const WelfarePage: React.FC = () => {
                       </td>
                     </tr>
                   ) : (
-                    memberWelfareSummary.map(({ member, contributionsCount, totalContributed, totalReceived, netPosition, standingStatus }) => (
+                    memberWelfareSummary.map(({ member, totalContributed, totalReceived, netPosition, standing }) => (
                       <tr key={member.id} className="hover:bg-slate-50 transition">
                         <td className="py-3 px-4 font-bold text-slate-900">
                           {member.first_name} {member.last_name}
                         </td>
                         <td className="py-3 px-4 font-mono text-slate-600">{member.tithe_number || '—'}</td>
                         <td className="py-3 px-4 text-slate-500">{member.phone || '—'}</td>
-                        <td className="py-3 px-4 text-center">
-                          {standingStatus === 'good' ? (
-                            <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                              {contributionsCount} mos · Eligible
-                            </span>
-                          ) : standingStatus === 'probation' ? (
-                            <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
-                              <AlertCircle className="w-3 h-3 text-amber-600" />
-                              {contributionsCount} mos · Probation
-                            </span>
-                          ) : (
-                            <span className="text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
-                              0 mos · Inactive
-                            </span>
-                          )}
+                        <td className="py-3 px-4 min-w-72 max-w-sm">
+                          <WelfareStandingNotice standing={standing} />
                         </td>
                         <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">
                           GH₵ {totalContributed.toFixed(2)}
@@ -1715,6 +1730,7 @@ export const WelfarePage: React.FC = () => {
                   </label>
                   <input
                     type="range"
+                    aria-label="Consecutive months paid"
                     min="0"
                     max="24"
                     value={calcMonthsContributed}
@@ -1727,12 +1743,19 @@ export const WelfarePage: React.FC = () => {
                     <span>24+ months (Veteran)</span>
                   </div>
                 </div>
+                <div>
+                  <label htmlFor="welfare-calc-arrears" className="block text-slate-700 font-bold mb-1">Unpaid completed months (arrears)</label>
+                  <input id="welfare-calc-arrears" type="number" min="0" step="1" value={calcArrearsMonths}
+                    onChange={e => setCalcArrearsMonths(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                    className="w-full p-2.5 rounded-xl border border-slate-200" />
+                  <p className="text-slate-500 mt-1">At 3 or more months of arrears, benefits are partial and require a committee-approved amount.</p>
+                </div>
               </div>
 
               {/* Calculator Output Card */}
               <div
                 className={`p-5 rounded-xl border flex flex-col justify-between ${
-                  calcResult.isEligible
+                  calcResult.eligibility === 'full'
                     ? 'bg-emerald-50/70 border-emerald-200'
                     : 'bg-amber-50/70 border-amber-200'
                 }`}
@@ -1744,18 +1767,19 @@ export const WelfarePage: React.FC = () => {
                     </span>
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
-                        calcResult.isEligible
+                        calcResult.eligibility === 'full'
                           ? 'bg-emerald-200 text-emerald-900'
                           : 'bg-amber-200 text-amber-900'
                       }`}
                     >
-                      {calcResult.isEligible ? 'Eligible under Article 2' : 'Probationary Standing (<3 Mos)'}
+                      {welfareEligibilityLabel[calcResult.eligibility]}
                     </span>
                   </div>
 
                   <div className="text-2xl font-black text-slate-900">
-                    GH₵ {calcResult.entitlement.toFixed(2)}
+                    {calcResult.eligibility === 'full' ? `GH₵ ${calcResult.entitlement.toFixed(2)}` : 'Committee decision required'}
                   </div>
+                  {calcResult.eligibility !== 'full' && <p className="font-semibold text-slate-700">Standard full benefit reference: GH₵ {calcResult.entitlement.toFixed(2)}. This is not an approved amount.</p>}
                   <p className="text-slate-600">{calcResult.details}</p>
 
                   <div className="pt-2 border-t border-slate-200/60">
@@ -1796,7 +1820,11 @@ export const WelfarePage: React.FC = () => {
                 <p className="text-slate-600 leading-relaxed">
                   Every registered member of GWCC is encouraged to contribute a monthly welfare token of{' '}
                   <strong className="text-slate-900">GH₵ 50.00</strong> (minimum GH₵ 20.00 for students/seniors). Members
-                  are entitled to full benefits after 3 consecutive months of active fellowship.
+                  qualify for full benefits after 3 consecutive months of recorded dues, provided arrears are below 3 completed months.
+                  Members with 3 or more unpaid completed months are defaulters and remain partially eligible for benefits.
+                  The Welfare Committee decides the partial benefit amount; no automatic reduction percentage is assumed.
+                  Arrears count months without a positive dues receipt from the recorded joining month, or the first recorded dues month if the joining date is unavailable.
+                  The current month is not overdue, and repeated receipts for the same month count once.
                 </p>
               </div>
 
