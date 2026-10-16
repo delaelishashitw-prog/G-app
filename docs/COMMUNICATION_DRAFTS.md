@@ -1,6 +1,6 @@
 # Communication drafts
 
-Communication prepares saved SMS, WhatsApp and announcement drafts. Saving does not send, schedule or publish a message. A delivery provider and verified delivery receipts must be implemented separately before automatic sending is offered. Individual WhatsApp conversations are opened for the user to review and send manually.
+Communication prepares saved SMS, WhatsApp and announcement drafts. Saving does not send, schedule or publish a message. The separately configured Arkesel connection supports explicitly reviewed SMS submissions and authenticated delivery-report checks; see [Arkesel SMS connection](ARKESEL_SMS.md). Scheduling is not enabled. Individual WhatsApp conversations are opened for the user to review and send manually.
 
 ## Draft lifecycle
 
