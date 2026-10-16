@@ -5,6 +5,8 @@ import {initialSettings,sampleMembers} from '../src/lib/initialData.ts';
 import {serviceFixtures,checkServices} from './services-browser-checks.mjs';
 import {attendanceFixtures,checkAttendance} from './attendance-browser-checks.mjs';
 import {checkPublicMemberLogin,checkMemberAccess,checkMemberPasswordSetup} from './member-access-browser-checks.mjs';
+import {watchSyncStatus,waitForSync} from './sync-browser-utils.mjs';
+import {checkStorageQuota} from './storage-quota-browser-checks.mjs';
 
 const port=Number(process.env.TEST_PORT||3401),origin=`http://127.0.0.1:${port}`;
 const child=spawn(process.execPath,['--import','tsx','server.ts'],{cwd:process.cwd(),env:{...process.env,NODE_ENV:'production',PORT:String(port),SUPABASE_URL:'https://gwcc-e2e.supabase.co',SUPABASE_ANON_KEY:'test-public-key'},stdio:'pipe'});
@@ -21,6 +23,9 @@ try{
   const unauthenticated=await fetch(`${origin}/api/ai/assistant`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:'Test'})});assert.equal(unauthenticated.status,401);
   const invalidJson=await fetch(`${origin}/api/staff`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{bad'});assert.equal(invalidJson.status,400);
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{channel:'chromium'}),args:['--no-sandbox']});
+  if(process.env.TEST_SCOPE==='storage'){
+    await checkStorageQuota(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  }else{
   const errors=[];
   const unsigned=await browser.newContext({viewport:{width:390,height:844}});
   await unsigned.addInitScript(()=>{localStorage.setItem('gwcc_supabase_url','https://gwcc-e2e.supabase.co');localStorage.setItem('gwcc_supabase_anon_key','test-public-key');localStorage.setItem('gwcc_auth_authenticated','true');localStorage.setItem('gwcc_active_user',JSON.stringify({id:'forged',role:'super_admin'}));localStorage.setItem('members',JSON.stringify([{first_name:'Hidden private data'}]));});
@@ -51,6 +56,7 @@ try{
   data.welfare_claims=[];
   const serviceFixture=serviceFixtures(today);Object.assign(data,serviceFixture.tables);
   const context=await browser.newContext({viewport:{width:1440,height:1000}});
+  await context.addInitScript(watchSyncStatus);
   await context.addInitScript(({session})=>{localStorage.setItem('gwcc_supabase_url','https://gwcc-e2e.supabase.co');localStorage.setItem('gwcc_supabase_anon_key','test-public-key');localStorage.setItem('gwcc-church-auth-token',JSON.stringify(session));},{session});
   let rejectWrites=true;const mutationRequests=[];
   await context.route('https://gwcc-e2e.supabase.co/**',async route=>{
@@ -147,7 +153,7 @@ try{
       assert.equal(await review.getByRole('button',{name:'Generate Payment Voucher',exact:true}).count(),0);
       rejectWrites=false;const reviewSync=page.waitForResponse(response=>response.url().endsWith('/rpc/gwcc_apply_mutations'));
       await review.getByRole('button',{name:'Save Review',exact:true}).click();await reviewSync;
-      await page.waitForFunction(id=>JSON.parse(localStorage.getItem(`gwcc_outbox_v2_${id}`)||'[]').length===0,id);
+      await waitForSync(page);
       assert.ok(mutationRequests.some(request=>request.p_changes.some(change=>change.table==='welfare_claims'&&change.record.id==='qa-pending'&&change.record.amount_approved===500&&change.record.status==='approved')));
       rejectWrites=true;mutationRequests.length=0;
       await page.getByRole('row').filter({has:page.getByText('BEN-QA',{exact:true})}).getByRole('button',{name:'Review',exact:true}).click();
@@ -178,12 +184,14 @@ try{
   await page.getByText('Test cloud unavailable; changes retained.').waitFor();
   assert.equal(mutationRequests.at(-1).p_operation_id,firstId);
   rejectWrites=false;await page.getByRole('button',{name:'Retry sync',exact:true}).click();
-  await page.waitForFunction(id=>JSON.parse(localStorage.getItem(`gwcc_outbox_v2_${id}`)||'[]').length===0,id);
+  await waitForSync(page);
   assert.equal(data.communications[0].status,'draft');
   await page.getByRole('button',{name:/Sign Out|Log Out|Logout/i}).first().click();await page.waitForURL('**/login');
   assert.equal(await page.evaluate(id=>Object.keys(localStorage).filter(key=>key.startsWith(`gwcc_cache_${id}_`)).length,id),0);
   assert.deepEqual(errors,[]);
+  await checkStorageQuota(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   console.info(`Browser smoke passed: mobile authorization, ${pages.length} signed-in pages, member invitation/linking/suspension guards/password help/password setup/portal, welfare arrears/defaulter filters/CSV/partial claim approval/member portal, durable draft retry, and logout cache clearing.`);
+  }
 }finally{
   if(browser)await browser.close();child.kill('SIGTERM');
 }

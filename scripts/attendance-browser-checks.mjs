@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {waitForSync} from './sync-browser-utils.mjs';
 
 export function attendanceFixtures(now, members) {
   const date = now.toISOString().slice(0, 10), previous = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
@@ -22,7 +23,7 @@ export function attendanceFixtures(now, members) {
 
 export async function checkAttendance(page, { origin, data, profile, mutations, setRejectWrites, userId, date, previous }) {
   setRejectWrites(false); mutations.length = 0;
-  const emptyQueue = () => page.waitForFunction(id => JSON.parse(localStorage.getItem('gwcc_outbox_v2_' + id) || '[]').length === 0, userId);
+  const emptyQueue = () => waitForSync(page);
   const waitForChange = (table, id) => page.waitForResponse(response => response.url().endsWith('/rpc/gwcc_apply_mutations') && response.request().postDataJSON().p_changes.some(change => change.table === table && (!id || change.id === id)));
   const openSession = () => page.goto(`${origin}/attendance?serviceId=qa-att-service&date=${date}`);
   const kpi = label => page.getByText(label, { exact: true }).first().locator('..');

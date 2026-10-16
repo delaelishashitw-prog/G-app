@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {waitForSync} from './sync-browser-utils.mjs';
 
 export function serviceFixtures(now) {
   const clock=new Date(now);clock.setUTCSeconds(0,0);
@@ -21,7 +22,7 @@ export function serviceFixtures(now) {
 }
 
 export async function checkServices(page,{origin,data,profile,mutations,setRejectWrites,userId,clock}) {
-  const emptyQueue=()=>page.waitForFunction(id=>JSON.parse(localStorage.getItem('gwcc_outbox_v2_'+id)||'[]').length===0,userId);
+  const emptyQueue=()=>waitForSync(page);
   const waitForChange=(table,id)=>page.waitForResponse(response=>response.url().endsWith('/rpc/gwcc_apply_mutations')&&response.request().postDataJSON().p_changes.some(change=>change.table===table&&(!id||change.id===id)));
   const card=id=>page.locator('[data-service-id="'+id+'"]');
   await page.clock.install({time:clock});await page.reload();
