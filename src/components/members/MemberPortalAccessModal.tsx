@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CheckCircle2, Loader2, Mail, ShieldCheck, X } from 'lucide-react';
 import type { Member } from '../../types/database.types';
 import { apiRequest } from '../../lib/apiClient';
@@ -23,7 +24,16 @@ export function MemberPortalAccessModal({ member, onClose }: { member: Member; o
   const requestVersion = useRef(0);
   const dialog = useRef<HTMLElement>(null);
 
-  useEffect(() => { initialEmail.current?.focus(); return () => { requestVersion.current++; }; }, []);
+  useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    initialEmail.current?.focus();
+    return () => { requestVersion.current++; document.body.style.overflow = previousOverflow; if (previousFocus?.isConnected) previousFocus.focus(); };
+  }, []);
+  useEffect(() => {
+    if (!busy && dialog.current && !dialog.current.contains(document.activeElement)) dialog.current.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
+  }, [busy]);
   useEffect(() => {
     if (!member.auth_user_id) return;
     let alive = true;
@@ -60,7 +70,7 @@ export function MemberPortalAccessModal({ member, onClose }: { member: Member; o
   };
   const actionable = access && ['unlinked', 'existing', 'pending'].includes(access.state) && Boolean(access.email);
 
-  return <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4" onKeyDown={event => { if (event.key === 'Escape' && !busy) onClose(); }}>
+  return createPortal(<div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4" onKeyDown={event => { if (event.key === 'Escape' && !busy) onClose(); }}>
     <section ref={dialog} role="dialog" aria-modal="true" aria-labelledby="portal-access-title" onKeyDown={event => {
       if (event.key !== 'Tab') return;
       const items = [...(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), a[href]') || [])];
@@ -102,5 +112,5 @@ export function MemberPortalAccessModal({ member, onClose }: { member: Member; o
       <div className="border-t pt-4 text-sm text-slate-600 space-y-2"><p>Members open their invitation email, set a password of at least 12 characters, then sign in at <a href="/portal" target="_blank" rel="noopener noreferrer" className="font-semibold text-emerald-800 underline">Member Portal</a>.</p>
         <p>Members who already accepted an invitation can use “Forgot password?” on that page.</p></div>
     </section>
-  </div>;
+  </div>, document.body);
 }

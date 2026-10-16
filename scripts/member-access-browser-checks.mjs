@@ -87,8 +87,10 @@ export async function checkMemberAccess(page, { origin, data, profile }) {
   assert.equal(data.members.find(m => m.id === 'qa-new').auth_user_id, null);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  // Route/viewport motion must finish before measuring the page behind the dialog.
+  await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth + 2, null, { timeout: 5000 }).catch(() => {});
   if (process.env.MEMBER_SCREENSHOT_DIR) await modal.screenshot({ path: `${process.env.MEMBER_SCREENSHOT_DIR}/member-portal-access-mobile.png` });
-  const overflow = await page.evaluate(() => ({width:document.documentElement.scrollWidth,viewport:innerWidth,elements:[...document.querySelectorAll('body *')].filter(e=>e.getBoundingClientRect().right>innerWidth+2).slice(-12).map(e=>({tag:e.tagName,cls:e.className,text:e.textContent?.slice(0,70),right:e.getBoundingClientRect().right}))}));
+  const overflow = await page.evaluate(() => ({width:document.documentElement.scrollWidth,viewport:innerWidth,elements:[...document.querySelectorAll('body *')].filter(e=>e.getBoundingClientRect().right>innerWidth+2).slice(0,24).map(e=>({tag:e.tagName,cls:e.className,text:e.textContent?.slice(0,70),left:e.getBoundingClientRect().left,width:e.getBoundingClientRect().width,right:e.getBoundingClientRect().right}))}));
   assert.ok(overflow.width <= overflow.viewport + 2, `Mobile portal access modal overflows: ${JSON.stringify(overflow)}`);
   await modal.getByRole('button', { name: 'Close portal access', exact: true }).click();
   const role = profile.role; profile.role = 'data_entry';

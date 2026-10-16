@@ -288,7 +288,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-150">
+    <div className="min-w-0 space-y-6 animate-in fade-in duration-150">
       {/* Top Navigation & Breadcrumbs Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-2 border-b border-slate-200">
         <div className="flex items-center gap-2 text-xs">
@@ -1160,11 +1160,11 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
                             className="p-3 bg-white rounded-xl border border-slate-200 hover:border-teal-300 hover:shadow-xs transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
                           >
                             <div
-                              className="flex items-center gap-3 cursor-pointer flex-1"
+                              className="flex min-w-0 items-center gap-3 cursor-pointer flex-1"
                               onClick={() => onSelectMember?.(fam.member)}
                               title={`View ${fam.member.first_name}'s Profile`}
                             >
-                              <div className="relative">
+                              <div className="relative shrink-0">
                                 {fam.member.profile_photo_url ? (
                                   <img
                                     src={fam.member.profile_photo_url}
@@ -1185,16 +1185,16 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
                                 )}
                               </div>
 
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <span className="font-bold text-slate-900 hover:text-teal-700 transition">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-bold break-words text-slate-900 hover:text-teal-700 transition">
                                     {fam.member.first_name} {fam.member.last_name}
                                   </span>
                                   <span className="text-[10px] font-medium text-slate-500 capitalize bg-slate-100 px-1.5 py-0.5 rounded">
                                     {getMemberAgeGroup(fam.member)}
                                   </span>
                                 </div>
-                                <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+                                <p className="text-[10px] break-words text-slate-500 font-mono mt-0.5">
                                   {fam.member.member_id} • {fam.member.phone || 'No phone'}
                                 </p>
                               </div>

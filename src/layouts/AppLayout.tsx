@@ -217,7 +217,7 @@ export const AppLayout: React.FC = () => {
         <footer className="py-4 px-6 text-center text-xs text-slate-600 border-t border-slate-200 bg-white">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-2 max-w-7xl mx-auto">
             <span>Greater Works City Church • Joma, Accra</span>
-            <div className="flex items-center gap-4">
+            <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-4">
               <button
                 type="button"
                 onClick={() => setShortcutsHelpOpen(true)}
