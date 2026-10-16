@@ -53,6 +53,7 @@ import {
 import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA, SQL_FIX_ROSTER_SCHEMA, SQL_FIX_CHURCH_FINANCE_SCHEMA } from '../lib/supabaseSchema';
 import { useAuth } from '../contexts/AuthContext';
 import { PastorSignature } from '../components/common/PastorSignature';
+import { PendingBackupControls } from '../components/PendingBackupControls';
 
 export const SettingsPage: React.FC = () => {
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
@@ -457,9 +458,9 @@ export const SettingsPage: React.FC = () => {
         const errText = res.errors.join('; ');
         setSyncResult({
           success: false,
-          text: `Synced ${total} records, but ${res.errors.length} issue(s) occurred: ${errText}`,
+          text: `Cloud confirmed ${total} records. Synchronization paused: ${errText}`,
         });
-        toastError('Push Incomplete', `Synced ${total} records, but some tables had errors. Check migration.`);
+        toastError('Sync Paused', `Cloud confirmed ${total} records. ${errText}`);
       }
     } catch (err: any) {
       const errText = err?.message || 'Failed to push data to Supabase';
@@ -1966,6 +1967,8 @@ export const SettingsPage: React.FC = () => {
               </div>
 
               {/* Push & Pull Action Buttons */}
+              <p className="text-xs text-slate-600">Pending changes are saved separately from the page cache. Export a backup before updating an affected tab, then restore it here if needed. A restore queues changes for review; use Retry sync when ready.</p>
+              <PendingBackupControls/>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <button
                   type="button"

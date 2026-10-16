@@ -203,7 +203,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const previousId = sessionStorage.getItem('gwcc_cache_owner');
       if (previousId && previousId !== profile.id) clearPrivateCache();
       sessionStorage.setItem('gwcc_cache_owner', profile.id);
-      setSyncIdentity(profile.id,profile.role);
+      await setSyncIdentity(profile.id,profile.role);
+      if (ticket !== generation.current) return;
       setSession(nextSession); setCurrentUser(profile);
       const directoryRoles: UserRole[] = ['super_admin', 'senior_pastor', 'administrator'];
       if (directoryRoles.includes(profile.role)) {

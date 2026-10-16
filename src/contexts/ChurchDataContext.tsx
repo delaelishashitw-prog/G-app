@@ -611,7 +611,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if(!isAuthenticated) {setSupabaseStatus('disconnected');return;}
     const local:Partial<ChurchAllData>={};
     for(const {key,table} of SYNC_TABLES) {
-      if(key==='settings') {local.settings=loadFromStorage('settings',initialSettings);continue;}
+      if(key==='settings') {local.settings=mergePendingRecords('settings',[{id:'gwcc_global_settings',...loadFromStorage('settings',initialSettings)}])[0];continue;}
       (local as any)[key]=mergePendingRecords(table,loadFromStorage(key,[]));
     }
     applyData(local);setDataOwner(`${currentUser.id}:${currentUser.role}`);

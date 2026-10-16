@@ -902,13 +902,21 @@ const emit = (name: string, detail: unknown) => {
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(name,{ detail }));
 };
 
-export function setSyncIdentity(id: string | null,role:string|null=null) {
-  if(id===syncOwner && role===syncRole && outbox)return;
-  const previousRole=id?localStorage.getItem(`gwcc_cache_role_${id}`):null;
-  if(id && previousRole!==role){setCacheOwner(id);clearScopedCache();localStorage.setItem(`gwcc_cache_role_${id}`,role||'');}
+export async function setSyncIdentity(id: string | null,role:string|null=null) {
+  if(id===syncOwner && role===syncRole && outbox){await outbox.ready;return;}
+  let previousRole:string|null=null;
+  try{previousRole=id?localStorage.getItem(`gwcc_cache_role_${id}`):null;}catch{}
+  if(id && previousRole!==role){
+    setCacheOwner(id);clearScopedCache();
+    // A full preference/cache store must never prevent verified authentication.
+    try{localStorage.setItem(`gwcc_cache_role_${id}`,role||'');}catch{}
+  }
   syncRole=role;
   syncOwner=id; setCacheOwner(id);
-  outbox=id && typeof localStorage !== 'undefined' ? new SyncOutbox(id,localStorage,detail=>emit('gwcc-sync-status',detail)) : null;
+  const active=id && typeof localStorage !== 'undefined' ? new SyncOutbox(id,localStorage,detail=>{if(syncOwner===id && outbox===active)emit('gwcc-sync-status',detail);}) : null;
+  outbox=active;
+  if(active)await active.ready;
+  if(outbox!==active)return;
   emit('gwcc-sync-status',getSyncStatus());
 }
 export function clearPrivateCache() {
@@ -917,48 +925,64 @@ export function clearPrivateCache() {
 export const getSyncStatus = (): SyncResult => outbox?.status || {success:true,pending:0};
 export const hasPendingChanges=(table:string)=>Boolean(outbox?.pendingChanges.some(change=>change.table===table));
 export const exportPendingChanges=()=>outbox?.exportPending()||'{}';
-export function discardPendingChanges(){outbox?.discardPending();emit('gwcc-reload-cloud',{});}
+export const previewPendingChanges=()=>outbox?.previewPending()||'{}';
+export async function restorePendingChanges(raw:string){
+  const active=outbox;if(!active)throw new Error('Sign in as the backup’s original owner first.');
+  const count=await active.restorePending(raw);if(active!==outbox)throw new Error('The signed-in account changed. The backup remains with its original owner.');
+  emit('gwcc-sync-status',active.status);return count;
+}
+export async function discardPendingChanges(expectedExport?:string){await outbox?.discardPending(expectedExport);emit('gwcc-reload-cloud',{});}
 export function withSyncTransaction<T>(work:()=>T):T {
   if(atomicChanges)return work();
   atomicChanges=[];
-  try {const value=work();const changes=atomicChanges;atomicChanges=null;if(changes.length){outbox?.enqueueMany(changes);if(flushTimer)clearTimeout(flushTimer);flushTimer=setTimeout(()=>void flushSyncOutbox(),100);}return value;}
+  try {const value=work();const changes=atomicChanges;atomicChanges=null;if(changes.length)void queueMany(changes);return value;}
   catch(error){atomicChanges=null;throw error;}
 }
 export const mergePendingRecords = (table: string, rows: any[]) => outbox?.merge(table,rows) || rows;
 
-export async function flushSyncOutbox(): Promise<SyncResult> {
+export async function flushSyncOutbox({approveRestored=false}:{approveRestored?:boolean}={}): Promise<SyncResult> {
   const client=getSupabaseClient(); const active=outbox; const owner=syncOwner;
   if(!client || !active || !owner) return {success:false,pending:active?.status.pending || 0,error:'Please sign in to synchronize changes.'};
+  await active.ready;
+  if(active!==outbox || owner!==syncOwner)return {success:false,pending:active.status.pending,error:'The signed-in account changed. Pending changes remain with their owner.'};
   if(typeof navigator!=='undefined' && !navigator.onLine) return {...active.status,success:false,error:'Offline. Changes remain queued on this device.'};
   const { data: {session} }=await client.auth.getSession();
   if(!session || session.user.id!==owner) return {...active.status,success:false,error:'Please sign in again to synchronize these changes.'};
   const config=getStoredSupabaseConfig();
   const fixedClient=createClient(config.url,config.anonKey,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false},global:{headers:{Authorization:`Bearer ${session.access_token}`}}});
-  const transport={rpc:(name:string,args:any)=>owner===syncOwner?fixedClient.rpc(name,args):Promise.resolve({data:null,error:{message:'The signed-in account changed. Remaining changes were kept for their owner.'}})};
+  const transport={rpc:(name:string,args:any)=>owner===syncOwner && active===outbox?fixedClient.rpc(name,args):Promise.resolve({data:null,error:{message:'The signed-in account changed. Remaining changes were kept for their owner.'}})};
   return active.flush(transport,records=>{
     if(owner===syncOwner) emit('gwcc-sync-records',{owner,records});
-  });
+  },approveRestored);
 }
-function queue(change: Mutation): SyncResult {
+async function queueMany(changes:Mutation[],autoFlush=true):Promise<SyncResult> {
   if(!outbox) return {success:false,pending:0,error:'A verified staff session is required.'};
-  if(atomicChanges){atomicChanges.push(change);return {...outbox.status,success:false};}
+  const active=outbox;
   try {
-    const result=outbox.enqueue(change);
-    if(flushTimer) clearTimeout(flushTimer);
-    flushTimer=setTimeout(()=>{flushTimer=null;void flushSyncOutbox();},100);
+    const result=await active.enqueueMany(changes);
+    if(active!==outbox)return {success:false,pending:active.status.pending,error:'The signed-in account changed. Pending changes remain with their owner.'};
+    if(autoFlush){if(flushTimer) clearTimeout(flushTimer);flushTimer=setTimeout(()=>{flushTimer=null;void flushSyncOutbox();},100);}
     return result;
   } catch(error) {
-    const result={success:false,pending:outbox.status.pending,error:`Device storage could not preserve this change: ${(error as Error).message}`};
-    emit('gwcc-sync-status',result); return result;
+    const result={success:false,pending:active.status.pending,error:`Device storage could not preserve this change: ${(error as Error).message}`};
+    if(active===outbox)emit('gwcc-sync-status',result); return result;
   }
+}
+function queue(change:Mutation):Promise<SyncResult>{
+  if(atomicChanges){atomicChanges.push(change);return Promise.resolve({...getSyncStatus(),success:false});}
+  return queueMany([change]);
+}
+function upsertMutation(table:string,record:any):Mutation {
+  const sanitized={...sanitizeRecordForSupabase(table,record)};
+  if(!sanitized.id)throw new Error('Record ID is required.');
+  sanitized.id=String(sanitized.id);
+  const expected=record._expected_updated_at;
+  delete sanitized._expected_updated_at;delete sanitized._sync_status;
+  return {table,operation:'upsert',id:String(sanitized.id),record:sanitized,expected_updated_at:expected};
 }
 export async function dbSyncUpsert(table: string, record: any): Promise<SyncResult> {
   if(!record) return {success:false,pending:getSyncStatus().pending,error:'A record is required.'};
-  const sanitized={...sanitizeRecordForSupabase(table,record)};
-  if(!sanitized.id)return {success:false,pending:getSyncStatus().pending,error:'Record ID is required.'};
-  const expected=record._expected_updated_at;
-  delete sanitized._expected_updated_at; delete sanitized._sync_status;
-  return queue({table,operation:'upsert',id:String(sanitized.id),record:sanitized,expected_updated_at:expected});
+  try{return queue(upsertMutation(table,record));}catch(error){return {success:false,pending:getSyncStatus().pending,error:(error as Error).message};}
 }
 export async function dbSyncDelete(table: string, id: string): Promise<SyncResult> {
   return queue({table,operation:'delete',id});
@@ -993,6 +1017,7 @@ export async function pullAllDataFromSupabase(): Promise<{success:boolean;data:P
   const client=getSupabaseClient();
   if(!client || !syncOwner) return {success:false,data:{},errors:['Please sign in before loading church records.']};
   const owner=syncOwner,active=outbox;
+  await active?.ready;
   const result:Partial<ChurchAllData>={}; const errors:string[]=[];
   await Promise.allSettled(SYNC_TABLES.map(async({table,key,document})=>{
     try {
@@ -1001,7 +1026,7 @@ export async function pullAllDataFromSupabase(): Promise<{success:boolean;data:P
         const {data,error}=await client.rpc('gwcc_member_records',{p_table:table});if(error)throw error;records=data||[];
       }else {const rows=await fetchAllRows(client,document?'gwcc_documents':table,document?table:undefined);records=document?rows.map(row=>row.data):rows;}
       if(owner!==syncOwner)return;
-      active?.observe(table,records);
+      await active?.observe(table,records);
       const merged=active?.merge(table,records)||records;
       if(key==='settings') result.settings=merged[0] || undefined;
       else (result as any)[key]=merged;
@@ -1012,11 +1037,34 @@ export async function pullAllDataFromSupabase(): Promise<{success:boolean;data:P
 }
 export async function pushAllDataToSupabase(data:ChurchAllData,onProgress?:(step:string,percent:number)=>void) {
   const summary:Record<string,number>={};
+  const owner=syncOwner,active=outbox;
+  const changedAccount=()=>!owner || syncOwner!==owner || outbox!==active;
+  const changedMessage='The signed-in account changed. Bulk sync stopped; remaining records were not queued.';
+  const initial=await flushSyncOutbox({approveRestored:true});
+  if(!initial.success)return {success:false,summary,errors:[initial.error || 'Pending changes are still waiting for cloud confirmation.']};
   for(const [index,{table,key}] of SYNC_TABLES.entries()) {
+    if(changedAccount())return {success:false,summary,errors:[changedMessage]};
     if(key==='auditLogs') continue; // Existing server audit history is never rewritten.
     const records=key==='settings' ? [data.settings] : ((data as any)[key] || []);
-    for(const record of records) { const result=await dbSyncUpsert(table,record); if(result.error) return {success:false,summary,errors:[result.error]}; }
-    summary[table]=records.length; onProgress?.(table,Math.round((index+1)/SYNC_TABLES.length*100));
+    summary[table]=0;
+    let chunk:Mutation[]=[],bytes=0;
+    const confirm=async()=>{
+      if(!chunk.length)return null;
+      if(changedAccount())return changedMessage;
+      const queued=await queueMany(chunk,false);if(queued.error)return queued.error;
+      if(changedAccount())return changedMessage;
+      const status=await flushSyncOutbox();if(!status.success)return status.error || 'Records are still waiting for cloud confirmation.';
+      summary[table]+=chunk.length;chunk=[];bytes=0;return null;
+    };
+    for(const record of records){
+      let change:Mutation;
+      try{change=upsertMutation(table,record);}catch(error){return {success:false,summary,errors:[(error as Error).message]};}
+      const size=new TextEncoder().encode(JSON.stringify(change)).byteLength;
+      if(chunk.length && (chunk.length>=50 || bytes+size>128000)){const error=await confirm();if(error)return {success:false,summary,errors:[error]};}
+      chunk.push(change);bytes+=size;
+    }
+    const error=await confirm();if(error)return {success:false,summary,errors:[error]};
+    onProgress?.(table,Math.round((index+1)/SYNC_TABLES.length*100));
   }
   const status=await flushSyncOutbox();
   return {success:status.success,summary,errors:status.error?[status.error]:[]};
