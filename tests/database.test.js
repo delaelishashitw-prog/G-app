@@ -37,6 +37,53 @@ const operation=()=>`aaaaaaaa-aaaa-4aaa-8aaa-${String(++op).padStart(12,'0')}`;
 const apply=(db,changes,id=operation())=>db.query('SELECT public.gwcc_apply_mutations($1,$2) AS result',[id,JSON.stringify(changes)]);
 const upsert=(table,record,expected)=>({table,id:record.id,operation:'upsert',record,expected_updated_at:expected});
 
+test('member login linking is atomic, root-only, identity-specific and cannot reuse another person’s account',async()=>{
+  const db=await setupDatabase();
+  const link=(id,uid,email)=>db.query('SELECT public.gwcc_link_member_login($1,$2,$3) AS result',[id,uid,email]);
+  try{
+    await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,phone) VALUES
+      ('portal-a','GWCC-PORTAL-A','Own','Member','0240000001'),('portal-b','GWCC-PORTAL-B','Other','Member','0240000002');`);
+    await db.exec('SET ROLE anon');await assert.rejects(link('portal-a',member,'member@example.test'),/permission denied/);await db.exec('RESET ROLE');
+    await asUser(db,member,async()=>await assert.rejects(link('portal-a',member,'member@example.test'),/super administrator/));
+    await asUser(db,root,async()=>{
+      await assert.rejects(link('portal-a',root,'root@example.test'),/active member account/);
+      await assert.rejects(link('portal-a',member,'different@example.test'),/email changed/);
+      await assert.rejects(link('missing',member,'member@example.test'),/not found/);
+      await link('portal-a',member,'  MEMBER@example.test  ');
+      await link('portal-a',member,'member@example.test'); // Safe retry of the same exact link.
+      await assert.rejects(link('portal-b',member,'member@example.test'),/already assigned/);
+      await assert.rejects(link('portal-a',other,'other@example.test'),/different login/);
+    });
+    assert.deepEqual((await db.query("SELECT id,auth_user_id FROM public.members WHERE id LIKE 'portal-%' ORDER BY id")).rows,[{id:'portal-a',auth_user_id:member},{id:'portal-b',auth_user_id:null}]);
+    assert.deepEqual((await db.query('SELECT member_id,role FROM public.profiles WHERE id=$1',[member])).rows,[{member_id:'portal-a',role:'member'}]);
+    await db.exec("INSERT INTO public.giving(id,member_id,category,amount) VALUES('portal-own-gift','portal-a','Tithe',100),('portal-other-gift','portal-b','Tithe',200)");
+    await asUser(db,member,async()=>{
+      assert.deepEqual((await db.query("SELECT id FROM public.members WHERE id LIKE 'portal-%'")).rows,[{id:'portal-a'}]);
+      assert.deepEqual((await db.query("SELECT id FROM public.giving WHERE id LIKE 'portal-%'")).rows,[{id:'portal-own-gift'}]);
+      await assert.rejects(link('portal-b',member,'member@example.test'),/super administrator/);
+    });
+  }finally{await db.close();}
+});
+
+test('linking preserves suspended accounts and archived members; pending invitations cannot read member records before verification',async()=>{
+  const db=await setupDatabase();
+  const link=()=>db.query("SELECT public.gwcc_link_member_login('portal-pending',$1,'member@example.test')",[member]);
+  try{
+    await db.exec("INSERT INTO public.members(id,member_id,first_name,last_name,phone,is_archived) VALUES('portal-pending','GWCC-PENDING','Pending','Member','0240000001',true)");
+    await asUser(db,root,async()=>await assert.rejects(link(),/restore/));
+    await db.exec(`UPDATE public.members SET is_archived=false WHERE id='portal-pending';UPDATE public.profiles SET is_active=false WHERE id='${member}'`);
+    await asUser(db,root,async()=>await assert.rejects(link(),/active member account/));
+    await db.exec(`UPDATE public.profiles SET is_active=true WHERE id='${member}';UPDATE auth.users SET email_confirmed_at=NULL WHERE id='${member}'`);
+    await asUser(db,root,link);
+    await asUser(db,member,async()=>{
+      assert.equal((await db.query('SELECT public.current_user_role() AS role')).rows[0].role,'disabled');
+      assert.equal((await db.query("SELECT id FROM public.members WHERE id='portal-pending'")).rows.length,0);
+    });
+    await db.exec(`UPDATE auth.users SET email_confirmed_at=now() WHERE id='${member}'`);
+    await asUser(db,member,async()=>assert.deepEqual((await db.query("SELECT id FROM public.members WHERE id='portal-pending'")).rows,[{id:'portal-pending'}]));
+  }finally{await db.close();}
+});
+
 test('release snapshot preserves original rows privately and a retry cannot overwrite recovery data',async()=>{
   const snapshot=fs.readFileSync('supabase/release-snapshot.sql','utf8');
   const db=await setupDatabase({beforeSecurityUpgrade:async db=>{

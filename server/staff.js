@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
 import process from 'node:process';
 import { authorizeRequest, serverSupabaseConfig, HttpError, requirePost, sendError } from './security.js';
+import { handleMemberAccess } from './memberAccess.js';
 
 const roles = ['super_admin','senior_pastor','administrator','finance_officer','pastor','ministry_leader','attendance_officer','data_entry','member'];
 const safeFields = ['first_name','last_name','phone','department','job_title','employment_type','avatar_url','role','is_active','has_login_account','member_id'];
@@ -36,6 +37,10 @@ export async function staffHandler(req, res, dependencies = {}) {
       res.status(200).json({ user:data,message:action === 'archive' ? 'Account access revoked.' : 'Staff record updated.' }); return;
     }
     if (!admin) throw new HttpError(503,'Staff invitations and password resets require the server authentication key.');
+    if (['member_access','invite_member','link_member','resend_member_invite'].includes(action)) {
+      const result = await handleMemberAccess({ action, body:req.body, client, admin, appOrigin:dependencies.appOrigin || process.env.APP_ORIGIN });
+      res.status(200).json(result); return;
+    }
     if (action === 'reset_password') {
       if (typeof email !== 'string' || typeof password !== 'string' || password.length < 12) throw new HttpError(400,'Use a temporary password of at least 12 characters.');
       const { data: target,error: targetError } = await client.from('profiles').select('id,role').eq('email',email.trim().toLowerCase()).eq('has_login_account',true).single();
@@ -47,6 +52,8 @@ export async function staffHandler(req, res, dependencies = {}) {
     }
     if (action !== 'create') throw new HttpError(400,'Unknown staff operation.');
     const input = req.body;
+    if (input.role === 'member' && input.has_login_account !== false) throw new HttpError(400,'Open the member’s directory profile and use Portal Access to create a linked member login.');
+    if (input.member_id) throw new HttpError(400,'Use Portal Access on the member’s directory profile to link a member account.');
     if (!input.first_name?.trim() || !input.last_name?.trim() || !roles.includes(input.role)) throw new HttpError(400,'Enter a valid staff name and role.');
     const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
     let newId = randomUUID();
@@ -64,10 +71,6 @@ export async function staffHandler(req, res, dependencies = {}) {
     const patch=Object.fromEntries(safeFields.filter(key=>input[key]!==undefined).map(key=>[key,input[key]]));
     const { data: result,error: profileError } = await client.rpc('gwcc_manage_profile',{ p_id:newId,p_updates:patch });
     if (profileError) throw new HttpError(400,profileError.message);
-    if (input.member_id && input.has_login_account !== false) {
-      const { data:linked,error } = await admin.from('members').update({auth_user_id:newId}).eq('id',input.member_id).is('auth_user_id',null).select('id').single();
-      if(error||!linked)throw new HttpError(409,'Account created, but the member link needs administrator review. The selected member may already have a login.');
-    }
     res.status(201).json({ user:result,message: input.has_login_account === false ? 'Staff directory record created.' : 'Staff invitation sent. The recipient must verify the email and choose a password.' });
   } catch(error) { sendError(res,error); }
 }

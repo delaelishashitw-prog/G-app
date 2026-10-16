@@ -335,6 +335,10 @@ export const UsersPage: React.FC = () => {
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     const hasLogin = newUserForm.has_login_account;
+    if (hasLogin && newUserForm.role === 'member') {
+      showToast('Open Members, select the person, then use Portal Access to invite and link their member login.', 'error');
+      return;
+    }
 
     if (!newUserForm.first_name.trim() || !newUserForm.last_name.trim()) {
       showToast('Please provide first name and last name.', 'error');
@@ -1609,7 +1613,9 @@ export const UsersPage: React.FC = () => {
 
               {newUserForm.has_login_account && (
                 <div>
-                  <p className="text-xs text-slate-600">Login accounts receive an email invitation to set their own password.</p>
+                  {newUserForm.role === 'member'
+                    ? <p className="text-xs text-amber-800">For member logins, open the person’s profile in <a href="/members" className="font-bold underline">Members</a> and select <strong>Portal Access</strong>. This ensures their login is linked to their records.</p>
+                    : <p className="text-xs text-slate-600">Login accounts receive an email invitation to set their own password.</p>}
                 </div>
               )}
 
