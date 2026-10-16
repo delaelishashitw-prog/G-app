@@ -794,10 +794,13 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     createServiceRecord(data, setServices, logAction, dbSyncUpsert);
 
   const updateService = (id: string, updates: Partial<ChurchService>) => {
-    updateServiceRecord(id, updates, setServices, logAction, dbSyncUpsert);
+    updateServiceRecord(id, updates, setServices, logAction, dbSyncUpsert, services);
   };
 
   const deleteService = (id: string) => {
+    if ([...attendance, ...headcounts, ...giving, ...rosterAssignments].some(record => record.service_id === id)) {
+      throw new Error('This service has history. Deactivate it instead of deleting it.');
+    }
     deleteServiceRecord(id, setServices, logAction, dbSyncDelete);
   };
 

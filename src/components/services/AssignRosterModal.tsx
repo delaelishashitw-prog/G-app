@@ -129,7 +129,7 @@ export const AssignRosterModal: React.FC<AssignRosterModalProps> = ({
   const [department, setDepartment] = useState<RosterDepartment>('sound_media');
   const [roleTitle, setRoleTitle] = useState('Lead FOH Sound Engineer');
   const [reportTime, setReportTime] = useState('07:30 AM');
-  const [status, setStatus] = useState<RosterAssignmentStatus>('confirmed');
+  const [status, setStatus] = useState<RosterAssignmentStatus>('pending');
   const [notes, setNotes] = useState('');
   const [announcement, setAnnouncement] = useState('');
 
@@ -147,7 +147,6 @@ export const AssignRosterModal: React.FC<AssignRosterModalProps> = ({
     }
   }, [initialDate]);
 
-  if (!isOpen) return null;
 
   const currentService = services.find((s) => s.id === serviceId) || services[0];
   const selectedMember = members.find((m) => m.id === selectedMemberId);
@@ -189,6 +188,8 @@ export const AssignRosterModal: React.FC<AssignRosterModalProps> = ({
             .join(', ')}).`,
     };
   }, [selectedMemberId, date, serviceId, existingAssignments]);
+
+  if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

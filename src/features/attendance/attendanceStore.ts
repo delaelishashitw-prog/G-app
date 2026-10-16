@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { AttendanceRecord, ChurchService, HeadcountRecord, Member, Visitor } from '../../types/database.types';
+import { validateService } from '../services/serviceSchedule';
 
 export function createService(
   data: Omit<ChurchService, 'id'>,
@@ -7,9 +8,11 @@ export function createService(
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
   dbSyncUpsert: (table: string, record: unknown) => void
 ): ChurchService {
+  const validationError = validateService(data);
+  if (validationError) throw new Error(validationError);
   const newService: ChurchService = {
     ...data,
-    id: `ser-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    id: crypto.randomUUID(),
     created_at: new Date().toISOString(),
   };
   setServices((prev) => [newService, ...prev]);
@@ -23,19 +26,17 @@ export function updateService(
   updates: Partial<ChurchService>,
   setServices: Dispatch<SetStateAction<ChurchService[]>>,
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void
+  dbSyncUpsert: (table: string, record: unknown) => void,
+  services: ChurchService[] = []
 ) {
-  setServices((prev) =>
-    prev.map((s) => {
-      if (s.id === id) {
-        const updated = { ...s, ...updates };
-        logAction('UPDATE_SERVICE', 'Services', `Updated service "${updated.name}"`, id);
-        dbSyncUpsert('services', updated);
-        return updated;
-      }
-      return s;
-    })
-  );
+  const existing = services.find(service => service.id === id);
+  if (!existing) throw new Error('Service not found. Refresh and try again.');
+  const updated = { ...existing, ...updates, id, updated_at: new Date().toISOString(), _expected_updated_at: existing.updated_at };
+  const validationError = validateService(updated);
+  if (validationError) throw new Error(validationError);
+  setServices(prev => prev.map(service => service.id === id ? updated : service));
+  logAction('UPDATE_SERVICE', 'Services', `Updated service "${updated.name}"`, id);
+  dbSyncUpsert('services', updated);
 }
 
 export function deleteService(

@@ -14,7 +14,7 @@ export const ServiceBulletinModal: React.FC<ServiceBulletinModalProps> = ({
   settings,
   onClose,
 }) => {
-  const { success } = useToast();
+  const { success, error } = useToast();
   const [copied, setCopied] = useState(false);
 
   const programItems = service.order_of_service || [];
@@ -23,7 +23,8 @@ export const ServiceBulletinModal: React.FC<ServiceBulletinModalProps> = ({
     window.print();
   };
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
+    try {
     const text = `${settings.church_name || 'GREATER WORKS CITY CHURCH'} - ORDER OF SERVICE
 Service: ${service.name}
 Day & Time: Every ${service.day_of_week} (${service.start_time} - ${service.end_time} GMT)
@@ -36,10 +37,11 @@ ${programItems.map((p, idx) => `${idx + 1}. [${p.time || p.duration || ''}] ${p.
 
 "I was glad when they said unto me, Let us go into the house of the LORD." — Psalm 122:1`;
 
-    navigator.clipboard.writeText(text);
+    await navigator.clipboard.writeText(text);
     setCopied(true);
     success('Bulletin Copied', 'Order of service copied to clipboard.');
     setTimeout(() => setCopied(false), 2500);
+    } catch { error('Copy failed', 'Allow clipboard access and try again.'); }
   };
 
   return (

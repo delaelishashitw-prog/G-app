@@ -12,7 +12,7 @@ import {
   Clock,
   Sparkles,
 } from 'lucide-react';
-import { RosterAssignment, ChurchSettings } from '../../types/database.types';
+import { RosterAssignment, RosterAssignmentStatus, ChurchSettings } from '../../types/database.types';
 import { cleanGhanaPhone } from '../../lib/currencyUtils';
 import { useToast } from '../../contexts/ToastContext';
 
@@ -22,7 +22,7 @@ interface BroadcastRosterModalProps {
   assignments: RosterAssignment[];
   settings: ChurchSettings;
   targetDate?: string;
-  onUpdateStatus?: (assignmentId: string, status: any) => void;
+  onUpdateStatus?: (assignmentId: string, status: RosterAssignmentStatus) => void;
   onBatchConfirm?: (assignmentIds: string[]) => void;
 }
 
@@ -35,7 +35,7 @@ export const BroadcastRosterModal: React.FC<BroadcastRosterModalProps> = ({
   onUpdateStatus,
   onBatchConfirm,
 }) => {
-  const { success, info } = useToast();
+  const { success, info, error } = useToast();
   const [copiedSummary, setCopiedSummary] = useState(false);
 
   // Available dates in assignments
@@ -100,14 +100,17 @@ export const BroadcastRosterModal: React.FC<BroadcastRosterModalProps> = ({
     return lines.join('\n');
   }, [dateAssignments, selectedDate, settings]);
 
-  const handleCopySummary = () => {
-    navigator.clipboard.writeText(groupSummaryText);
+  const handleCopySummary = async () => {
+    try {
+    await navigator.clipboard.writeText(groupSummaryText);
     setCopiedSummary(true);
     success('Roster Summary Copied', 'Group announcement copied for WhatsApp.');
     setTimeout(() => setCopiedSummary(false), 2500);
+    } catch { error('Copy failed', 'Allow clipboard access and try again.'); }
   };
 
   const handleConfirmAllPending = () => {
+    if (!onBatchConfirm && !onUpdateStatus) return;
     const pendingIds = dateAssignments.filter((a) => a.status === 'pending').map((a) => a.id);
     if (pendingIds.length === 0) {
       info('No Pending Stewards', 'All assignments for this date are already confirmed.');
@@ -125,7 +128,7 @@ export const BroadcastRosterModal: React.FC<BroadcastRosterModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
-      <div className="relative w-full max-w-3xl bg-white dark:bg-[#0e1726] rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden my-4 max-h-[94vh] flex flex-col">
+      <div role="dialog" aria-modal="true" aria-label="Roster reminders" className="relative w-full max-w-3xl bg-white dark:bg-[#0e1726] rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden my-4 max-h-[94vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 bg-[#064e3b] text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
@@ -141,6 +144,7 @@ export const BroadcastRosterModal: React.FC<BroadcastRosterModalProps> = ({
           </div>
           <button
             onClick={onClose}
+            aria-label="Close roster reminders"
             className="p-1.5 text-white/80 hover:text-white rounded-lg transition hover:bg-emerald-800 cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -185,7 +189,7 @@ export const BroadcastRosterModal: React.FC<BroadcastRosterModalProps> = ({
             <span>{copiedSummary ? 'Copied Group Notice' : 'Copy Group Roster Message'}</span>
           </button>
 
-          {pendingCount > 0 && (
+          {pendingCount > 0 && (onBatchConfirm || onUpdateStatus) && (
             <button
               onClick={handleConfirmAllPending}
               className="px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs flex items-center gap-1.5 transition shadow-xs cursor-pointer"

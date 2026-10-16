@@ -54,6 +54,8 @@ import {
   RosterAssignmentStatus,
 } from '../types/database.types';
 import { cleanGhanaPhone } from '../lib/currencyUtils';
+import { buildServiceInsights, countCheckins, resolveServiceId } from '../features/services/serviceInsights';
+import { upcomingService } from '../features/services/serviceSchedule';
 
 // Modals
 import { ServiceFormModal } from '../components/services/ServiceFormModal';
@@ -67,13 +69,6 @@ import { ShareScheduleModal } from '../components/services/ShareScheduleModal';
 import { BroadcastRosterModal } from '../components/services/BroadcastRosterModal';
 
 const DAYS_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-function parseTimeToMinutes(timeStr?: string): number {
-  if (!timeStr) return 0;
-  const match = timeStr.match(/(\d{1,2}):(\d{2})/);
-  if (!match) return 0;
-  return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
-}
 
 export const ServicesPage: React.FC = () => {
   const {
@@ -95,12 +90,20 @@ export const ServicesPage: React.FC = () => {
   } = useChurchData();
   const giving=useMemo(()=>allGiving.filter(isActiveTransaction),[allGiving]);
   const { success, info, warning } = useToast();
-  const { canAccess, currentRole } = useAuth();
+  const { canAccess, currentRole, hasRole } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Role check: Only authorized staff can create/edit/delete services
-  const canManageServices = canAccess('services') && currentRole !== 'member';
+  const canManageServices = hasRole(['super_admin', 'senior_pastor', 'administrator', 'pastor', 'ministry_leader']);
+  const canViewGiving = canAccess('giving');
+  const canTakeAttendance = canAccess('attendance');
+  const [clockNow, setClockNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setClockNow(new Date()), 30000);
+    return () => clearInterval(timer);
+  }, []);
+  const todayStr = clockNow.toISOString().slice(0, 10);
 
   // URL Query Parameters Handling
   const tabParam = searchParams.get('tab');
@@ -178,82 +181,10 @@ export const ServicesPage: React.FC = () => {
     );
   };
 
-  // Compute live connected metrics for each service
-  const serviceStatsMap = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        checkinCount: number;
-        todayCheckinCount: number;
-        latestCheckinCount: number;
-        headcountCount: number;
-        givingTotal: number;
-        lastDate: string;
-      }
-    >();
-
-    const todayStr = new Date().toISOString().split('T')[0];
-
-    services.forEach((s) => {
-      const sName = (s.name || '').trim().toLowerCase();
-      const sPrefix = sName.length >= 3 ? sName.slice(0, 15) : '';
-
-      // Find matching individual attendance check-ins
-      const matchingAtt = attendance.filter((a) => {
-        if (a.service_id && a.service_id === s.id) return true;
-        if (s.name && a.service_name && a.service_name.toLowerCase() === s.name.toLowerCase()) return true;
-        if (sPrefix && a.service_name && a.service_name.toLowerCase().includes(sPrefix)) return true;
-        return false;
-      });
-
-      // Find matching sanctuary headcounts tallies
-      const matchingHeadcounts = (headcounts || []).filter((h) => {
-        if (h.service_id && h.service_id === s.id) return true;
-        if (s.name && h.service_name && h.service_name.toLowerCase() === s.name.toLowerCase()) return true;
-        if (sPrefix && h.service_name && h.service_name.toLowerCase().includes(sPrefix)) return true;
-        return false;
-      });
-
-      // Find matching giving
-      const matchingGiving = giving.filter((g) => {
-        if (g.service_id && g.service_id === s.id) return true;
-        if (s.name && g.service_name && g.service_name.toLowerCase() === s.name.toLowerCase()) return true;
-        if (sPrefix && g.service_name && g.service_name.toLowerCase().includes(sPrefix)) return true;
-        return false;
-      });
-
-      const givingTotal = matchingGiving.reduce((sum, g) => sum + g.amount, 0);
-
-      const sortedDates = Array.from(
-        new Set([
-          ...matchingAtt.map((a) => a.date).filter(Boolean),
-          ...matchingHeadcounts.map((h) => h.date).filter(Boolean),
-        ])
-      ).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-
-      const latestDate = sortedDates[0] || '';
-
-      // Real live verified check-ins from attendance records
-      const verifiedCheckins = matchingAtt.filter((a) => a.status !== 'absent').length;
-      const todayCheckins = matchingAtt.filter((a) => a.date === todayStr && a.status !== 'absent').length;
-
-      // Latest session check-ins
-      const latestAttCount = latestDate ? matchingAtt.filter((a) => a.date === latestDate && a.status !== 'absent').length : 0;
-      const latestHeadcount = matchingHeadcounts.find((h) => h.date === latestDate);
-      const latestHeadcountCount = latestHeadcount?.total_auditorium || 0;
-
-      map.set(s.id, {
-        checkinCount: verifiedCheckins,
-        todayCheckinCount: todayCheckins,
-        latestCheckinCount: latestAttCount,
-        headcountCount: latestHeadcountCount,
-        givingTotal,
-        lastDate: latestDate || 'Recent',
-      });
-    });
-
-    return map;
-  }, [services, attendance, headcounts, giving]);
+  const serviceInsights = useMemo(() => buildServiceInsights(services, attendance, headcounts, giving, todayStr),
+    [services, attendance, headcounts, giving, todayStr]);
+  const serviceStatsMap = serviceInsights.map;
+  const unlinkedRosterCount = rosterAssignments.filter(row => !resolveServiceId(row, services)).length;
 
   // Overall metrics
   const activeServices = useMemo(() => services.filter((s) => s.is_active), [services]);
@@ -261,13 +192,8 @@ export const ServicesPage: React.FC = () => {
     () => activeServices.reduce((sum, s) => sum + (s.expected_attendance || 0), 0),
     [activeServices]
   );
-  const totalLiveAttendees = useMemo(() => {
-    return attendance.filter((a) => a.status !== 'absent').length;
-  }, [attendance]);
-  const totalConnectedServiceInflow = useMemo(() => {
-    const connected = Array.from(serviceStatsMap.values()).reduce((sum, s) => sum + s.givingTotal, 0);
-    return connected > 0 ? connected : giving.reduce((sum, g) => sum + g.amount, 0);
-  }, [serviceStatsMap, giving]);
+  const totalLiveAttendees = countCheckins(attendance.filter(row => row.date === todayStr));
+  const totalConnectedServiceInflow = serviceInsights.connectedGiving;
 
   // Currency configuration
   const currencySymbol = settings.currency_symbol || 'GH₵';
@@ -276,91 +202,8 @@ export const ServicesPage: React.FC = () => {
     maximumFractionDigits: 2,
   })}`;
 
-  // Next Upcoming or Live Service Detection
-  const upcomingServiceInfo = useMemo(() => {
-    if (activeServices.length === 0) return null;
-
-    const now = new Date();
-    const currentDayIdx = now.getDay();
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
-
-    let closestService: ChurchService | null = null;
-    let minDiffMinutes = Infinity;
-    let isLive = false;
-
-    activeServices.forEach((svc) => {
-      const rawDay = (svc.day_of_week || 'Sunday').trim().toLowerCase();
-      const svcDayIdx = DAYS_ORDER.findIndex((d) => d.toLowerCase() === rawDay);
-      if (svcDayIdx === -1) return;
-
-      const startMin = parseTimeToMinutes(svc.start_time);
-      let endMin = parseTimeToMinutes(svc.end_time);
-      if (endMin <= startMin) endMin = startMin + 150; // default 2.5 hours
-
-      const dayDiff = svcDayIdx - currentDayIdx;
-
-      if (dayDiff === 0) {
-        if (currentMinutes >= startMin && currentMinutes < endMin) {
-          closestService = svc;
-          isLive = true;
-          minDiffMinutes = -1;
-          return;
-        } else if (currentMinutes < startMin) {
-          const diff = startMin - currentMinutes;
-          if (diff < minDiffMinutes && !isLive) {
-            minDiffMinutes = diff;
-            closestService = svc;
-          }
-        } else {
-          const diff = 7 * 24 * 60 + (startMin - currentMinutes);
-          if (diff < minDiffMinutes && !isLive) {
-            minDiffMinutes = diff;
-            closestService = svc;
-          }
-        }
-      } else {
-        let diffDays = dayDiff;
-        if (diffDays < 0) diffDays += 7;
-        const diff = diffDays * 24 * 60 + (startMin - currentMinutes);
-        if (diff < minDiffMinutes && !isLive) {
-          minDiffMinutes = diff;
-          closestService = svc;
-        }
-      }
-    });
-
-    if (!closestService) {
-      closestService = activeServices[0];
-    }
-
-    let countdownText = '';
-    if (isLive) {
-      countdownText = 'Live In Session Now';
-    } else if (minDiffMinutes < 24 * 60) {
-      const hours = Math.floor(minDiffMinutes / 60);
-      const mins = minDiffMinutes % 60;
-      if (hours === 0) {
-        countdownText = `Starting in ${mins} minutes`;
-      } else {
-        countdownText = `Starting in ${hours}h ${mins > 0 ? `${mins}m` : ''}`;
-      }
-    } else {
-      const days = Math.floor(minDiffMinutes / (24 * 60));
-      const hours = Math.floor((minDiffMinutes % (24 * 60)) / 60);
-      countdownText = `In ${days} day${days > 1 ? 's' : ''} ${hours > 0 ? `${hours}h` : ''}`;
-    }
-
-    return {
-      service: closestService,
-      isLive,
-      countdownText,
-    };
-  }, [activeServices]);
-
-  // Today's day name in lowercase
-  const todayDayName = useMemo(() => {
-    return DAYS_ORDER[new Date().getDay()].toLowerCase();
-  }, []);
+  const upcomingServiceInfo = useMemo(() => upcomingService(activeServices, clockNow), [activeServices, clockNow]);
+  const todayDayName = DAYS_ORDER[clockNow.getUTCDay()].toLowerCase();
 
   // Connected stats for current upcoming/live service
   const upcomingStats = useMemo(() => {
@@ -439,18 +282,28 @@ export const ServicesPage: React.FC = () => {
     setEditingService(null);
   };
 
+  const hasServiceHistory = (id: string) => [...attendance, ...headcounts, ...allGiving, ...rosterAssignments]
+    .some(row => resolveServiceId(row, services) === id);
+
   const handleDeleteService = () => {
     if (!canManageServices) {
       warning('Access Denied', 'You do not have permissions to delete church services.');
       return;
     }
     if (!deleteConfirmService) return;
+    if (hasServiceHistory(deleteConfirmService.id)) {
+      updateService(deleteConfirmService.id, { is_active: false });
+      info('Service Deactivated', 'The schedule is inactive and its attendance, giving and roster history is preserved.');
+      setDeleteConfirmService(null);
+      return;
+    }
     deleteService(deleteConfirmService.id);
     success('Service Deleted', `"${deleteConfirmService.name}" has been removed.`);
     setDeleteConfirmService(null);
   };
 
   const handleSaveOrderOfService = (serviceId: string, orderOfService: ServiceProgramItem[]) => {
+    if (!canManageServices) return;
     updateService(serviceId, { order_of_service: orderOfService });
   };
 
@@ -459,29 +312,32 @@ export const ServicesPage: React.FC = () => {
     updates: Partial<ChurchService>,
     newAssignments?: Omit<RosterAssignment, 'id' | 'created_at'>[]
   ) => {
+    if (!canManageServices) return;
     updateService(serviceId, updates);
     if (newAssignments && newAssignments.length > 0) {
       batchAddOrUpdateRosterAssignments(newAssignments);
     }
   };
 
-  const handleCopyServiceInvite = (svc: ChurchService) => {
+  const handleCopyServiceInvite = async (svc: ChurchService) => {
+    try {
     const text = `🕊️ *INVITATION: ${svc.name.toUpperCase()}*
 🗓️ Every *${svc.day_of_week}* (${svc.start_time} - ${svc.end_time} GMT)
 🏛️ Venue: ${svc.venue || 'Greater Works City Church, Main Sanctuary, Joma, Accra'}
 🎙️ Ministering: ${svc.preacher || 'Prophet Elisha K. Richard'}
 ${svc.description ? `\n_${svc.description}_\n` : ''}
 Come and experience extraordinary worship, prophetic encounters, signs and wonders! All are warmly welcome.`;
-    navigator.clipboard.writeText(text);
+    await navigator.clipboard.writeText(text);
     success('Invitation Copied', `WhatsApp invite for "${svc.name}" copied.`);
+    } catch { warning('Copy failed', 'Allow clipboard access and try again.'); }
   };
 
   const handleGoToAttendance = (serviceId: string) => {
-    navigate(`/attendance?serviceId=${serviceId}`);
+    navigate(`/attendance?serviceId=${encodeURIComponent(serviceId)}`);
   };
 
   const handleGoToFinance = (serviceId: string) => {
-    navigate(`/finance?serviceId=${serviceId}`);
+    navigate(`/giving?serviceId=${encodeURIComponent(serviceId)}`);
   };
 
   // Duty Roster counts
@@ -596,12 +452,12 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                 {upcomingServiceInfo.service.expected_attendance ? (
                   <span className="flex items-center gap-1">
                     <Users className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
-                    <strong>Capacity:</strong> {upcomingServiceInfo.service.expected_attendance} worshippers
+                    <strong>Attendance target:</strong> {upcomingServiceInfo.service.expected_attendance} worshippers
                   </span>
                 ) : null}
                 <span className="flex items-center gap-1 font-bold text-amber-300 bg-white/10 px-2.5 py-0.5 rounded-full border border-amber-300/30">
                   <UserCheck className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-                  <strong>Live Check-Ins:</strong> {upcomingStats ? `${upcomingStats.checkinCount} attendees` : '0 attendees'}
+                  <strong>{upcomingServiceInfo.isLive ? 'Session check-ins:' : 'Latest session check-ins:'}</strong> {upcomingServiceInfo.isLive ? (upcomingStats?.checkinsByDate[upcomingServiceInfo.occurrenceDate] || 0) : (upcomingStats?.latestCheckinCount || 0)}
                 </span>
               </div>
             </div>
@@ -618,6 +474,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
               </button>
 
               <button
+                disabled={!canTakeAttendance}
                 onClick={() => handleGoToAttendance(upcomingServiceInfo.service.id)}
                 className="px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer backdrop-blur-xs"
                 title="Record attendance check-ins"
@@ -672,16 +529,16 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
         <div className="p-4 bg-white dark:bg-[#0e1726] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
           <div>
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
-              Auditorium Capacity & Check-Ins
+              Weekly Attendance Target
             </span>
             <span className="text-2xl font-extrabold text-slate-900 dark:text-white font-mono mt-0.5 block">
               {totalWeeklyCapacity > 0 ? totalWeeklyCapacity.toLocaleString() : 'Open'}{' '}
               <span className="text-xs text-slate-400 dark:text-slate-500 font-normal">
-                {totalWeeklyCapacity > 0 ? 'seats / wk' : 'capacity'}
+                {totalWeeklyCapacity > 0 ? 'expected / wk' : 'target'}
               </span>
             </span>
             <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold block mt-0.5">
-              {totalLiveAttendees} live recorded check-ins
+              {totalLiveAttendees} check-ins today (GMT)
             </span>
           </div>
           <span className="p-2.5 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 rounded-xl">
@@ -708,10 +565,10 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
         <div className="p-4 bg-white dark:bg-[#0e1726] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
           <div>
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
-              Treasury Inflow Connected
+              Giving Linked to Services
             </span>
             <span className="text-xl font-extrabold text-slate-900 dark:text-white font-mono mt-0.5 block">
-              {formattedConnectedInflow}
+              {canViewGiving ? formattedConnectedInflow : 'Restricted'}
             </span>
           </div>
           <span className="p-2.5 bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-400 rounded-xl">
@@ -719,6 +576,14 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
           </span>
         </div>
       </div>
+
+      {(serviceInsights.unlinkedAttendance + serviceInsights.unlinkedHeadcounts + unlinkedRosterCount + (canViewGiving ? serviceInsights.unlinkedGiving : 0)) > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-950" role="status">
+          <p className="font-bold">Service history needs review</p>
+          <p>{serviceInsights.unlinkedAttendance} attendance records, {serviceInsights.unlinkedHeadcounts} headcounts and {unlinkedRosterCount} roster assignments cannot be linked to a service in this schedule.
+            {canViewGiving && ` ${serviceInsights.unlinkedGiving} giving records are also unlinked.`} These records are preserved and excluded from individual service totals.</p>
+        </div>
+      )}
 
       {/* View Mode Navigation & Filters */}
       <div className="bg-white dark:bg-[#0e1726] p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -849,13 +714,15 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                 latestCheckinCount: 0,
                 headcountCount: 0,
                 givingTotal: 0,
-                lastDate: '-',
+                lastDate: '',
+                checkinsByDate: {},
               };
               const programItemsCount = svc.order_of_service?.length || 0;
 
               return (
                 <div
                   key={svc.id}
+                  data-service-id={svc.id}
                   className={`p-5 bg-white dark:bg-[#0e1726] rounded-2xl border transition shadow-xs flex flex-col justify-between space-y-4 hover:shadow-md ${
                     svc.is_active
                       ? 'border-slate-200 dark:border-slate-800 hover:border-emerald-300 dark:hover:border-emerald-700'
@@ -939,16 +806,17 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                     {/* Connected Ministry Stats Bar */}
                     <div className="grid grid-cols-3 gap-2 text-center text-xs">
                       <div className="p-2 bg-slate-50 dark:bg-slate-900/60 rounded-lg border border-slate-100 dark:border-slate-800">
-                        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase block">Capacity</span>
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase block">Target</span>
                         <span className="font-bold text-slate-800 dark:text-slate-200 font-mono">
                           {svc.expected_attendance ? `${svc.expected_attendance}` : 'Open'}
                         </span>
                       </div>
                       <div className="p-2 bg-emerald-50/60 dark:bg-emerald-950/40 rounded-lg border border-emerald-100 dark:border-emerald-800">
-                        <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold uppercase block">Attendees</span>
+                        <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold uppercase block">Latest session</span>
                         <span className="font-bold text-emerald-900 dark:text-emerald-300 font-mono">
-                          {stats.checkinCount} {stats.checkinCount === 1 ? 'check-in' : 'check-ins'}
+                          {stats.latestCheckinCount} {stats.latestCheckinCount === 1 ? 'check-in' : 'check-ins'}
                         </span>
+                        <span className="text-[9px] block text-slate-500">{stats.lastDate || 'No recorded session'}</span>
                         {stats.headcountCount > 0 && (
                           <span className="text-[9px] text-emerald-700/80 dark:text-emerald-400/80 block font-semibold truncate" title={`Auditorium Headcount: ${stats.headcountCount}`}>
                             Tally: {stats.headcountCount}
@@ -988,6 +856,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                         </button>
 
                         <button
+                          disabled={!canManageServices}
                           onClick={() => setOrderEditorService(svc)}
                           className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 hover:bg-purple-50 dark:hover:bg-purple-950/50 hover:border-purple-300 dark:hover:border-purple-700 text-slate-700 dark:text-slate-300 hover:text-purple-900 dark:hover:text-purple-300 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
                           title="Plan and edit Order of Service"
@@ -997,6 +866,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                         </button>
 
                         <button
+                          disabled={!canManageServices}
                           onClick={() => setRosterService(svc)}
                           className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 hover:bg-blue-50 dark:hover:bg-blue-950/50 hover:border-blue-300 dark:hover:border-blue-700 text-slate-700 dark:text-slate-300 hover:text-blue-900 dark:hover:text-blue-300 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
                           title="Manage duty roster and ministers"
@@ -1034,18 +904,20 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-850 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
                       <div className="flex items-center gap-3">
                         <button
-                          onClick={() => handleGoToAttendance(svc.id)}
+                          disabled={!canTakeAttendance}
+                onClick={() => handleGoToAttendance(svc.id)}
                           className="hover:text-emerald-700 dark:hover:text-emerald-400 font-semibold cursor-pointer flex items-center gap-1"
                         >
                           <UserCheck className="w-3 h-3 text-emerald-600" />
                           <span>Check-in</span>
                         </button>
                         <button
+                          disabled={!canViewGiving}
                           onClick={() => handleGoToFinance(svc.id)}
                           className="hover:text-emerald-700 dark:hover:text-emerald-400 font-semibold cursor-pointer flex items-center gap-1"
                         >
                           <Coins className="w-3 h-3 text-purple-600" />
-                          <span>Sunday Tally</span>
+                          <span>Service Giving</span>
                         </button>
                       </div>
 
@@ -1116,6 +988,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                     {dayServices.map((svc) => (
                       <div
                         key={svc.id}
+                  data-service-id={svc.id}
                         className="p-4 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-emerald-300 dark:hover:border-emerald-700 transition space-y-2.5"
                       >
                         <div className="flex items-center justify-between">
@@ -1183,6 +1056,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
               return (
                 <div
                   key={svc.id}
+                  data-service-id={svc.id}
                   className="p-5 bg-slate-50/60 dark:bg-slate-900/40 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4"
                 >
                   <div className="flex items-start justify-between">
@@ -1732,15 +1606,15 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
         <BroadcastRosterModal
           isOpen={isBroadcastRosterOpen}
           onClose={() => setIsBroadcastRosterOpen(false)}
-          assignments={rosterAssignments}
+          assignments={rosterAssignments.filter(row => rosterServiceFilter === 'ALL' || row.service_id === rosterServiceFilter)}
           settings={settings}
           targetDate={rosterDateFilter !== 'ALL' ? rosterDateFilter : undefined}
-          onUpdateStatus={updateRosterAssignment}
+          onUpdateStatus={canManageServices ? (id, status) => updateRosterAssignment(id, { status }) : undefined}
         />
       )}
 
       {/* Assign Volunteer Modal */}
-      {isAssignRosterOpen && (
+      {canManageServices && isAssignRosterOpen && (
         <AssignRosterModal
           isOpen={isAssignRosterOpen}
           onClose={() => setIsAssignRosterOpen(false)}
@@ -1758,7 +1632,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
         <PrintRosterModal
           isOpen={isPrintMasterRosterOpen}
           onClose={() => setIsPrintMasterRosterOpen(false)}
-          assignments={rosterAssignments}
+          assignments={rosterAssignments.filter(row => rosterServiceFilter === 'ALL' || row.service_id === rosterServiceFilter)}
           settings={settings}
           selectedDate={rosterDateFilter}
           selectedServiceName={rosterServiceFilter !== 'ALL' ? services.find((s) => s.id === rosterServiceFilter)?.name : undefined}
@@ -1787,7 +1661,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
       )}
 
       {/* Order of Service / Liturgy Editor Modal */}
-      {orderEditorService && (
+      {canManageServices && orderEditorService && (
         <OrderOfServiceEditorModal
           service={orderEditorService}
           onSave={handleSaveOrderOfService}
@@ -1796,7 +1670,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
       )}
 
       {/* Duty Roster & Minister Assignment Modal */}
-      {rosterService && (
+      {canManageServices && rosterService && (
         <DutyRosterModal
           service={rosterService}
           members={members}
@@ -1809,15 +1683,16 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
       {/* Delete Confirmation Modal */}
       {deleteConfirmService && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
-          <div className="relative w-full max-w-sm bg-white dark:bg-[#0e1726] rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 text-center space-y-4">
+          <div role="dialog" aria-modal="true" aria-label="Remove church service" className="relative w-full max-w-sm bg-white dark:bg-[#0e1726] rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 text-center space-y-4">
             <div className="w-12 h-12 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 mx-auto flex items-center justify-center">
               <Trash2 className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">Delete Church Service</h3>
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">{hasServiceHistory(deleteConfirmService.id) ? 'Deactivate Church Service' : 'Delete Church Service'}</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                 Are you sure you want to remove <span className="font-semibold text-slate-800 dark:text-slate-200">{deleteConfirmService.name}</span>?
                 This will remove the regular schedule from the church calendar.
+                {hasServiceHistory(deleteConfirmService.id) && ' Existing records will be preserved; this service cannot be permanently deleted.'}
               </p>
             </div>
             <div className="flex items-center justify-center gap-3 pt-2">
@@ -1831,7 +1706,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                 onClick={handleDeleteService}
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-md cursor-pointer"
               >
-                Delete Service
+                {hasServiceHistory(deleteConfirmService.id) ? 'Deactivate Service' : 'Delete Service'}
               </button>
             </div>
           </div>
@@ -1839,7 +1714,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
       )}
 
       {/* Edit Duty Announcement Modal */}
-      {editingAnnouncementAssignment && (
+      {canManageServices && editingAnnouncementAssignment && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
           <div className="relative w-full max-w-lg bg-white dark:bg-[#0e1726] rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">

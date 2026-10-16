@@ -195,7 +195,7 @@ test('roster notifications persist under ownership rules and child pickup tokens
   try{
     await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,phone,auth_user_id) VALUES('own','GWCC-TEST-A','Own','Member','0240000001','${member}'),('other','GWCC-TEST-B','Other','Member','0240000002','${other}')`);
     await asUser(db,root,async()=>{
-      await apply(db,[upsert('roster_assignments',{id:'own-duty',member_id:'own',member_name:'Own Member',service_name:'Sunday',role_title:'Usher'}),upsert('roster_assignments',{id:'other-duty',member_id:'other',member_name:'Other Member',service_name:'Sunday',role_title:'Choir'})]);
+      await apply(db,[upsert('services',{id:'roster-service',name:'Sunday',type:'sunday',day_of_week:'Sunday',start_time:'08:00',end_time:'10:30'}),upsert('roster_assignments',{id:'own-duty',service_id:'roster-service',member_id:'own',member_name:'Own Member',service_name:'Sunday',role_title:'Usher'}),upsert('roster_assignments',{id:'other-duty',service_id:'roster-service',member_id:'other',member_name:'Other Member',service_name:'Sunday',role_title:'Choir'})]);
       const child={id:'child',security_code:'GWCC-ABCDEF123456',child_name:'Child',age_group:'juniors',class_room:'A',service_id:'S',service_name:'Sunday',date:'2026-10-15',check_in_time:'08:00',parent_name:'Parent',parent_phone:'0240000001',status:'checked_in'};
       await apply(db,[upsert('child_check_ins',child)]);
       await assert.rejects(apply(db,[upsert('child_check_ins',{...child,id:'duplicate'})]),/unique constraint/);
@@ -219,5 +219,35 @@ test('roster notifications persist under ownership rules and child pickup tokens
       await db.query("SELECT public.gwcc_member_action('welfare','own','{\"title\":\"Aid\",\"description\":\"Support\",\"category\":\"emergency_relief\",\"amount_requested\":20}')");
       assert.equal((await db.query("SELECT public.gwcc_member_records('welfare_claims') AS rows")).rows[0].rows.length,1);
     });
+  }finally{await db.close();}
+});
+
+
+test('service safeguards preserve legacy history, reject new broken links, protect used services and persist announcements',async()=>{
+  const db=await setupDatabase({beforeSecurityUpgrade:async db=>{
+    await db.exec("INSERT INTO public.attendance(id,service_id,service_name,date) VALUES('legacy-service-attendance','deleted-service','Historical Sunday','2026-10-04')");
+  }});
+  try {
+    assert.equal((await db.query("SELECT count(*)::int n FROM public.attendance WHERE id='legacy-service-attendance'")).rows[0].n,1);
+    await asUser(db,root,async()=>{
+      for(const table of ['attendance','headcounts','roster_assignments','giving']) {
+        const id='guard-'+table;
+        await apply(db,[upsert('services',{id,name:'Guard '+table,type:'sunday',day_of_week:'Sunday',start_time:'08:00',end_time:'10:30',announcements:'Orientation after service',announcements_minister:'QA Secretary'})]);
+        const row={id:'record-'+table,service_id:id,service_name:'Guard '+table,date:'2026-10-11',member_name:'QA',role_title:'Usher',department:'ushers_protocol',category:'Offering',amount:50};
+        await apply(db,[upsert(table,row)]);
+        await assert.rejects(apply(db,[{table:'services',id,operation:'delete'}]),/foreign key|history.*archived/i);
+        await apply(db,[upsert('services',{id,is_active:false})]);
+        await assert.rejects(apply(db,[upsert(table,{...row,id:'invalid-'+table,service_id:'missing-service'})]),/foreign key/i);
+      }
+      const saved=(await db.query("SELECT announcements,announcements_minister FROM public.services WHERE id='guard-attendance'")).rows[0];
+      assert.deepEqual(saved,{announcements:'Orientation after service',announcements_minister:'QA Secretary'});
+      await assert.rejects(apply(db,[upsert('services',{id:'bad-service',name:'Invalid',type:'sunday',day_of_week:'Sunday',start_time:'08:00',end_time:'08:00',expected_attendance:-1})]),/check constraint/);
+    });
+    await db.exec(`UPDATE public.profiles SET role='attendance_officer',authorization_reviewed_at=now() WHERE id='${member}'`);
+    await asUser(db,member,async()=>{
+      assert.ok((await db.query('SELECT id FROM public.services')).rows.length>0);
+      await assert.rejects(apply(db,[upsert('services',{id:'unauthorized',name:'Not allowed'})]),error=>error.code==='42501');
+    });
+    assert.equal((await db.query("SELECT count(*)::int n FROM public.attendance WHERE id='legacy-service-attendance'")).rows[0].n,1);
   }finally{await db.close();}
 });
