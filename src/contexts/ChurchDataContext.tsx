@@ -40,6 +40,7 @@ import {
   DepartmentBudget,
 } from '../types/database.types';
 import { initialSettings } from '../lib/initialData';
+import type {DraftInput} from '../lib/communicationUtils';
 import { attendanceSessionError } from '../features/attendance/attendanceInsights';
 import { useAuth } from './AuthContext';
 import {
@@ -142,7 +143,8 @@ import {
   updateMinistry as updateMinistryRecord,
 } from '../features/ministries/ministryStore';
 import {
-  sendSMSMessage as sendSMSMessageRecord,
+  saveCommunicationDraft as saveCommunicationDraftRecord,
+  archiveCommunicationDraft as archiveCommunicationDraftRecord,
 } from '../features/communications/communicationStore';
 import {
   deleteWelfareClaim as deleteWelfareClaimRecord,
@@ -337,7 +339,8 @@ interface ChurchDataContextType {
 
   // Communication
   communications: CommunicationRecord[];
-  sendSMSMessage: (record: Omit<CommunicationRecord, 'id' | 'sent_at'>) => CommunicationRecord;
+  saveCommunicationDraft: (record: DraftInput) => Promise<CommunicationRecord>;
+  archiveCommunicationDraft: (id:string,archived:boolean) => Promise<CommunicationRecord>;
 
   // Audit Logs
   auditLogs: AuditLog[];
@@ -612,7 +615,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const local:Partial<ChurchAllData>={};
     for(const {key,table} of SYNC_TABLES) {
       if(key==='settings') {local.settings=mergePendingRecords('settings',[{id:'gwcc_global_settings',...loadFromStorage('settings',initialSettings)}])[0];continue;}
-      (local as any)[key]=mergePendingRecords(table,loadFromStorage(key,[]));
+      (local as any)[key]=table==='communications'&&!canAccess('communication')?[]:mergePendingRecords(table,loadFromStorage(key,[]));
     }
     applyData(local);setDataOwner(`${currentUser.id}:${currentUser.role}`);
     let alive=true;
@@ -1160,18 +1163,14 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   // COMMUNICATION
-  const sendSMSMessage = (
-    data: Omit<CommunicationRecord, 'id' | 'sent_at'>
-  ): CommunicationRecord =>
-    sendSMSMessageRecord(
-      {
-        ...data,
-        created_by: `${currentUser.first_name} ${currentUser.last_name}`,
-      },
-      setCommunications,
-      logAction,
-      dbSyncUpsert
-    );
+  const saveCommunicationDraft = (data:DraftInput):Promise<CommunicationRecord> => {
+    if(!canAccess('communication'))throw new Error('Your account cannot manage communication drafts.');
+    return saveCommunicationDraftRecord({...data,created_by:currentUser.id},currentDataRef.current.communications,setCommunications,logAction,dbSyncUpsert);
+  };
+  const archiveCommunicationDraft = (id:string,archived:boolean):Promise<CommunicationRecord> => {
+    if(!canAccess('communication'))throw new Error('Your account cannot manage communication drafts.');
+    return archiveCommunicationDraftRecord(id,archived,currentDataRef.current.communications,setCommunications,logAction,dbSyncUpsert);
+  };
 
   // WELFARE & BENEVOLENCE
   const recordWelfareContribution = (
@@ -1524,7 +1523,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       updateIntercessorySlot,
       deleteIntercessorySlot,
       communications,
-      sendSMSMessage,
+      saveCommunicationDraft,
+      archiveCommunicationDraft,
       auditLogs,
       logAction,
       welfareContributions,

@@ -109,7 +109,7 @@ export const StaffDossierModal: React.FC<StaffDossierModalProps> = ({
     events: 'Church Calendar & Special Events',
     pastoral_care: 'Pastoral Counseling & Home Visitations',
     prayer_requests: 'Intercessory Prayer Records',
-    communication: 'Bulk SMS & WhatsApp Broadcasts',
+    communication: 'Communication drafts',
     reports: 'Financial & Operational PDF Reports',
     users: 'Staff Directory & Access Control (RBAC)',
     settings: 'System Configuration & Cloud Database',

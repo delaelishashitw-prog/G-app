@@ -1,3 +1,4 @@
+import {COMMUNICATION_ROLES} from './communicationUtils';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { SyncOutbox, type Mutation, type SyncResult } from './syncOutbox';
 import { setCacheOwner, clearScopedCache } from './storageScope';
@@ -962,7 +963,7 @@ async function queueMany(changes:Mutation[],autoFlush=true):Promise<SyncResult> 
     const result=await active.enqueueMany(changes);
     if(active!==outbox)return {success:false,pending:active.status.pending,error:'The signed-in account changed. Pending changes remain with their owner.'};
     if(autoFlush){if(flushTimer) clearTimeout(flushTimer);flushTimer=setTimeout(()=>{flushTimer=null;void flushSyncOutbox();},100);}
-    return result;
+    return {...result,durable:true};
   } catch(error) {
     const result={success:false,pending:active.status.pending,error:`Device storage could not preserve this change: ${(error as Error).message}`};
     if(active===outbox)emit('gwcc-sync-status',result); return result;
@@ -1020,6 +1021,7 @@ export async function pullAllDataFromSupabase(): Promise<{success:boolean;data:P
   await active?.ready;
   const result:Partial<ChurchAllData>={}; const errors:string[]=[];
   await Promise.allSettled(SYNC_TABLES.map(async({table,key,document})=>{
+    if(table==='communications'&&!COMMUNICATION_ROLES.includes(syncRole||'')){result.communications=[];return;}
     try {
       let records:any[];
       if(syncRole==='member' && ['welfare_claims','pastoral_care','welfare_events','foundation_cohorts','foundation_students'].includes(table)){

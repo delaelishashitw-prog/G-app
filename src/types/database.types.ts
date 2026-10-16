@@ -517,13 +517,21 @@ export interface CommunicationRecord {
   id: string;
   title: string;
   channel: 'sms' | 'whatsapp' | 'announcement';
-  recipient_type: 'all_members' | 'visitors' | 'ministry' | 'leaders' | 'custom';
+  recipient_type: 'all_members' | 'visitors' | 'ministry' | 'leaders' | 'small_group' | 'custom';
   recipient_count: number;
   message: string;
   sender_id: string;
   status: 'draft' | 'scheduled' | 'sent' | 'failed';
   sent_at: string;
   created_by?: string;
+  updated_by?: string;
+  recipient_group_id?: string | null;
+  recipient_group_name?: string | null;
+  recipient_ids?: string[] | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  archived_at?: string | null;
+  _sync_status?: 'pending';
 }
 
 export interface AuditLog {
