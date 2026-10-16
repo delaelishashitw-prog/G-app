@@ -344,6 +344,7 @@ export interface ChurchAccount {
   account_number?: string;
   bank_or_provider: string; // e.g. 'GCB Bank', 'MTN MoMo', 'CalBank', 'Ecobank', 'Cash on Hand'
   current_balance: number;
+  opening_balance?: number;
   currency: string;
   is_active: boolean;
   description?: string;
@@ -366,6 +367,10 @@ export interface ChurchFinanceRecord {
   date: string;
   payment_method: string;
   reference_no?: string;
+  cash_count_service_id?: string;
+  cash_count_key?: string;
+  cash_count_details?: { denominations:Record<string,number>; counter1:string; counter2:string; supervisor:string; recorded_by_user_id?:string };
+  _sync_status?: 'pending';
   department?: string;
   budget_id?: string;
   description?: string;

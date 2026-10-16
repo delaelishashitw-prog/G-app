@@ -1,4 +1,5 @@
 import type { ChurchAccount, ChurchFinanceRecord, DepartmentBudget } from '../types/database.types';
+import { recordMatchesBudget } from './budgetPeriod';
 
 export function money(value: number): number {
   if (!Number.isFinite(Number(value))) throw new Error('Enter a finite monetary amount.');
@@ -36,8 +37,8 @@ export function planAccountChange(accounts:ChurchAccount[],before:ChurchFinanceR
 }
 
 export function planBudgetChange(budgets:DepartmentBudget[],before:ChurchFinanceRecord|undefined,after:ChurchFinanceRecord|undefined) {
-  const effect=(row:ChurchFinanceRecord|undefined,department:string)=>row&&isActiveTransaction(row)&&['expense','disbursement'].includes(row.transaction_type)&&row.department?.toLowerCase()===department.toLowerCase()?money(row.amount):0;
-  return budgets.map(budget=>({...budget,spent_amount:money(Math.max(0,budget.spent_amount+effect(after,budget.department)-effect(before,budget.department)))}));
+  const effect=(row:ChurchFinanceRecord|undefined,budget:DepartmentBudget)=>row&&isActiveTransaction(row)&&['expense','disbursement'].includes(row.transaction_type)&&recordMatchesBudget(row,budget)?money(row.amount):0;
+  return budgets.map(budget=>({...budget,spent_amount:money(Math.max(0,budget.spent_amount+effect(after,budget)-effect(before,budget)))}));
 }
 
 export function sumActive<T extends {status?:string;amount:number}>(records:T[]):number {

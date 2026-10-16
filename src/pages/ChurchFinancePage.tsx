@@ -2,7 +2,6 @@ import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Landmark,
-  Wallet,
   TrendingDown,
   TrendingUp,
   Plus,
@@ -12,55 +11,27 @@ import {
   Calendar,
   CreditCard,
   Building2,
-  FileSpreadsheet,
   Printer,
   Receipt,
-  CheckCircle2,
-  AlertCircle,
   BarChart3,
-  Users,
   ChevronRight,
   ArrowUpRight,
   ArrowDownLeft,
   ArrowRightLeft,
-  RefreshCw,
   FileText,
-  Sparkles,
   ShieldCheck,
-  ShieldAlert,
-  Hash,
-  DollarSign,
   PieChart as PieChartIcon,
   Calculator,
   Building,
-  Check,
   X,
-  Layers,
   Banknote,
   Coins,
-  RotateCcw,
-  Trash2,
   Edit3,
   Ban,
-  ArrowUpDown,
   ChevronLeft,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  PieChart,
-  Pie,
-  Cell,
-} from 'recharts';
-import { motion, AnimatePresence } from 'motion/react';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -68,21 +39,13 @@ import { AnimatedNumber } from '../components/AnimatedNumber';
 import {
   ChurchAccount,
   ChurchFinanceRecord,
-  DepartmentBudget,
   PaymentMethod,
 } from '../types/database.types';
-import { formatGHS, numberToCedisWords } from '../lib/currencyUtils';
-import {
-  getCurrentMonthKey,
-  getPreviousMonthKey,
-  isDateInCurrentWeek,
-  isDateInLastWeek,
-  isDateInPastDays,
-  isDateInRange,
-  isDateInMonth,
-  normalizeDateStr,
-  todayISO,
-} from '../lib/financeDateUtils';
+import { formatGHS } from '../lib/currencyUtils';
+import {budgetPeriodRange} from '../lib/budgetPeriod';
+import {budgetSpending,validateBudgetAllocation,financeTotals,financeReconciliation,financeCsv,financeReference,financeDateMatches,isCashAccount,validateCashCount,ghanaToday as todayISO,downloadCsvFile} from '../lib/financeViewUtils';
+import {money} from '../lib/ledgerUtils';
+import {FinanceReconciliation} from '../components/finance/FinanceReconciliation';
 
 // Modals
 import { PaymentVoucherModal } from '../components/finance/PaymentVoucherModal';
@@ -191,26 +154,29 @@ export const ChurchFinancePage: React.FC = () => {
   const {
     churchAccounts,
     churchFinances,
-    departmentBudgets,
+    departmentBudgets: storedDepartmentBudgets,
     settings,
     services,
     addChurchAccount,
-    updateChurchAccount,
-    deleteChurchAccount,
     recordChurchFinance,
     updateChurchFinance,
-    deleteChurchFinance,
     transferBetweenAccounts,
     voidChurchFinance,
     addDepartmentBudget,
     updateDepartmentBudget,
-    resetChurchFinanceData,
   } = useChurchData();
 
   const { canAccess, currentUser } = useAuth();
   const { success, error, info } = useToast();
 
-  const [activeTab, setActiveTab] = useState<'treasury' | 'ledger' | 'budgets' | 'counter'>('treasury');
+  const [activeTab, setActiveTab] = useState<'treasury' | 'ledger' | 'budgets' | 'counter' | 'reconciliation'>('treasury');
+  const [budgetYear,setBudgetYear]=useState(todayISO().slice(0,4));
+  const departmentBudgets=useMemo(()=>storedDepartmentBudgets.map(budget=>({...budget,spent_amount:budgetSpending(budget,churchFinances)??0})),[storedDepartmentBudgets,churchFinances]);
+  const visibleBudgets=useMemo(()=>departmentBudgets.filter(budget=>budgetPeriodRange(budget.period)?.year===budgetYear),[departmentBudgets,budgetYear]);
+  const budgetYears=useMemo(()=>[...new Set([todayISO().slice(0,4),...departmentBudgets.map(budget=>budgetPeriodRange(budget.period)?.year).filter((year):year is string=>Boolean(year))])].sort().reverse(),[departmentBudgets]);
+  const reconciliation=useMemo(()=>financeReconciliation(churchAccounts,churchFinances),[churchAccounts,churchFinances]);
+  const activeAccounts=useMemo(()=>churchAccounts.filter(account=>account.is_active&&account.currency==='GHS'),[churchAccounts]);
+  const cashAccounts=useMemo(()=>churchAccounts.filter(isCashAccount),[churchAccounts]);
 
   // Filters
   const [dateFilter, setDateFilter] = useState<ChurchFinanceDateFilter>('this_month');
@@ -233,13 +199,10 @@ export const ChurchFinancePage: React.FC = () => {
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showBudgetModal, setShowBudgetModal] = useState(false);
-  const [showStartAfreshModal, setShowStartAfreshModal] = useState(false);
-  const [startAfreshMode, setStartAfreshMode] = useState<'reset_balances' | 'wipe_all'>('reset_balances');
   const [selectedEditBudget, setSelectedEditBudget] = useState<any | null>(null);
   const [selectedVoucherRecord, setSelectedVoucherRecord] = useState<ChurchFinanceRecord | null>(null);
   const [editingFinanceRecord, setEditingFinanceRecord] = useState<ChurchFinanceRecord | null>(null);
   const [voidingFinanceRecord, setVoidingFinanceRecord] = useState<ChurchFinanceRecord | null>(null);
-  const [deletingFinanceRecord, setDeletingFinanceRecord] = useState<ChurchFinanceRecord | null>(null);
 
   // Form Submitting States
   const [isSubmittingIncome, setIsSubmittingIncome] = useState(false);
@@ -304,27 +267,14 @@ export const ChurchFinancePage: React.FC = () => {
     0.1: 0,
   });
   const [counterServiceId, setCounterServiceId] = useState('');
+  const [counterAccountId,setCounterAccountId]=useState('');
+  const [counterDate,setCounterDate]=useState(todayISO());
   const [counter1Name, setCounter1Name] = useState('');
   const [counter2Name, setCounter2Name] = useState('');
   const [counterSupervisor, setCounterSupervisor] = useState('');
 
   // Date Filter Predicate
-  const isDateMatchingFilter = (dateStr: string) => {
-    if (dateFilter === 'all') return true;
-    if (dateFilter === 'today') return normalizeDateStr(dateStr) === todayISO();
-    if (dateFilter === 'this_week') return isDateInCurrentWeek(dateStr);
-    if (dateFilter === 'last_week') return isDateInLastWeek(dateStr);
-    if (dateFilter === 'this_month') return isDateInMonth(dateStr, getCurrentMonthKey());
-    if (dateFilter === 'last_month') return isDateInMonth(dateStr, getPreviousMonthKey());
-    if (dateFilter === 'this_year') {
-      const year = new Date().getFullYear().toString();
-      return normalizeDateStr(dateStr).startsWith(year);
-    }
-    if (dateFilter === 'custom') {
-      return isDateInRange(dateStr, customStartDate, customEndDate);
-    }
-    return true;
-  };
+  const isDateMatchingFilter = (dateStr: string) => financeDateMatches(dateStr,dateFilter,customStartDate,customEndDate);
 
   // Filtered Finances with Two-Sided Transfer Support and Dynamic Sorting
   const filteredFinances = useMemo(() => {
@@ -355,6 +305,7 @@ export const ChurchFinancePage: React.FC = () => {
           const desc = (item.description || '').toLowerCase();
           const voidRes = (item.void_reason || '').toLowerCase();
           return (
+            item.id.toLowerCase().includes(q) ||
             title.includes(q) ||
             recipient.includes(q) ||
             refNo.includes(q) ||
@@ -372,9 +323,9 @@ export const ChurchFinancePage: React.FC = () => {
         } else if (sortColumn === 'amount') {
           comp = b.amount - a.amount;
         } else if (sortColumn === 'reference_no') {
-          comp = (a.reference_no || '').localeCompare(b.reference_no || '');
+          comp = (b.reference_no || '').localeCompare(a.reference_no || '');
         } else if (sortColumn === 'title') {
-          comp = a.title.localeCompare(b.title);
+          comp = b.title.localeCompare(a.title);
         }
         return sortDirection === 'desc' ? comp : -comp;
       });
@@ -383,34 +334,14 @@ export const ChurchFinancePage: React.FC = () => {
   // Total Available Liquidity across all accounts (Point-in-time active treasury)
   const totalLiquidity = useMemo(() => {
     return churchAccounts
-      .filter((a) => a.is_active)
+      .filter((a) => a.is_active && a.currency==='GHS')
       .reduce((sum, a) => sum + (Number(a.current_balance) || 0), 0);
   }, [churchAccounts]);
 
-  // Total Institutional Church Income in Filtered Period (Excluding Voided & Transfers)
-  const totalChurchIncome = useMemo(() => {
-    return filteredFinances
-      .filter((f) => f.status !== 'voided' && (f.transaction_type === 'income' || f.transaction_type === 'grant'))
-      .reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
-  }, [filteredFinances]);
-
-  const churchIncomeCount = useMemo(() => {
-    return filteredFinances.filter((f) => f.status !== 'voided' && (f.transaction_type === 'income' || f.transaction_type === 'grant')).length;
-  }, [filteredFinances]);
-
-  // Operational Burn / Expenditures in Filtered Period (Excluding Voided & Transfers)
-  const totalExpenditures = useMemo(() => {
-    return filteredFinances
-      .filter((f) => f.status !== 'voided' && (f.transaction_type === 'expense' || f.transaction_type === 'disbursement'))
-      .reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
-  }, [filteredFinances]);
-
-  const expendituresCount = useMemo(() => {
-    return filteredFinances.filter((f) => f.status !== 'voided' && (f.transaction_type === 'expense' || f.transaction_type === 'disbursement')).length;
-  }, [filteredFinances]);
-
-  // Net Operating Cash Flow (Surplus / Deficit)
-  const netCashFlow = totalChurchIncome - totalExpenditures;
+  const periodTotals=useMemo(()=>financeTotals(filteredFinances),[filteredFinances]);
+  const totalChurchIncome=periodTotals.income,churchIncomeCount=periodTotals.incomeCount;
+  const totalExpenditures=periodTotals.expenditure,expendituresCount=periodTotals.expenditureCount;
+  const netCashFlow=periodTotals.net;
 
   // Displayed records filtered by ledger tab type (all vs income vs expense)
   const displayedFinances = useMemo(() => {
@@ -445,27 +376,12 @@ export const ChurchFinancePage: React.FC = () => {
 
   // Department Budget Utilization Aggregates
   const totalAllocatedBudget = useMemo(() => {
-    return departmentBudgets.reduce((sum, b) => sum + (Number(b.allocated_amount) || 0), 0);
-  }, [departmentBudgets]);
+    return visibleBudgets.reduce((sum, b) => sum + (Number(b.allocated_amount) || 0), 0);
+  }, [visibleBudgets]);
 
   const totalSpentBudget = useMemo(() => {
-    return departmentBudgets.reduce((sum, b) => sum + (Number(b.spent_amount) || 0), 0);
-  }, [departmentBudgets]);
-
-  // Expense by Category Breakdown for Chart
-  const categoryExpenseData = useMemo(() => {
-    const map: Record<string, number> = {};
-    filteredFinances
-      .filter((f) => f.transaction_type === 'expense' || f.transaction_type === 'disbursement')
-      .forEach((item) => {
-        map[item.category] = (map[item.category] || 0) + (Number(item.amount) || 0);
-      });
-    return Object.entries(map).map(([name, value]) => ({
-      name,
-      value,
-      color: EXPENSE_COLORS[name] || '#64748b',
-    })).sort((a, b) => b.value - a.value);
-  }, [filteredFinances]);
+    return visibleBudgets.reduce((sum, b) => sum + (Number(b.spent_amount) || 0), 0);
+  }, [visibleBudgets]);
 
   // Sunday Cash Calculator Totals
   const cashTotals = useMemo(() => {
@@ -496,8 +412,8 @@ export const ChurchFinancePage: React.FC = () => {
     e.preventDefault();
     if (isSubmittingExpense) return;
 
-    const parsedAmt = parseFloat(formAmount);
-    if (isNaN(parsedAmt) || parsedAmt <= 0) {
+    const parsedAmt = Number(formAmount);
+    if (!Number.isFinite(parsedAmt) || parsedAmt <= 0) {
       error('Invalid Amount', 'Please provide a valid expenditure amount.');
       return;
     }
@@ -508,10 +424,11 @@ export const ChurchFinancePage: React.FC = () => {
       return;
     }
 
-    const selectedAcc = churchAccounts.find((a) => a.id === formAccountId) || churchAccounts[0];
+    const selectedAcc = activeAccounts.find((a) => a.id === formAccountId);
+    if(!selectedAcc){error('Select Account','Select an active GHS holding account.');return;}
     const accName = selectedAcc ? selectedAcc.name : 'Main Operations Account';
 
-    const voucherId = formReferenceNo.trim() || `VOUCH-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
+    const voucherId = formReferenceNo.trim() || undefined;
 
     setIsSubmittingExpense(true);
     try {
@@ -534,12 +451,13 @@ export const ChurchFinancePage: React.FC = () => {
         status: 'completed',
       });
 
-      success('Expenditure Recorded', `Disbursed ${formatGHS(amountNum)} from ${accName}.`);
+      info('Expenditure awaiting confirmation', `${formatGHS(amountNum)} recorded locally against ${accName}. Follow sync status for cloud confirmation.`);
       setShowRecordExpenseModal(false);
       resetExpenseForm();
 
       // Offer voucher preview
       setSelectedVoucherRecord(newRec);
+    } catch(cause){error('Expenditure not recorded',(cause as Error).message);
     } finally {
       setIsSubmittingExpense(false);
     }
@@ -548,7 +466,7 @@ export const ChurchFinancePage: React.FC = () => {
   const resetExpenseForm = () => {
     setFormTitle('');
     setFormTransactionType('expense');
-    setFormAccountId(churchAccounts[0]?.id || '');
+    setFormAccountId(activeAccounts[0]?.id || '');
     setFormCategory(EXPENSE_CATEGORIES[0]);
     setFormDepartment('Facilities & Maintenance');
     setFormRecipient('');
@@ -565,8 +483,8 @@ export const ChurchFinancePage: React.FC = () => {
     e.preventDefault();
     if (isSubmittingIncome) return;
 
-    const parsedAmt = parseFloat(incomeAmount);
-    if (isNaN(parsedAmt) || parsedAmt <= 0) {
+    const parsedAmt = Number(incomeAmount);
+    if (!Number.isFinite(parsedAmt) || parsedAmt <= 0) {
       error('Invalid Amount', 'Please provide a valid income amount.');
       return;
     }
@@ -577,9 +495,10 @@ export const ChurchFinancePage: React.FC = () => {
       return;
     }
 
-    const selectedAcc = churchAccounts.find((a) => a.id === incomeAccountId) || churchAccounts[0];
+    const selectedAcc = activeAccounts.find((a) => a.id === incomeAccountId);
+    if(!selectedAcc){error('Select Account','Select an active GHS holding account.');return;}
     const accName = selectedAcc ? selectedAcc.name : 'Main Operations Account';
-    const refId = incomeReferenceNo.trim() || `INC-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
+    const refId = incomeReferenceNo.trim() || undefined;
 
     setIsSubmittingIncome(true);
     try {
@@ -602,12 +521,13 @@ export const ChurchFinancePage: React.FC = () => {
         status: 'completed',
       });
 
-      success('Church Income Recorded', `Recorded ${formatGHS(amountNum)} credited to ${accName}.`);
+      info('Income awaiting confirmation', `${formatGHS(amountNum)} recorded locally for ${accName}. Follow sync status for cloud confirmation.`);
       setShowRecordIncomeModal(false);
       resetIncomeForm();
 
       // Offer receipt preview
       setSelectedVoucherRecord(newRec);
+    } catch(cause){error('Income not recorded',(cause as Error).message);
     } finally {
       setIsSubmittingIncome(false);
     }
@@ -615,7 +535,7 @@ export const ChurchFinancePage: React.FC = () => {
 
   const resetIncomeForm = (targetAccountId?: string) => {
     setIncomeTitle('');
-    setIncomeAccountId(targetAccountId || churchAccounts[0]?.id || '');
+    setIncomeAccountId(targetAccountId || activeAccounts[0]?.id || '');
     setIncomeCategory(CHURCH_INCOME_CATEGORIES[0]);
     setIncomeDepartment('Treasury & Accounts');
     setIncomeSource('');
@@ -635,7 +555,9 @@ export const ChurchFinancePage: React.FC = () => {
       return;
     }
 
-    const initialBal = parseFloat(newAccBalance) || 0;
+    try {
+    const initialBal = money(newAccBalance.trim()?Number(newAccBalance):0);
+    if(initialBal<0)throw new Error('Enter a non-negative verified opening balance.');
     addChurchAccount({
       name: newAccName.trim(),
       account_type: newAccType,
@@ -647,12 +569,13 @@ export const ChurchFinancePage: React.FC = () => {
       description: newAccDesc.trim() || undefined,
     });
 
-    success('Account Created', `Created holding account ${newAccName}.`);
+    info('Account awaiting confirmation', `The ${newAccName} account is recorded locally. Follow sync status for cloud confirmation.`);
     setShowAddAccountModal(false);
     setNewAccName('');
     setNewAccNumber('');
     setNewAccBalance('');
     setNewAccDesc('');
+    }catch(cause){error('Account not recorded',(cause as Error).message);}
   };
 
   // Handle Internal Account Transfer
@@ -666,7 +589,7 @@ export const ChurchFinancePage: React.FC = () => {
 
     const res = transferBetweenAccounts(transferFromId, transferToId, amt, transferNotes.trim() || undefined);
     if (res.success) {
-      success('Transfer Successful', res.message);
+      info('Transfer awaiting confirmation', res.message);
       setShowTransferModal(false);
       setTransferAmount('');
       setTransferNotes('');
@@ -675,106 +598,34 @@ export const ChurchFinancePage: React.FC = () => {
     }
   };
 
-  // Handle Post Sunday Cash Count
+  // The physical cash sheet is linked to its exact service/date and cash account.
   const handlePostCashCount = () => {
-    if (cashTotals.grandTotal <= 0) {
-      error('Empty Count', 'Please record counted notes or coins before posting.');
-      return;
-    }
-
-    const pettyCashAcc = churchAccounts.find((a) => a.account_type === 'cash_petty') || churchAccounts[0];
-    const srv = services.find((s) => s.id === counterServiceId);
-
-    recordChurchFinance({
-      transaction_type: 'income',
-      account_id: pettyCashAcc?.id,
-      account_name: pettyCashAcc?.name || 'Cathedral Petty Cash & Vestry Float',
-      category: 'Sunday Cash Counter',
-      title: `Sunday Cash Tally - ${srv?.name || 'Main Prophetic Service'}`,
-      recipient_or_vendor: 'Sunday Counting Committee',
-      amount: cashTotals.grandTotal,
-      currency: 'GHS',
-      date: todayISO(),
-      payment_method: 'cash',
-      reference_no: `CASH-COUNT-${todayISO().replace(/-/g, '')}`,
-      department: 'Treasury & Accounts',
-      approved_by: counterSupervisor || 'Chief Usher & Finance Lead',
-      notes: `Verified by: ${counter1Name || 'Counter 1'}, ${counter2Name || 'Counter 2'}. Notes: GH₵ ${cashTotals.notesTotal.toFixed(2)}, Coins: GH₵ ${cashTotals.coinsTotal.toFixed(2)}.`,
-      recorded_by: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Sunday Tally Room',
-      status: 'completed',
-    });
-
-    success('Cash Posted', `Posted GH₵ ${cashTotals.grandTotal.toFixed(2)} to ${pettyCashAcc?.name}.`);
-
-    // Reset counts
-    setCounts({
-      200: 0,
-      100: 0,
-      50: 0,
-      20: 0,
-      10: 0,
-      5: 0,
-      2: 0,
-      1: 0,
-      0.5: 0,
-      0.2: 0,
-      0.1: 0,
-    });
+    try {
+      const count=validateCashCount({accountId:counterAccountId,serviceId:counterServiceId,date:counterDate,counter1:counter1Name,counter2:counter2Name,supervisor:counterSupervisor,counts},churchAccounts,services,churchFinances);
+      const service=services.find(row=>row.id===counterServiceId)!;
+      recordChurchFinance({transaction_type:'income',account_id:count.account.id,account_name:count.account.name,
+        category:'Sunday Cash Counter',title:`Cash Tally - ${service.name}`,recipient_or_vendor:'Counting Committee',
+        amount:count.amount,currency:'GHS',date:counterDate,payment_method:'cash',department:'Treasury & Accounts',
+        cash_count_service_id:service.id,cash_count_key:count.key,cash_count_details:count.details,
+        approved_by:counterSupervisor.trim(),notes:`Counted by ${counter1Name.trim()} and ${counter2Name.trim()}. Supervisor: ${counterSupervisor.trim()}.`,
+        recorded_by:`${currentUser.first_name} ${currentUser.last_name}`,status:'completed'});
+      info('Cash count awaiting confirmation',`${formatGHS(count.amount)} recorded locally for ${count.account.name}. Follow sync status for cloud confirmation.`);
+      setCounts(Object.fromEntries(Object.keys(counts).map(key=>[key,0])));
+    } catch(cause){error('Cash count not recorded',(cause as Error).message);}
   };
 
   // CSV Export
+  const exportRows=activeTab==='ledger'?displayedFinances:filteredFinances;
+  const exportTotals=financeTotals(exportRows);
   const handleExportFinanceCSV = () => {
-    if (filteredFinances.length === 0) {
-      info('No Records', 'No finance records match current filter.');
-      return;
-    }
-
-    const headers = [
-      'Record ID',
-      'Date',
-      'Transaction Type',
-      'Voucher / Ref #',
-      'Title / Description',
-      'Vendor / Recipient',
-      'Holding Account',
-      'Category',
-      'Department',
-      'Amount (GHS)',
-      'Payment Method',
-      'Approved By',
-      'Status',
-    ];
-
-    const rows = filteredFinances.map((item) => [
-      `"${item.id}"`,
-      `"${item.date}"`,
-      `"${item.transaction_type}"`,
-      `"${item.reference_no || ''}"`,
-      `"${item.title}"`,
-      `"${item.recipient_or_vendor || ''}"`,
-      `"${item.account_name}"`,
-      `"${item.category}"`,
-      `"${item.department || ''}"`,
-      item.amount.toFixed(2),
-      `"${item.payment_method}"`,
-      `"${item.approved_by || ''}"`,
-      `"${item.status}"`,
-    ]);
-
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `GWCC_Church_Finance_${dateFilter}_${todayISO()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    success('Export Successful', `Exported ${filteredFinances.length} financial transactions.`);
+    if(!exportRows.length){info('No Records','No finance records match the current view.');return;}
+    downloadCsvFile(financeCsv(exportRows),`GWCC_Church_Finance_${dateFilter}_${todayISO()}.csv`);
+    success('CSV Exported',`Exported ${exportRows.length} transactions from the current view.`);
   };
 
   // Professional PDF Export
   const handleExportFinancePDF = () => {
-    if (filteredFinances.length === 0) {
+    if (exportRows.length === 0) {
       info('No Records', 'No transactions found for the selected period.');
       return;
     }
@@ -801,7 +652,7 @@ export const ChurchFinancePage: React.FC = () => {
 
     doc.setFontSize(8);
     doc.setTextColor(71, 85, 105);
-    doc.text('TOTAL TREASURY LIQUIDITY', 20, 38);
+    doc.text('RECORDED BALANCE (ALL ACCOUNTS)', 20, 38);
     doc.text('PERIOD CHURCH INCOME', 90, 38);
     doc.text('PERIOD DISBURSEMENTS', 160, 38);
     doc.text('NET OPERATING CASH FLOW', 230, 38);
@@ -809,35 +660,37 @@ export const ChurchFinancePage: React.FC = () => {
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(15, 23, 42);
-    doc.text(`GH₵ ${totalLiquidity.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 20, 45);
+    doc.text(`GHS  ${totalLiquidity.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 20, 45);
     doc.setTextColor(5, 150, 105);
-    doc.text(`GH₵ ${totalChurchIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 90, 45);
+    doc.text(`GHS  ${exportTotals.income.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 90, 45);
     doc.setTextColor(225, 29, 72);
-    doc.text(`GH₵ ${totalExpenditures.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 160, 45);
-    doc.setTextColor(netCashFlow >= 0 ? 13 : 217, netCashFlow >= 0 ? 148 : 119, netCashFlow >= 0 ? 136 : 6);
-    doc.text(`${netCashFlow >= 0 ? '+' : '-'}GH₵ ${Math.abs(netCashFlow).toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 230, 45);
+    doc.text(`GHS  ${exportTotals.expenditure.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 160, 45);
+    doc.setTextColor(exportTotals.net >= 0 ? 13 : 217, exportTotals.net >= 0 ? 148 : 119, exportTotals.net >= 0 ? 136 : 6);
+    doc.text(`${exportTotals.net >= 0 ? '+' : '-'}GHS  ${Math.abs(exportTotals.net).toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 230, 45);
+
+    doc.setFontSize(8);doc.setTextColor(100,116,139);
+    doc.text(`View: ${activeTab==='ledger'?ledgerTypeFilter:'all'} | Account: ${selectedAccountFilter==='all'?'All':churchAccounts.find(a=>a.id===selectedAccountFilter)?.name||selectedAccountFilter}`,14,54);
+    doc.text(reconciliation.pending?'Local changes await cloud confirmation. Verify sync status before relying on this report.':reconciliation.unresolved.length||reconciliation.missingAccounts.length?'Historical records need reconciliation. Verify balances against statements and physical cash.':'Recorded balances should be checked against statements and physical cash.',14,59);
 
     // Table
-    const tableData = filteredFinances.map((item) => [
+    const tableData = exportRows.map((item) => [
       item.date,
-      item.status === 'voided'
-        ? 'VOIDED'
-        : (item.transaction_type === 'income' || item.transaction_type === 'grant')
+      item._sync_status==='pending'?'AWAITING CLOUD':item.status!=='completed'?item.status.toUpperCase():(item.transaction_type === 'income' || item.transaction_type === 'grant')
         ? 'Income'
         : item.transaction_type === 'transfer'
         ? 'Transfer'
         : 'Expense',
-      item.reference_no || '—',
+      financeReference(item),
       item.title,
       item.recipient_or_vendor || (item.transaction_type === 'income' ? 'Church Treasury' : 'Authorized Payee'),
-      item.account_name,
+      item.transaction_type==='transfer'?`${item.account_name} -> ${item.to_account_name||item.to_account_id||'Unknown destination'}`:item.account_name,
       item.category,
-      `${(item.transaction_type === 'income' || item.transaction_type === 'grant') ? '+' : '-'} GH₵ ${item.amount.toFixed(2)}${item.status === 'voided' ? ' (VOID)' : ''}`,
+      `${item.transaction_type==='transfer'?'':(item.transaction_type==='income'||item.transaction_type==='grant')?'+':'-'} GHS ${item.amount.toFixed(2)}${item.status==='voided'?' (VOID)':''}`,
       item.approved_by || settings.senior_pastor || 'Senior Pastor',
     ]);
 
     autoTable(doc, {
-      startY: 53,
+      startY: 64,
       head: [['Date', 'Type', 'Voucher #', 'Title / Purpose', 'Payer / Payee', 'Account', 'Category', 'Amount (GHS)', 'Authorized By']],
       body: tableData,
       theme: 'grid',
@@ -868,20 +721,20 @@ export const ChurchFinancePage: React.FC = () => {
     });
 
     doc.save(`GWCC_Financial_Statement_${dateFilter}_${todayISO()}.pdf`);
-    success('PDF Generated', `Exported official financial statement (${filteredFinances.length} records).`);
+    success('PDF Generated', `Exported official financial statement (${exportRows.length} records).`);
   };
 
   const handleUpdateFinance = (updates: Partial<ChurchFinanceRecord>) => {
     if (!editingFinanceRecord) return;
     updateChurchFinance(editingFinanceRecord.id, updates);
-    success('Transaction Updated', `Successfully updated "${updates.title || editingFinanceRecord.title}".`);
+    info('Update awaiting confirmation', 'The correction is recorded locally. Follow sync status for cloud confirmation.');
     setEditingFinanceRecord(null);
   };
 
   const handleVoidFinance = (reason: string) => {
     if (!voidingFinanceRecord) return;
     voidChurchFinance(voidingFinanceRecord.id, reason);
-    success('Transaction Voided', `Transaction #${voidingFinanceRecord.id} has been voided and account balance reversed.`);
+    info('Void awaiting confirmation', 'The reversal is recorded locally. Follow sync status for cloud confirmation.');
     setVoidingFinanceRecord(null);
   };
 
@@ -963,23 +816,18 @@ export const ChurchFinancePage: React.FC = () => {
             title="Export CSV"
           >
             <Download className="w-4 h-4" />
-            <span className="hidden sm:inline">Export</span>
+            <span>Export CSV</span>
+          </button>
+          <button type="button" onClick={handleExportFinancePDF} className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-100 text-slate-700 text-xs sm:text-sm font-medium">
+            <FileText className="w-4 h-4"/><span>Export PDF</span>
           </button>
 
-          {canAccess('finance') && (
-            <button
-              onClick={() => setShowStartAfreshModal(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-700 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 text-xs sm:text-sm font-medium border border-slate-200 dark:border-slate-700 hover:border-rose-300 dark:hover:border-rose-800 transition-all cursor-pointer"
-              title="Clear hardcoded records to start afresh with clean financial books"
-            >
-              <RotateCcw className="w-4 h-4 text-rose-500" />
-              <span>Start Afresh</span>
-            </button>
-          )}
         </div>
       </div>
 
       {/* Date Filter Ribbon */}
+      {(reconciliation.unresolved.length>0||reconciliation.missingAccounts.length>0||reconciliation.duplicateReferences.length>0)&&<div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 flex flex-wrap items-center justify-between gap-2"><span>Historical finance records need reconciliation. Verify recorded balances against actual bank, MoMo and cash figures.</span><button type="button" onClick={()=>setActiveTab('reconciliation')} className="underline font-semibold">Review reconciliation</button></div>}
+      {reconciliation.pending&&<p role="status" className="text-sm rounded-lg bg-amber-50 border border-amber-200 p-3">Recorded balances and totals include local changes awaiting cloud confirmation.</p>}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3 sm:px-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs">
         <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
           <Calendar className="w-4 h-4 text-rose-600 shrink-0" />
@@ -1036,13 +884,13 @@ export const ChurchFinancePage: React.FC = () => {
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs relative overflow-hidden">
           <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl -mr-6 -mt-6 pointer-events-none" />
           <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Total Liquidity</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">Recorded Balance</span>
             <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400">
               <Landmark className="w-4 h-4" />
             </div>
           </div>
           <div className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            GH₵ <AnimatedNumber value={totalLiquidity} />
+            GH₵ <AnimatedNumber value={totalLiquidity} decimals={2} />
           </div>
           <div className="mt-2 flex items-center text-xs text-slate-500 dark:text-slate-400">
             <span className="font-semibold text-emerald-600 dark:text-emerald-400 mr-1.5">
@@ -1062,7 +910,7 @@ export const ChurchFinancePage: React.FC = () => {
             </div>
           </div>
           <div className="text-xl sm:text-2xl font-extrabold text-emerald-900 dark:text-emerald-300 tracking-tight">
-            GH₵ <AnimatedNumber value={totalChurchIncome} />
+            GH₵ <AnimatedNumber value={totalChurchIncome} decimals={2} />
           </div>
           <div className="mt-2 flex items-center text-xs text-slate-500 dark:text-slate-400">
             <span className="font-semibold text-emerald-600 dark:text-emerald-400 mr-1.5">
@@ -1082,13 +930,13 @@ export const ChurchFinancePage: React.FC = () => {
             </div>
           </div>
           <div className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            GH₵ <AnimatedNumber value={totalExpenditures} />
+            GH₵ <AnimatedNumber value={totalExpenditures} decimals={2} />
           </div>
           <div className="mt-2 flex items-center text-xs text-slate-500 dark:text-slate-400">
             <span className="font-semibold text-rose-600 dark:text-rose-400 mr-1.5">
               {expendituresCount} vouchers
             </span>
-            <span>paid out</span>
+            <span>recorded expenses</span>
           </div>
         </div>
 
@@ -1102,7 +950,7 @@ export const ChurchFinancePage: React.FC = () => {
             </div>
           </div>
           <div className={`text-xl sm:text-2xl font-extrabold tracking-tight ${netCashFlow >= 0 ? 'text-teal-700 dark:text-teal-300' : 'text-amber-700 dark:text-amber-300'}`}>
-            {netCashFlow >= 0 ? '+' : '-'}GH₵ <AnimatedNumber value={Math.abs(netCashFlow)} />
+            {netCashFlow >= 0 ? '+' : '-'}GH₵ <AnimatedNumber value={Math.abs(netCashFlow)} decimals={2} />
           </div>
           <div className="mt-2 flex items-center text-xs text-slate-500 dark:text-slate-400">
             <span className={`font-semibold mr-1.5 ${netCashFlow >= 0 ? 'text-teal-600 dark:text-teal-400' : 'text-amber-600 dark:text-amber-400'}`}>
@@ -1116,13 +964,13 @@ export const ChurchFinancePage: React.FC = () => {
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs relative overflow-hidden">
           <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/10 rounded-full blur-2xl -mr-6 -mt-6 pointer-events-none" />
           <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Budgets Spent</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">Budgets Spent ({budgetYear})</span>
             <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400">
               <BarChart3 className="w-4 h-4" />
             </div>
           </div>
           <div className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            GH₵ <AnimatedNumber value={totalSpentBudget} />
+            GH₵ <AnimatedNumber value={totalSpentBudget} decimals={2} />
           </div>
           <div className="mt-2 flex items-center text-xs text-slate-500 dark:text-slate-400">
             <span className="font-semibold text-blue-600 dark:text-blue-400 mr-1.5">
@@ -1139,6 +987,7 @@ export const ChurchFinancePage: React.FC = () => {
           { id: 'treasury', label: 'Holding Accounts & Treasury', icon: Landmark },
           { id: 'ledger', label: 'Income & Expense Ledger', icon: Receipt },
           { id: 'budgets', label: 'Department Budgets', icon: BarChart3 },
+          { id: 'reconciliation', label: 'Reconciliation', icon: ShieldCheck },
           { id: 'counter', label: 'Sunday Cash Counter Sheet', icon: Calculator },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -1330,7 +1179,7 @@ export const ChurchFinancePage: React.FC = () => {
                 }`}
               >
                 <ArrowDownLeft className="w-3.5 h-3.5" />
-                <span>Income ({churchIncomeCount})</span>
+                <span>Income ({filteredFinances.filter(row=>['income','grant'].includes(row.transaction_type)).length})</span>
               </button>
               <button
                 type="button"
@@ -1342,7 +1191,7 @@ export const ChurchFinancePage: React.FC = () => {
                 }`}
               >
                 <ArrowUpRight className="w-3.5 h-3.5" />
-                <span>Expenses ({expendituresCount})</span>
+                <span>Expenses ({filteredFinances.filter(row=>['expense','disbursement'].includes(row.transaction_type)).length})</span>
               </button>
             </div>
 
@@ -1505,9 +1354,11 @@ export const ChurchFinancePage: React.FC = () => {
                                 Expense
                               </span>
                             )}
+                            {item._sync_status==='pending'&&<span className="block text-[10px] font-semibold text-amber-800 mt-1">Awaiting cloud confirmation</span>}
+                            {!['completed','voided'].includes(item.status)&&<span className="block text-[10px] font-semibold text-amber-800 mt-1">{item.status.toUpperCase()} · not posted</span>}
                           </td>
                           <td className={`py-3 px-4 whitespace-nowrap font-mono text-xs font-bold ${isVoid ? 'text-slate-400' : isInc ? 'text-emerald-700 dark:text-emerald-400' : isTransfer ? 'text-purple-700 dark:text-purple-400' : 'text-rose-700 dark:text-rose-400'}`}>
-                            {item.reference_no || '—'}
+                            {financeReference(item)}
                           </td>
                           <td className="py-3 px-4">
                             <div className="font-bold text-slate-900 dark:text-white text-xs line-clamp-1">
@@ -1592,15 +1443,7 @@ export const ChurchFinancePage: React.FC = () => {
                                 </button>
                               )}
 
-                              {canAccess('finance') && (
-                                <button
-                                  onClick={() => setDeletingFinanceRecord(item)}
-                                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-all cursor-pointer"
-                                  title="Permanent Delete"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              )}
+
                             </div>
                           </td>
                         </tr>
@@ -1689,15 +1532,17 @@ export const ChurchFinancePage: React.FC = () => {
       {/* TAB 3: DEPARTMENT BUDGETS */}
       {activeTab === 'budgets' && (
         <div className="space-y-6">
+          {departmentBudgets.filter(budget=>!budgetPeriodRange(budget.period)).map(budget=><div role="alert" key={budget.id} className="p-4 rounded-lg bg-amber-50 border border-amber-200 text-sm">The {budget.department} budget needs a valid period before usage can be calculated. <button type="button" className="underline" onClick={()=>{setSelectedEditBudget(budget);setShowBudgetModal(true);}}>Review budget period</button></div>)}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs">
             <div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                 Departmental Budget Allocations
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Tracking annual budget burn rates across GWCC ministry departments
+                Usage is calculated from recorded expenses within each budget period and currency.
               </p>
             </div>
+            <label className="text-xs font-semibold">Budget year<select aria-label="Budget year" value={budgetYear} onChange={e=>setBudgetYear(e.target.value)} className="ml-2 rounded-lg border p-2">{budgetYears.map(year=><option key={year} value={year}>{year}</option>)}</select></label>
             {canAccess('finance') && (
               <button
                 onClick={() => setShowBudgetModal(true)}
@@ -1708,10 +1553,10 @@ export const ChurchFinancePage: React.FC = () => {
             )}
           </div>
 
-          {departmentBudgets.length === 0 ? (
+          {visibleBudgets.length === 0 ? (
             <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border border-slate-200 dark:border-slate-800 text-center">
               <BarChart3 className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-600 mb-3" />
-              <h4 className="text-base font-bold text-slate-900 dark:text-white">No Department Budgets Defined</h4>
+              <h4 className="text-base font-bold text-slate-900 dark:text-white">No Budgets for This Year</h4>
               <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto mt-1 mb-4">
                 Establish annual departmental budget allocations for Sound & Media, Facilities, Welfare, and Children Ministry to track operational spending.
               </p>
@@ -1727,7 +1572,7 @@ export const ChurchFinancePage: React.FC = () => {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {departmentBudgets.map((bgt) => {
+              {visibleBudgets.map((bgt) => {
                 const allocated = Number(bgt.allocated_amount) || 0;
                 const spent = Number(bgt.spent_amount) || 0;
                 const remaining = Math.max(0, allocated - spent);
@@ -1814,8 +1659,21 @@ export const ChurchFinancePage: React.FC = () => {
       )}
 
       {/* TAB 4: SUNDAY CASH COUNTER SHEET */}
+      {activeTab==='reconciliation'&&<FinanceReconciliation accounts={churchAccounts} records={churchFinances}
+        onAccount={id=>{setSelectedAccountFilter(id);setSearchQuery('');setDateFilter('all');setSelectedCategoryFilter('all');setSelectedDepartmentFilter('all');setLedgerTypeFilter('all');setCurrentPage(1);setActiveTab('ledger');}}
+        onRecord={id=>{setSelectedAccountFilter('all');setSearchQuery(id);setDateFilter('all');setSelectedCategoryFilter('all');setSelectedDepartmentFilter('all');setLedgerTypeFilter('all');setCurrentPage(1);setActiveTab('ledger');}}
+        onReference={reference=>{setSelectedAccountFilter('all');setSearchQuery(reference);setDateFilter('all');setSelectedCategoryFilter('all');setSelectedDepartmentFilter('all');setLedgerTypeFilter('all');setCurrentPage(1);setActiveTab('ledger');}}/>}
       {activeTab === 'counter' && (
         <div className="space-y-6">
+          <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+            <p className="text-sm text-slate-600">Post one denomination sheet per service and date to its selected cash account. Verify counters and the physical total before posting.</p>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="text-xs font-semibold">Cash holding account<select aria-label="Cash holding account" required value={counterAccountId} onChange={e=>setCounterAccountId(e.target.value)} className="block w-full border rounded-lg p-2 mt-1"><option value="">Select cash account</option>{cashAccounts.map(account=><option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+              <label className="text-xs font-semibold">Counted service<select aria-label="Counted service" required value={counterServiceId} onChange={e=>setCounterServiceId(e.target.value)} className="block w-full border rounded-lg p-2 mt-1"><option value="">Select service</option>{services.filter(service=>service.is_active===true).map(service=><option key={service.id} value={service.id}>{service.name}</option>)}</select></label>
+              <label className="text-xs font-semibold">Cash-count date<input aria-label="Cash-count date" type="date" required max={todayISO()} value={counterDate} onChange={e=>setCounterDate(e.target.value)} className="block w-full border rounded-lg p-2 mt-1"/></label>
+            </div>
+            {!cashAccounts.length&&<div role="alert" className="text-sm text-amber-900 bg-amber-50 rounded p-3">Add an active GHS cash account before posting a physical cash count. <button type="button" className="underline font-semibold" onClick={()=>{setNewAccType('cash_petty');setNewAccProvider('Cash on Hand');setShowAddAccountModal(true);}}>Add cash account</button></div>}
+          </div>
           <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-slate-200 dark:border-slate-800">
               <div>
@@ -1823,7 +1681,7 @@ export const ChurchFinancePage: React.FC = () => {
                   Sunday Cash Counting & Denomination Sheet
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Physical currency counting calculator with counter signatures and instant posting to treasury float
+                  Physical currency count with named counters, supervisor and cloud confirmation
                 </p>
               </div>
 
@@ -1837,6 +1695,7 @@ export const ChurchFinancePage: React.FC = () => {
                 {canAccess('finance') && (
                   <button
                     onClick={handlePostCashCount}
+                    disabled={!cashAccounts.length}
                     className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition-all cursor-pointer"
                   >
                     Post Cash to Treasury
@@ -1866,11 +1725,13 @@ export const ChurchFinancePage: React.FC = () => {
                           <span className="text-slate-400 text-[11px]">×</span>
                           <input
                             type="number"
+                            aria-label={`${den.label} quantity`}
+                            step="1"
                             min="0"
                             placeholder="0"
                             value={qty === 0 ? '' : qty}
                             onChange={(e) => {
-                              const val = parseInt(e.target.value) || 0;
+                              const val = e.target.value === '' ? 0 : Number(e.target.value);
                               setCounts((prev) => ({ ...prev, [den.value]: val }));
                             }}
                             className="w-20 px-2 py-1 text-center font-bold text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none"
@@ -1905,11 +1766,13 @@ export const ChurchFinancePage: React.FC = () => {
                             <span className="text-slate-400 text-[11px]">×</span>
                             <input
                               type="number"
+                              aria-label={`${den.label} quantity`}
+                              step="1"
                               min="0"
                               placeholder="0"
                               value={qty === 0 ? '' : qty}
                               onChange={(e) => {
-                                const val = parseInt(e.target.value) || 0;
+                                const val = e.target.value === '' ? 0 : Number(e.target.value);
                                 setCounts((prev) => ({ ...prev, [den.value]: val }));
                               }}
                               className="w-20 px-2 py-1 text-center font-bold text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none"
@@ -1933,6 +1796,7 @@ export const ChurchFinancePage: React.FC = () => {
                     <input
                       type="text"
                       placeholder="Lead Counter 1 (Name)"
+                      aria-label="First counter name"
                       value={counter1Name}
                       onChange={(e) => setCounter1Name(e.target.value)}
                       className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
@@ -1940,6 +1804,7 @@ export const ChurchFinancePage: React.FC = () => {
                     <input
                       type="text"
                       placeholder="Lead Counter 2 (Name)"
+                      aria-label="Second counter name"
                       value={counter2Name}
                       onChange={(e) => setCounter2Name(e.target.value)}
                       className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
@@ -1947,7 +1812,8 @@ export const ChurchFinancePage: React.FC = () => {
                   </div>
                   <input
                     type="text"
-                    placeholder="Chief Usher / Supervisor Signature"
+                    placeholder="Supervisor name"
+                    aria-label="Cash-count supervisor name"
                     value={counterSupervisor}
                     onChange={(e) => setCounterSupervisor(e.target.value)}
                     className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs"
@@ -1984,10 +1850,10 @@ export const ChurchFinancePage: React.FC = () => {
 
             <form onSubmit={handleSaveIncome} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="church-finance-field-1" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Revenue Title / Purpose *
                 </label>
-                <input
+                <input id="church-finance-field-1"
                   type="text"
                   required
                   placeholder="e.g. Cathedral Hall Wedding Hire, National Council Subvention, Bookstore Proceeds..."
@@ -2000,10 +1866,10 @@ export const ChurchFinancePage: React.FC = () => {
               {/* Credit Account & Amount */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-2" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Credit Holding Account *
                   </label>
-                  {churchAccounts.length === 0 ? (
+                  {activeAccounts.length === 0 ? (
                     <div className="p-2 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-xs text-amber-800 dark:text-amber-300 flex items-center justify-between gap-2">
                       <span className="text-[11px]">No accounts exist yet.</span>
                       <button
@@ -2018,12 +1884,12 @@ export const ChurchFinancePage: React.FC = () => {
                       </button>
                     </div>
                   ) : (
-                    <select
+                    <select id="church-finance-field-2"
                       value={incomeAccountId}
                       onChange={(e) => setIncomeAccountId(e.target.value)}
                       className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
                     >
-                      {churchAccounts.map((acc) => (
+                      {activeAccounts.map((acc) => (
                         <option key={acc.id} value={acc.id}>
                           {acc.name} (Bal: GH₵{acc.current_balance.toFixed(0)})
                         </option>
@@ -2033,10 +1899,10 @@ export const ChurchFinancePage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-3" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Amount (GH₵) *
                   </label>
-                  <input
+                  <input id="church-finance-field-3"
                     type="number"
                     step="0.01"
                     min="0.01"
@@ -2052,10 +1918,10 @@ export const ChurchFinancePage: React.FC = () => {
               {/* Category & Department */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-4" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Revenue Stream / Category
                   </label>
-                  <select
+                  <select id="church-finance-field-4"
                     value={incomeCategory}
                     onChange={(e) => setIncomeCategory(e.target.value)}
                     className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
@@ -2069,10 +1935,10 @@ export const ChurchFinancePage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-5" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Receiving Department
                   </label>
-                  <input
+                  <input id="church-finance-field-5"
                     type="text"
                     placeholder="e.g. Treasury & Accounts, Media, Projects..."
                     value={incomeDepartment}
@@ -2085,10 +1951,10 @@ export const ChurchFinancePage: React.FC = () => {
               {/* Payer / Source & Date */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-6" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Payer / Source / Depositor
                   </label>
-                  <input
+                  <input id="church-finance-field-6"
                     type="text"
                     placeholder="e.g. Dr. Acheampong Family, General Council, Resource Center..."
                     value={incomeSource}
@@ -2098,10 +1964,10 @@ export const ChurchFinancePage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-7" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Receipt Date *
                   </label>
-                  <input
+                  <input id="church-finance-field-7"
                     type="date"
                     required
                     value={incomeDate}
@@ -2114,10 +1980,10 @@ export const ChurchFinancePage: React.FC = () => {
               {/* Deposit Mode & Reference # */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-8" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Deposit Mode
                   </label>
-                  <select
+                  <select id="church-finance-field-8"
                     value={incomePaymentMethod}
                     onChange={(e) => setIncomePaymentMethod(e.target.value)}
                     className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
@@ -2130,10 +1996,10 @@ export const ChurchFinancePage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-9" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Receipt / Reference #
                   </label>
-                  <input
+                  <input id="church-finance-field-9"
                     type="text"
                     placeholder="e.g. REC-2026-081"
                     value={incomeReferenceNo}
@@ -2144,10 +2010,10 @@ export const ChurchFinancePage: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="church-finance-field-10" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Received / Acknowledged By
                 </label>
-                <input
+                <input id="church-finance-field-10"
                   type="text"
                   value={incomeReceivedBy}
                   onChange={(e) => setIncomeReceivedBy(e.target.value)}
@@ -2156,10 +2022,10 @@ export const ChurchFinancePage: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="church-finance-field-11" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Notes & Audit Remarks
                 </label>
-                <textarea
+                <textarea id="church-finance-field-11"
                   rows={2}
                   placeholder="Minutes reference, contract remarks or deposit confirmation..."
                   value={incomeNotes}
@@ -2213,10 +2079,10 @@ export const ChurchFinancePage: React.FC = () => {
 
             <form onSubmit={handleSaveExpense} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="church-finance-field-12" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Expense Purpose / Item Title *
                 </label>
-                <input
+                <input id="church-finance-field-12"
                   type="text"
                   required
                   placeholder="e.g. ECG Power Recharge, Diesel Fuel for 65kVA Generator..."
@@ -2229,15 +2095,15 @@ export const ChurchFinancePage: React.FC = () => {
               {/* Holding Account & Amount */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-13" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Debit Holding Account *
                   </label>
-                  <select
+                  <select id="church-finance-field-13"
                     value={formAccountId}
                     onChange={(e) => setFormAccountId(e.target.value)}
                     className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
                   >
-                    {churchAccounts.map((acc) => (
+                    {activeAccounts.map((acc) => (
                       <option key={acc.id} value={acc.id}>
                         {acc.name} (Bal: GH₵{acc.current_balance.toFixed(0)})
                       </option>
@@ -2246,10 +2112,10 @@ export const ChurchFinancePage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-14" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Amount (GH₵) *
                   </label>
-                  <input
+                  <input id="church-finance-field-14"
                     type="number"
                     step="0.01"
                     min="0"
@@ -2265,10 +2131,10 @@ export const ChurchFinancePage: React.FC = () => {
               {/* Category & Department */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-15" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Expense Category
                   </label>
-                  <select
+                  <select id="church-finance-field-15"
                     value={formCategory}
                     onChange={(e) => setFormCategory(e.target.value)}
                     className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
@@ -2282,10 +2148,10 @@ export const ChurchFinancePage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-16" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Ministry Department
                   </label>
-                  <input
+                  <input id="church-finance-field-16"
                     type="text"
                     placeholder="e.g. Facilities & Maintenance, Media..."
                     value={formDepartment}
@@ -2298,10 +2164,10 @@ export const ChurchFinancePage: React.FC = () => {
               {/* Vendor & Date */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-17" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Payee / Vendor / Recipient
                   </label>
-                  <input
+                  <input id="church-finance-field-17"
                     type="text"
                     placeholder="e.g. ECG Depot Ablekuma, TotalEnergies..."
                     value={formRecipient}
@@ -2311,10 +2177,10 @@ export const ChurchFinancePage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-18" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Disbursement Date *
                   </label>
-                  <input
+                  <input id="church-finance-field-18"
                     type="date"
                     required
                     value={formDate}
@@ -2327,10 +2193,10 @@ export const ChurchFinancePage: React.FC = () => {
               {/* Payment Method & Voucher Ref */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-19" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Disbursement Mode
                   </label>
-                  <select
+                  <select id="church-finance-field-19"
                     value={formPaymentMethod}
                     onChange={(e) => setFormPaymentMethod(e.target.value)}
                     className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
@@ -2343,10 +2209,10 @@ export const ChurchFinancePage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-20" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Voucher / Reference #
                   </label>
-                  <input
+                  <input id="church-finance-field-20"
                     type="text"
                     placeholder="e.g. VOUCH-2026-092"
                     value={formReferenceNo}
@@ -2357,10 +2223,10 @@ export const ChurchFinancePage: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="church-finance-field-21" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Authorized By
                 </label>
-                <input
+                <input id="church-finance-field-21"
                   type="text"
                   value={formApprovedBy}
                   onChange={(e) => setFormApprovedBy(e.target.value)}
@@ -2369,10 +2235,10 @@ export const ChurchFinancePage: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="church-finance-field-22" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Notes & Council Approval Remarks
                 </label>
-                <textarea
+                <textarea id="church-finance-field-22"
                   rows={2}
                   placeholder="Minutes reference or purpose notes..."
                   value={formNotes}
@@ -2426,10 +2292,10 @@ export const ChurchFinancePage: React.FC = () => {
 
             <form onSubmit={handleCreateAccount} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="church-finance-field-23" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Account Name *
                 </label>
-                <input
+                <input id="church-finance-field-23"
                   type="text"
                   required
                   placeholder="e.g. Ecobank - Welfare Account"
@@ -2441,10 +2307,10 @@ export const ChurchFinancePage: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-24" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Account Type
                   </label>
-                  <select
+                  <select id="church-finance-field-24"
                     value={newAccType}
                     onChange={(e) => setNewAccType(e.target.value as any)}
                     className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
@@ -2457,10 +2323,10 @@ export const ChurchFinancePage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-25" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Bank / Provider
                   </label>
-                  <input
+                  <input id="church-finance-field-25"
                     type="text"
                     placeholder="e.g. GCB, CalBank, MTN"
                     value={newAccProvider}
@@ -2472,10 +2338,10 @@ export const ChurchFinancePage: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-26" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Account / Till #
                   </label>
-                  <input
+                  <input id="church-finance-field-26"
                     type="text"
                     placeholder="e.g. 1441002938101"
                     value={newAccNumber}
@@ -2485,10 +2351,10 @@ export const ChurchFinancePage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="church-finance-field-27" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Initial Balance (GH₵)
                   </label>
-                  <input
+                  <input id="church-finance-field-27"
                     type="number"
                     step="0.01"
                     placeholder="0.00"
@@ -2500,10 +2366,10 @@ export const ChurchFinancePage: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="church-finance-field-28" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Description / Purpose
                 </label>
-                <textarea
+                <textarea id="church-finance-field-28"
                   rows={2}
                   placeholder="Designated purpose of this holding account..."
                   value={newAccDesc}
@@ -2556,15 +2422,16 @@ export const ChurchFinancePage: React.FC = () => {
 
             <form onSubmit={handleExecuteTransfer} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="church-finance-field-29" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Source Account (Debit) *
                 </label>
-                <select
+                <select id="church-finance-field-29"
                   value={transferFromId}
                   onChange={(e) => setTransferFromId(e.target.value)}
                   className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
                 >
-                  {churchAccounts.map((acc) => (
+                  <option value="">Select holding account</option>
+                  {activeAccounts.map((acc) => (
                     <option key={acc.id} value={acc.id}>
                       {acc.name} — Balance: GH₵{acc.current_balance.toFixed(2)}
                     </option>
@@ -2573,15 +2440,16 @@ export const ChurchFinancePage: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="church-finance-field-30" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Destination Account (Credit) *
                 </label>
-                <select
+                <select id="church-finance-field-30"
                   value={transferToId}
                   onChange={(e) => setTransferToId(e.target.value)}
                   className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
                 >
-                  {churchAccounts.map((acc) => (
+                  <option value="">Select holding account</option>
+                  {activeAccounts.map((acc) => (
                     <option key={acc.id} value={acc.id}>
                       {acc.name} — Balance: GH₵{acc.current_balance.toFixed(2)}
                     </option>
@@ -2590,10 +2458,10 @@ export const ChurchFinancePage: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="church-finance-field-31" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Transfer Amount (GH₵) *
                 </label>
-                <input
+                <input id="church-finance-field-31"
                   type="number"
                   step="0.01"
                   min="0.01"
@@ -2606,10 +2474,10 @@ export const ChurchFinancePage: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="church-finance-field-32" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Transfer Purpose & Reference Note
                 </label>
-                <textarea
+                <textarea id="church-finance-field-32"
                   rows={2}
                   placeholder="e.g. Replenish Cathedral Petty Cash float from GCB Operations..."
                   value={transferNotes}
@@ -2641,7 +2509,7 @@ export const ChurchFinancePage: React.FC = () => {
       {/* PAYMENT VOUCHER MODAL */}
       {selectedVoucherRecord && (
         <PaymentVoucherModal
-          record={selectedVoucherRecord}
+          record={churchFinances.find(row=>row.id===selectedVoucherRecord.id)||selectedVoucherRecord}
           settings={settings}
           onClose={() => setSelectedVoucherRecord(null)}
         />
@@ -2658,27 +2526,30 @@ export const ChurchFinancePage: React.FC = () => {
                   allocated: selectedEditBudget.allocated_amount,
                   spent: selectedEditBudget.spent_amount,
                   lead: selectedEditBudget.notes || 'Department Committee',
+                  period:selectedEditBudget.period,
                 }
               : null
           }
           onSave={(b) => {
+            validateBudgetAllocation({id:selectedEditBudget?.id,department:b.name,period:b.period,allocated_amount:b.allocated,currency:selectedEditBudget?.currency||'GHS'},storedDepartmentBudgets);
             if (selectedEditBudget) {
               updateDepartmentBudget(selectedEditBudget.id, {
                 department: b.name,
                 allocated_amount: b.allocated,
                 notes: b.lead,
+                period:b.period,
               });
-              success('Budget Updated', `Updated ${b.name} allocation.`);
+              info('Budget update awaiting confirmation', `The ${b.name} allocation is recorded locally. Follow sync status for cloud confirmation.`);
             } else {
               addDepartmentBudget({
                 department: b.name,
-                period: `${new Date().getFullYear()} Annual`,
+                period: b.period,
                 allocated_amount: b.allocated,
                 spent_amount: 0,
                 currency: 'GHS',
                 notes: b.lead,
               });
-              success('Budget Created', `Allocated GH₵ ${b.allocated.toFixed(2)} to ${b.name}.`);
+              info('Budget awaiting confirmation', `The ${b.name} budget is recorded locally. Follow sync status for cloud confirmation.`);
             }
             setShowBudgetModal(false);
             setSelectedEditBudget(null);
@@ -2694,7 +2565,7 @@ export const ChurchFinancePage: React.FC = () => {
       {editingFinanceRecord && (
         <EditChurchFinanceModal
           record={editingFinanceRecord}
-          churchAccounts={churchAccounts}
+          churchAccounts={activeAccounts}
           seniorPastor={settings.senior_pastor || 'Prophet Elisha K. Richard'}
           onSave={handleUpdateFinance}
           onClose={() => setEditingFinanceRecord(null)}
@@ -2711,183 +2582,6 @@ export const ChurchFinancePage: React.FC = () => {
       )}
 
       {/* DELETE CONFIRMATION MODAL */}
-      {deletingFinanceRecord && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-md w-full p-6 animate-in fade-in duration-200 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
-                <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/60">
-                  <Trash2 className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
-                    Delete Financial Record
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Permanent record removal
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setDeletingFinanceRecord(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              Are you sure you want to permanently delete this financial record?
-            </p>
-
-            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-1 text-xs">
-              <div className="font-bold text-slate-900 dark:text-white">{deletingFinanceRecord.title}</div>
-              <div className="font-semibold text-rose-600">GH₵ {deletingFinanceRecord.amount.toFixed(2)} • {deletingFinanceRecord.account_name}</div>
-              <div className="text-slate-500">Ref: {deletingFinanceRecord.reference_no || '—'} • Date: {deletingFinanceRecord.date}</div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 text-amber-800 dark:text-amber-300 text-xs">
-              <p className="leading-relaxed">
-                <strong>Accounting Safeguard:</strong> Deleting an active record will automatically reverse its balance effect on {deletingFinanceRecord.account_name}. For official accounting compliance, consider <strong>Voiding</strong> instead to retain audit trail notes.
-              </p>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setDeletingFinanceRecord(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  deleteChurchFinance(deletingFinanceRecord.id);
-                  success('Record Deleted', `Removed "${deletingFinanceRecord.title}" and reversed balance impact.`);
-                  setDeletingFinanceRecord(null);
-                }}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs cursor-pointer flex items-center gap-1.5"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Confirm Delete</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* START AFRESH MODAL */}
-      {showStartAfreshModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2.5 text-rose-600 dark:text-rose-400">
-                <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/60">
-                  <RotateCcw className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
-                    Start Finance Afresh
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Clear dummy data & start with clean records
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowStartAfreshModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              This action clears out hardcoded demo vouchers, expenditure entries, and department budgets so you can record your church's real institutional transactions from scratch.
-            </p>
-
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Select Option:
-              </label>
-
-              <label
-                onClick={() => setStartAfreshMode('reset_balances')}
-                className={`flex items-start gap-3 p-3 rounded-xl border text-xs cursor-pointer transition-all ${
-                  startAfreshMode === 'reset_balances'
-                    ? 'border-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 font-semibold ring-1 ring-emerald-500/20'
-                    : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="afreshMode"
-                  checked={startAfreshMode === 'reset_balances'}
-                  onChange={() => setStartAfreshMode('reset_balances')}
-                  className="mt-0.5"
-                />
-                <div>
-                  <p className="font-bold text-slate-900 dark:text-white">Clean Ledger & Reset Balances (Recommended)</p>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-normal mt-0.5">
-                    Clears all transactions and budgets, and resets your church bank/MoMo holding accounts to GH₵ 0.00 ready for new entries.
-                  </p>
-                </div>
-              </label>
-
-              <label
-                onClick={() => setStartAfreshMode('wipe_all')}
-                className={`flex items-start gap-3 p-3 rounded-xl border text-xs cursor-pointer transition-all ${
-                  startAfreshMode === 'wipe_all'
-                    ? 'border-rose-500 bg-rose-50/60 dark:bg-rose-950/40 text-rose-900 dark:text-rose-200 font-semibold ring-1 ring-rose-500/20'
-                    : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="afreshMode"
-                  checked={startAfreshMode === 'wipe_all'}
-                  onChange={() => setStartAfreshMode('wipe_all')}
-                  className="mt-0.5"
-                />
-                <div>
-                  <p className="font-bold text-slate-900 dark:text-white">Complete Clean Slate</p>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-normal mt-0.5">
-                    Clears all transactions, budgets, and all holding accounts so you can build your church's custom holding accounts from scratch.
-                  </p>
-                </div>
-              </label>
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 text-[11px] text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-800">
-              <span className="font-bold text-slate-700 dark:text-slate-200">Safeguard: </span>
-              Member tithes and offerings in the Giving module will remain intact and will not be altered.
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setShowStartAfreshModal(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const res = resetChurchFinanceData(startAfreshMode);
-                  success('Finance Data Reset', res.message);
-                  setShowStartAfreshModal(false);
-                }}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs cursor-pointer flex items-center gap-1.5"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Confirm & Start Afresh</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

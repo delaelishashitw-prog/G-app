@@ -260,6 +260,7 @@ test('Church Finance: recordChurchFinance rounds decimal precision and updates d
     {
       id: 'bgt-facilities',
       department: 'Facilities & Logistics',
+      period: '2026 Annual',
       allocated_amount: 10000,
       spent_amount: 1000,
       currency: 'GHS',

@@ -199,10 +199,13 @@ export function addChurchAccount(
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
   dbSyncUpsert: (table: string, record: unknown) => void
 ): ChurchAccount {
+  const balance=money(Number(data.current_balance));
+  if(balance<0)throw new Error('Enter a non-negative verified opening balance.');
   const newAccount: ChurchAccount = {
     ...data,
     id: `acc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    current_balance: Number(data.current_balance) || 0,
+    current_balance: balance,
+    opening_balance: balance,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -262,6 +265,7 @@ function applyReceipt(before:ChurchFinanceRecord|undefined,after:ChurchFinanceRe
   setFinances:Setter<ChurchFinanceRecord>,setAccounts:Setter<ChurchAccount>,setBudgets:Setter<DepartmentBudget>|undefined,
   log:Logger|undefined,sync:Sync|undefined) {
   if(!state) throw new Error('A current finance snapshot is required.');
+  after._sync_status='pending';
   const accounts=planAccountChange(state.accounts,before,after);
   const budgets=planBudgetChange(state.budgets,before,after);
   const finances=before?state.finances.map(row=>row.id===after.id?after:row):[after,...state.finances];
@@ -274,7 +278,8 @@ function applyReceipt(before:ChurchFinanceRecord|undefined,after:ChurchFinanceRe
 export function recordChurchFinance(data:Omit<ChurchFinanceRecord,'id'|'created_at'|'updated_at'>,
   sf:Setter<ChurchFinanceRecord>,sa:Setter<ChurchAccount>,sb?:Setter<DepartmentBudget>,log?:Logger,sync?:Sync,state?:FinanceSnapshot):ChurchFinanceRecord {
   const now=new Date().toISOString();
-  const record:ChurchFinanceRecord={...data,id:crypto.randomUUID(),amount:money(data.amount),status:data.status||'completed',created_at:now,updated_at:now};
+  const id=crypto.randomUUID();
+  const record:ChurchFinanceRecord={...data,id,reference_no:data.reference_no?.trim()||`PENDING-${id}`,amount:money(data.amount),status:data.status||'completed',created_at:now,updated_at:now};
   applyReceipt(undefined,record,state,sf,sa,sb,log,sync);return record;
 }
 export function updateChurchFinance(id:string,updates:Partial<ChurchFinanceRecord>,sf:Setter<ChurchFinanceRecord>,sa:Setter<ChurchAccount>,sb:Setter<DepartmentBudget>,log:Logger,sync:Sync,state?:FinanceSnapshot) {
@@ -315,7 +320,7 @@ export function addDepartmentBudget(
 ): DepartmentBudget {
   const newBudget: DepartmentBudget = {
     ...data,
-    id: `bgt-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    id: crypto.randomUUID(),
     allocated_amount: Number(data.allocated_amount) || 0,
     spent_amount: Number(data.spent_amount) || 0,
     created_at: new Date().toISOString(),

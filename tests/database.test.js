@@ -7,7 +7,7 @@ const root='11111111-1111-4111-8111-111111111111';
 const member='22222222-2222-4222-8222-222222222222';
 const other='33333333-3333-4333-8333-333333333333';
 
-export async function setupDatabase({beforeSecurityUpgrade}={}) {
+export async function setupDatabase({beforeSecurityUpgrade,beforeFinanceControls}={}) {
   const db=new PGlite();
   await db.exec(`CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role;
     CREATE SCHEMA auth;CREATE SCHEMA storage;
@@ -20,6 +20,7 @@ export async function setupDatabase({beforeSecurityUpgrade}={}) {
     ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;`);
   for(const file of fs.readdirSync('supabase/migrations').filter(file=>file.endsWith('.sql')).sort()) {
     if(file.endsWith('_secure_operations_release.sql') && beforeSecurityUpgrade) await beforeSecurityUpgrade(db);
+    if(file.endsWith('_finance_receipt_controls.sql') && beforeFinanceControls) await beforeFinanceControls(db);
     const sql=fs.readFileSync(`supabase/migrations/${file}`,'utf8').replace(/CREATE EXTENSION IF NOT EXISTS [^;]+;/g,'');
     try {await db.exec(sql);} catch(error) {await db.close();throw new Error(`${file}: ${error.message} ${error.where || ''}`);}
   }
@@ -37,6 +38,77 @@ const operation=()=>`aaaaaaaa-aaaa-4aaa-8aaa-${String(++op).padStart(12,'0')}`;
 const apply=(db,changes,id=operation())=>db.query('SELECT public.gwcc_apply_mutations($1,$2) AS result',[id,JSON.stringify(changes)]);
 const upsert=(table,record,expected)=>({table,id:record.id,operation:'upsert',record,expected_updated_at:expected});
 const reconcile=(db,original,recovery,changes)=>db.query('SELECT public.gwcc_reconcile_sync_operation($1,$2,$3) AS result',[original,recovery,JSON.stringify(changes)]);
+
+test('new finance references are server-assigned and collision-safe while historical duplicate references and balances remain intact',async()=>{
+  let before;
+  const db=await setupDatabase({beforeFinanceControls:async(db)=>{
+    await db.exec("INSERT INTO public.church_accounts(id,name,current_balance,opening_balance,currency,is_active) VALUES('legacy-bank','Legacy Bank',100,100,'GHS',true); INSERT INTO public.church_finances(id,account_id,account_name,transaction_type,title,category,amount,currency,date,status,reference_no) VALUES('legacy-one','legacy-bank','Legacy Bank','income','One','Review',2,'GHS','2026-10-01','completed','OLD-DUP'),('legacy-two','legacy-bank','Legacy Bank','income','Two','Review',3,'GHS','2026-10-02','completed','OLD-DUP');");
+    before=(await db.query("SELECT to_jsonb(a) AS doc FROM public.church_accounts a WHERE id='legacy-bank'")).rows[0].doc;
+  }});
+  try{
+    assert.deepEqual((await db.query("SELECT to_jsonb(a) AS doc FROM public.church_accounts a WHERE id='legacy-bank'")).rows[0].doc,before);
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM public.church_finances WHERE reference_no='OLD-DUP'")).rows[0].n,2);
+    await asUser(db,root,async()=>{
+      const receipt={id:'numbered',transaction_type:'income',account_id:'legacy-bank',title:'New receipt',amount:10,currency:'GHS',date:'2026-10-16',status:'completed',reference_no:'PENDING-browser-id'};
+      const operationId=operation(),first=(await apply(db,[upsert('church_finances',receipt)],operationId)).rows[0].result;
+      assert.match(first[0].record.reference_no,/^INC-2026-\d{6,}$/);assert.deepEqual((await apply(db,[upsert('church_finances',receipt)],operationId)).rows[0].result,first);
+      await assert.rejects(apply(db,[upsert('church_finances',{...receipt,id:'duplicate',reference_no:'old-dup'})]),/reference is already in use/);
+      assert.equal((await db.query("SELECT count(*)::int AS n FROM public.church_finances WHERE id='duplicate'")).rows[0].n,0);
+      const legacy=(await db.query("SELECT to_jsonb(f) AS doc FROM public.church_finances f WHERE id='legacy-one'")).rows[0].doc;
+      await apply(db,[upsert('church_finances',{...legacy,title:'Reviewed title'},legacy.updated_at)]);
+      assert.equal((await db.query("SELECT reference_no FROM public.church_finances WHERE id='legacy-one'")).rows[0].reference_no,'OLD-DUP');
+      const custom=(await apply(db,[upsert('church_finances',{...receipt,id:'custom',reference_no:' Bank#Ref "Quoted" '})])).rows[0].result[0].record;
+      assert.equal(custom.reference_no,'Bank#Ref "Quoted"');
+      await assert.rejects(apply(db,[upsert('church_finances',{...receipt,id:'custom-duplicate',reference_no:'bank#ref "quoted"'})]),/already in use/);
+      await assert.rejects(db.query('SELECT * FROM gwcc_private.finance_reference_reservations'),/permission denied/);
+      await assert.rejects(apply(db,[upsert('church_accounts',{id:'nan-account',name:'Bad',current_balance:'NaN',currency:'GHS'})]),/gwcc_finite_account_balances/);
+      await assert.rejects(apply(db,[upsert('church_accounts',{id:'null-account',name:'Bad',current_balance:null,currency:'GHS'})]),/not-null|gwcc_finite_account_balances/);
+    });
+  }finally{await db.close();}
+});
+
+test('cash denomination sheets validate witnesses, amount and physical account; duplicate service/date postings are atomic and voidable',async()=>{
+  const db=await setupDatabase();
+  try{
+    await db.exec("INSERT INTO public.services(id,name,type,day_of_week,start_time,end_time,is_active) VALUES('cash-service','Cash service','sunday','Sunday','08:00','10:00',true)");
+    await asUser(db,root,async()=>{
+      await apply(db,[upsert('church_accounts',{id:'cash',name:'Cash',account_type:'cash_petty',current_balance:0,currency:'GHS'}),upsert('church_accounts',{id:'cash-other',name:'Other cash',account_type:'cash_petty',current_balance:0,currency:'GHS'}),upsert('church_accounts',{id:'bank',name:'Bank',account_type:'bank',current_balance:100,currency:'GHS'})]);
+      const receipt={id:'count',account_id:'cash',account_name:'Cash',transaction_type:'income',amount:20.5,currency:'GHS',date:'2026-10-11',title:'Count',payment_method:'cash',status:'completed',cash_count_service_id:'cash-service',cash_count_key:'untrusted-key',cash_count_details:{denominations:{10:2,0.5:1},counter1:'One Counter',counter2:'Two Counter',supervisor:'Supervisor',recorded_by_user_id:other}};
+      const reject=async(changes,regex)=>await assert.rejects(apply(db,[upsert('church_finances',{...receipt,id:'rejected',...changes})]),regex);
+      await reject({account_id:'bank'},/cash account/);await reject({cash_count_service_id:'missing'},/active service/);
+      await reject({status:null},/valid receipt status/);await reject({transaction_type:null},/valid transaction type/);
+      await reject({currency:null},/valid currency/);await reject({payment_method:null},/cash income receipt/);
+      await reject({amount:21},/match its counted denominations/);
+      await reject({cash_count_details:{...receipt.cash_count_details,counter2:'One Counter'}},/different counter/);
+      await reject({cash_count_details:{...receipt.cash_count_details,counter1:123}},/different counter/);
+      await reject({cash_count_details:{...receipt.cash_count_details,denominations:{10:2.5}}},/whole, non-negative/);
+      const saved=(await apply(db,[upsert('church_finances',receipt)])).rows[0].result[0].record;
+      assert.equal(saved.cash_count_key,'cash-service:2026-10-11');assert.equal(saved.cash_count_details.recorded_by_user_id,root);assert.match(saved.reference_no,/^CASH-2026-\d{6,}$/);
+      await assert.rejects(apply(db,[upsert('church_finances',{...receipt,id:'duplicate-count',account_id:'cash-other'})]),/already recorded/);
+      assert.deepEqual((await db.query("SELECT id,current_balance::float AS balance FROM public.church_accounts WHERE id IN ('cash','cash-other') ORDER BY id")).rows,[{id:'cash',balance:20.5},{id:'cash-other',balance:0}]);
+      await assert.rejects(apply(db,[upsert('church_finances',{...saved,amount:21},saved.updated_at)]),/Void this cash count/);
+      await apply(db,[upsert('church_finances',{...saved,status:'voided',void_reason:'Recount'},saved.updated_at)]);
+      await apply(db,[upsert('church_finances',{...receipt,id:'replacement'})]);
+      assert.equal((await db.query("SELECT current_balance::float AS balance FROM public.church_accounts WHERE id='cash'")).rows[0].balance,20.5);
+      assert.equal((await db.query("SELECT count(*)::int AS n FROM public.church_finances WHERE cash_count_key='cash-service:2026-10-11'")).rows[0].n,2);
+    });
+  }finally{await db.close();}
+});
+
+test('budget period validation is enforced by the database and prevents concurrent overlapping allocations without changing ledger balances',async()=>{
+  const db=await setupDatabase();
+  try{await asUser(db,root,async()=>{
+    const budget={id:'budget',department:'Facilities',period:'2026 Annual',allocated_amount:1000,spent_amount:0,currency:'GHS'};
+    await apply(db,[upsert('department_budgets',budget)]);
+    await assert.rejects(apply(db,[upsert('department_budgets',{...budget,id:'overlap',department:' facilities ',period:'Q1-2026'})]),/overlapping period/);
+    await apply(db,[upsert('department_budgets',{...budget,id:'next-year',period:'2027 Annual'})]);
+    await apply(db,[upsert('department_budgets',{...budget,id:'other-currency',currency:'USD'})]);
+    await assert.rejects(apply(db,[upsert('department_budgets',{...budget,id:'unknown',period:'Legacy'})]),/supported budget period/);
+    await assert.rejects(apply(db,[upsert('department_budgets',{...budget,id:'negative',allocated_amount:-1})]),/positive allocation/);
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM public.gwcc_documents WHERE namespace='department_budgets'")).rows[0].n,3);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM public.church_finances')).rows[0].n,0);
+  });}finally{await db.close();}
+});
 
 test('legacy recovery confirms 20 saved records and saves only the outstanding 21st record, with immutable retry receipts',async()=>{
   const db=await setupDatabase();
