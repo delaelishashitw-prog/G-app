@@ -8,8 +8,10 @@ export const WelfareStandingNotice: React.FC<{ standing: WelfareStanding }> = ({
       ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
       : 'border-amber-200 bg-amber-50 text-amber-900'}`}>
     <p className="font-bold">{standing.label}</p>
-    <p>{standing.arrearsCount === null ? 'Arrears cannot be assessed without a joining date or dues history.' :
+    <p>{standing.eligibility === 'not_enrolled' ? 'Arrears start only after the first welfare dues payment.' :
+      standing.arrearsCount === null ? 'Check the recorded payment dates before assessing arrears.' :
       `${standing.arrearsCount} unpaid month(s) through ${standing.assessedThrough}. ${standing.paidMonths.length} distinct month(s) paid.`}</p>
+    {standing.welfareJoiningDate && <p className="font-semibold">Welfare joining date: {standing.welfareJoiningDate} (first dues payment)</p>}
     {standing.startMonth && <p>Assessed from {standing.startMonth} ({standing.startBasis}); the current month is not overdue.</p>}
     {standing.isDefaulter && <p>Applications remain open. The Welfare Committee must decide and approve the partial benefit amount.</p>}
     {standing.arrearsMonths.length > 0 && <details>

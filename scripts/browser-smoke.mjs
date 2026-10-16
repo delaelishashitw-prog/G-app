@@ -37,12 +37,13 @@ try{
   const today=new Date();
   const month=offset=>new Date(Date.UTC(today.getUTCFullYear(),today.getUTCMonth()+offset,1)).toISOString().slice(0,7);
   const data={members:[
-    {...sampleMembers[0],id:'qa-member',first_name:'QA',last_name:'Member',member_id:'GWCC-900001',auth_user_id:null,membership_date:`${month(-6)}-01`,is_archived:false},
-    {...sampleMembers[0],id:'qa-current',first_name:'QA',last_name:'Current',member_id:'GWCC-900002',auth_user_id:null,membership_date:`${month(-5)}-01`,is_archived:false},
-    {...sampleMembers[0],id:'qa-new',first_name:'QA',last_name:'New',member_id:'GWCC-900003',auth_user_id:null,membership_date:`${month(0)}-01`,is_archived:false},
+    {...sampleMembers[0],id:'qa-member',first_name:'QA',last_name:'Member',member_id:'GWCC-900001',auth_user_id:null,membership_date:'2004-01-10',is_archived:false},
+    {...sampleMembers[0],id:'qa-current',first_name:'QA',last_name:'Current',member_id:'GWCC-900002',auth_user_id:null,membership_date:'2004-01-10',is_archived:false},
+    {...sampleMembers[0],id:'qa-new',first_name:'QA',last_name:'New',member_id:'GWCC-900003',auth_user_id:null,membership_date:'2004-01-10',is_archived:false},
+    {...sampleMembers[0],id:'qa-first-payment',first_name:'QA',last_name:'First Payment',member_id:'GWCC-900004',auth_user_id:null,membership_date:'2004-01-10',is_archived:false},
   ],settings:[{id:'gwcc_global_settings',...initialSettings}],profiles:[profile]};
-  const receipt=(id,memberId,offset,amount)=>({id,member_id:memberId,member_name:memberId==='qa-member'?'QA Member':'QA Current',amount,date:`${month(0)}-15`,month:month(offset),payment_method:'cash',recorded_by:'QA',created_at:`${month(0)}-15T00:00:00Z`});
-  data.welfare_contributions=[receipt('qa-1','qa-member',-6,10000),receipt('qa-2','qa-member',-5,400),receipt('qa-3','qa-member',-4,360),receipt('qa-duplicate','qa-member',-4,95),receipt('qa-prepaid','qa-member',2,10),...[-5,-4,-3].map((offset,index)=>receipt(`qa-current-${index}`,'qa-current',offset,10))];
+  const receipt=(id,memberId,offset,amount)=>({id,member_id:memberId,member_name:data.members.find(member=>member.id===memberId).first_name+' '+data.members.find(member=>member.id===memberId).last_name,amount,date:`${month(Math.min(offset,0))}-01`,month:month(offset),payment_method:'cash',recorded_by:'QA',created_at:`${month(0)}-15T00:00:00Z`});
+  data.welfare_contributions=[receipt('qa-1','qa-member',-6,10000),receipt('qa-2','qa-member',-5,400),receipt('qa-3','qa-member',-4,350),receipt('qa-duplicate','qa-member',-4,95),{...receipt('qa-prepaid','qa-member',2,10),date:`${month(0)}-01`},...[-5,-4,-3].map((offset,index)=>receipt(`qa-current-${index}`,'qa-current',offset,10)),{...receipt('qa-first','qa-first-payment',0,10),date:today.toISOString().slice(0,10)}];
   data.welfare_claims=[];
   const context=await browser.newContext({viewport:{width:1440,height:1000}});
   await context.addInitScript(({session})=>{localStorage.setItem('gwcc_supabase_url','https://gwcc-e2e.supabase.co');localStorage.setItem('gwcc_supabase_anon_key','test-public-key');localStorage.setItem('gwcc-church-auth-token',JSON.stringify(session));},{session});
@@ -96,15 +97,20 @@ try{
       const defaulter=page.getByRole('row').filter({has:page.getByText('QA Member',{exact:true})});
       await defaulter.getByText('Defaulter — Partially eligible',{exact:true}).waitFor();
       await defaulter.getByText(`3 unpaid month(s) through ${month(-1)}. 3 distinct month(s) paid.`,{exact:true}).waitFor();
+      await defaulter.getByText(`Welfare joining date: ${month(-6)}-01 (first dues payment)`,{exact:true}).waitFor();
       await defaulter.getByText('View unpaid months',{exact:true}).click();
       await defaulter.getByText([month(-3),month(-2),month(-1)].join(', '),{exact:true}).waitFor();
       await page.getByRole('row').filter({has:page.getByText('QA Current',{exact:true})}).getByText('Fully eligible',{exact:true}).waitFor();
-      await page.getByRole('row').filter({has:page.getByText('QA New',{exact:true})}).getByText('Probation — Committee review',{exact:true}).waitFor();
+      await page.getByRole('row').filter({has:page.getByText('QA New',{exact:true})}).getByText('Not enrolled — No welfare payment',{exact:true}).waitFor();
+      const firstPayment=page.getByRole('row').filter({has:page.getByText('QA First Payment',{exact:true})});
+      await firstPayment.getByText('Probation — Committee review',{exact:true}).waitFor();
+      await firstPayment.getByText(`Welfare joining date: ${today.toISOString().slice(0,10)} (first dues payment)`,{exact:true}).waitFor();
+      await firstPayment.getByText(`0 unpaid month(s) through ${month(-1)}. 1 distinct month(s) paid.`,{exact:true}).waitFor();
       await page.getByRole('button',{name:'Show defaulters',exact:true}).click();
       assert.equal(await page.getByRole('row').filter({has:page.getByText('QA Current',{exact:true})}).count(),0);
       const downloadPromise=page.waitForEvent('download');await page.getByRole('button',{name:'Export CSV',exact:true}).click();
       const download=await downloadPromise;const chunks=[];for await(const chunk of await download.createReadStream())chunks.push(chunk);
-      const csv=Buffer.concat(chunks).toString('utf8');assert.match(csv,/Defaulter — Partially eligible/);assert.match(csv,/Unpaid Completed Months/);assert.match(csv,new RegExp(month(-3)));assert.ok(!csv.includes('QA Current'));
+      const csv=Buffer.concat(chunks).toString('utf8');assert.match(csv,/Defaulter — Partially eligible/);assert.match(csv,/Unpaid Completed Months/);assert.match(csv,/Welfare Joining Date \(First Payment\)/);assert.match(csv,new RegExp(`${month(-6)}-01`));assert.match(csv,new RegExp(month(-3)));assert.ok(!csv.includes('QA Current'));
 
       await page.getByRole('button',{name:'Apply for Relief Aid',exact:true}).click();
       const application=page.getByRole('dialog',{name:'Apply for Benevolence Aid'});
@@ -143,8 +149,12 @@ try{
       await page.getByRole('button',{name:'Open Staff Preview',exact:true}).click();
       await page.getByText('Defaulter — Partially eligible',{exact:true}).waitFor();
       await page.getByText(`3 unpaid month(s) through ${month(-1)}. 3 distinct month(s) paid.`,{exact:true}).waitFor();
+      await page.getByText(`Welfare joining date: ${month(-6)}-01 (first dues payment)`,{exact:true}).waitFor();
       await page.selectOption('#staff-preview-select','qa-current');
       await page.getByText('Fully eligible',{exact:true}).waitFor();
+      await page.selectOption('#staff-preview-select','qa-new');
+      await page.getByText('Not enrolled — No welfare payment',{exact:true}).waitFor();
+      await page.getByText('Arrears start only after the first welfare dues payment.',{exact:true}).waitFor();
     }
   }
   await page.getByLabel('Title',{exact:true}).fill('QA saved draft');
