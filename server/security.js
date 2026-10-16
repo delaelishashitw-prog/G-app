@@ -12,7 +12,7 @@ export function serverSupabaseConfig() {
   return { url, key };
 }
 
-export async function authorizeRequest(req, { roles, bucket = 'ai' } = {}, dependencies = {}) {
+export async function authorizeRequest(req, { roles, bucket = 'ai', allowedOrigins = [] } = {}, dependencies = {}) {
   const config = serverSupabaseConfig();
   const auth = req.headers?.authorization || '';
   const match = /^Bearer ([^\s]+)$/i.exec(auth);
@@ -24,13 +24,13 @@ export async function authorizeRequest(req, { roles, bucket = 'ai' } = {}, depen
   const { data, error } = await client.auth.getUser(match[1]);
   if (error || !data.user?.email_confirmed_at) throw new HttpError(401, 'Your session is invalid or expired.');
   const { data: profile, error: profileError } = await client.from('profiles').select('*').eq('id', data.user.id).single();
-  if (profileError || profile?.id !== data.user.id || profile.is_active !== true || profile.has_login_account === false || (profile.role!=='member' && !profile.authorization_reviewed_at)) {
+  if (profileError || profile?.id !== data.user.id || profile.is_active !== true || profile.has_login_account !== true || (profile.role!=='member' && !profile.authorization_reviewed_at)) {
     throw new HttpError(403, 'This account is not authorized.');
   }
   if (roles && !roles.includes(profile.role)) throw new HttpError(403, 'Your role cannot perform this action.');
   const origin = req.headers?.origin;
   if (origin) {
-    const configured = (process.env.ALLOWED_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean);
+    const configured = [...(process.env.ALLOWED_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean),...allowedOrigins];
     const requestHost = req.headers?.host;
     let sameHost=false;
     try {sameHost=Boolean(requestHost && new URL(origin).host===requestHost);} catch {throw new HttpError(403,'This origin is not allowed.');}

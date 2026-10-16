@@ -3,3 +3,8 @@
 # also supports current asymmetric user JWTs, rather than the legacy gateway.
 verify_jwt = false
 entrypoint = "./functions/gwcc-staff/index.js"
+
+[functions.gwcc-sms]
+# The handler validates Auth getUser, reviewed staff roles, origin and quotas.
+verify_jwt = false
+entrypoint = "./functions/gwcc-sms/index.js"

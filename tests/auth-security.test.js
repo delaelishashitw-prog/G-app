@@ -84,6 +84,7 @@ test('both AI deployments share a guard that rejects missing tokens, wrong roles
   await assert.rejects(authorizeRequest({headers:{}},{roles:['administrator']},deps()),error=>error.status===401);
   await assert.rejects(authorizeRequest(req,{roles:['administrator']},deps()),error=>error.status===403);
   await assert.rejects(authorizeRequest(req,{roles:['administrator']},deps({record:{...staff,is_active:false}})),error=>error.status===403);
+  await assert.rejects(authorizeRequest(req,{roles:['administrator']},deps({record:{...staff,has_login_account:null}})),error=>error.status===403);
   await assert.rejects(authorizeRequest(req,{roles:['administrator']},deps({record:staff,authUser:{...user,email_confirmed_at:null}})),error=>error.status===401);
   await assert.rejects(authorizeRequest({...req,headers:{...req.headers,origin:'https://untrusted.example.test'}},{roles:['administrator']},deps({record:staff})),error=>error.status===403);
   await assert.rejects(authorizeRequest(req,{roles:['administrator']},deps({record:staff,allowed:false})),error=>error.status===429);

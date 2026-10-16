@@ -565,3 +565,84 @@ test('communication draft RLS matches page permissions while ordinary members an
     await db.exec('SET ROLE anon');await assert.rejects(db.query('SELECT * FROM public.communications'),/permission denied/);await db.exec('RESET ROLE');
   }finally{await db.close();}
 });
+
+const smsPreview=(db,draft)=>db.query('SELECT public.gwcc_sms_preview($1,$2) AS result',[draft.id,draft.updated_at]).then(r=>r.rows[0].result);
+async function smsService(db,fn){await db.exec('SET ROLE service_role');try{return await fn();}finally{await db.exec('RESET ROLE');}}
+const smsClaim=(db,draft,preview,changes={})=>{
+ const input={actor:root,id:operation(),draft:draft?.id||null,version:draft?.updated_at||null,digest:preview?.digest||null,sender:'GWCC',phone:null,segments:1,...changes};
+ return db.query('SELECT public.gwcc_sms_claim($1,$2,$3,$4,$5,$6,$7,$8) AS result',[input.actor,input.id,input.draft,input.version,input.digest,input.sender,input.phone,input.segments]).then(r=>r.rows[0].result);
+};
+test('SMS audience claims recheck protected roles, current contacts, draft versions and sender; immutable claims prevent duplicate sends',async()=>{
+ const db=await setupDatabase();try{
+  let draft,preview;
+  await asUser(db,root,async()=>{
+   await apply(db,[upsert('members',{id:'sms-a',first_name:'One',last_name:'Synthetic',phone:'0240000001',status:'active'}),upsert('members',{id:'sms-b',first_name:'Duplicate',last_name:'Synthetic',phone:'+233240000001',status:'active'}),upsert('members',{id:'sms-c',first_name:'Foreign',last_name:'Synthetic',phone:'+12025550100',status:'active'}),upsert('members',{id:'sms-d',first_name:'Inactive',last_name:'Synthetic',phone:'0240000002',status:'inactive'})]);
+   draft=(await apply(db,[upsert('communications',{id:'sms-draft',title:'Synthetic SMS',message:'Synthetic only',channel:'sms',recipient_type:'all_members',recipient_ids:[],recipient_count:0,sender_id:'GWCC'})])).rows[0].result[0].record;
+   preview=await smsPreview(db,draft);assert.deepEqual(preview.recipients.map(row=>row.phone),['233240000001']);assert.equal(preview.excluded.length,1);
+   await assert.rejects(smsPreview(db,{...draft,updated_at:'2000-01-01T00:00:00Z'}),/cloud confirmation/);
+   await assert.rejects(smsClaim(db,draft,preview),/permission denied/);await assert.rejects(db.query('SELECT * FROM gwcc_private.sms_dispatches'),/permission denied/);
+  });
+  await smsService(db,async()=>{
+   await assert.rejects(smsClaim(db,draft,preview,{actor:member}),/role cannot send/);
+   await assert.rejects(smsClaim(db,draft,preview,{sender:'Forged'}),/approved configured sender/);
+   await assert.rejects(smsClaim(db,draft,preview,{digest:'forged'}),/phone numbers changed/);
+   const id=operation(),first=await smsClaim(db,draft,preview,{id});assert.equal(first.created,true);assert.equal(first.dispatch.actor_id,root);
+   assert.equal((await smsClaim(db,draft,preview,{id})).created,false);
+   assert.equal((await smsClaim(db,draft,preview)).dispatch.id,id);
+   await assert.rejects(smsClaim(db,draft,preview,{id,segments:2}),/reused with different data/);
+   const outcomes=[{phone:'233240000001',provider_id:'provider-id-synthetic',status:'accepted'}];
+   const finished=(await db.query('SELECT public.gwcc_sms_finish($1,$2,$3) AS result',[id,'submitted',JSON.stringify(outcomes)])).rows[0].result;
+   assert.equal(finished.outcomes[0].status,'accepted');assert.equal(finished.snapshot.message,'Synthetic only');
+   const updated=(await db.query('SELECT public.gwcc_sms_reports($1,$2,$3) AS result',[root,id,JSON.stringify([{provider_id:'provider-id-synthetic',phone:'233240000001',status:'delivered'}])])).rows[0].result;
+   assert.equal(updated.outcomes[0].status,'delivered');
+   const unchanged=(await db.query('SELECT public.gwcc_sms_reports($1,$2,$3) AS result',[root,id,JSON.stringify([{provider_id:'provider-id-synthetic',phone:'233240000001',status:'accepted'}])])).rows[0].result;
+   assert.equal(unchanged.outcomes[0].status,'delivered');assert.deepEqual(unchanged.snapshot,finished.snapshot);
+  });
+  assert.equal((await db.query("SELECT status FROM public.communications WHERE id='sms-draft'")).rows[0].status,'draft');
+  await db.exec("UPDATE public.members SET phone='0240000009' WHERE id='sms-a'");
+  await smsService(db,async()=>await assert.rejects(smsClaim(db,draft,preview),/phone numbers changed|audience changed/));
+  const histories=await asUser(db,root,async()=>(await db.query('SELECT public.gwcc_sms_history() AS result')).rows[0].result);
+  assert.equal(histories.length,1);assert.equal(histories[0].request_hash,undefined);
+  for(const role of ['administrator','senior_pastor','pastor','ministry_leader','attendance_officer','finance_officer','data_entry','member']){
+   await db.query('UPDATE public.profiles SET role=$1,authorization_reviewed_at=now() WHERE id=$2',[role,member]);
+   await asUser(db,member,async()=>{
+    if(['administrator','senior_pastor','pastor','ministry_leader'].includes(role))assert.equal((await db.query('SELECT public.gwcc_sms_history() AS result')).rows[0].result.length,1);
+    else await assert.rejects(db.query('SELECT public.gwcc_sms_history()'),/role cannot read/);
+    if(!['administrator','senior_pastor'].includes(role))await assert.rejects(smsPreview(db,draft),/role cannot send/);
+    await assert.rejects(db.query("SELECT public.gwcc_sms_finish($1,'unknown','[]')",[histories[0].id]),/permission denied/);
+   });
+  }
+  await db.exec('SET ROLE anon');await assert.rejects(db.query('SELECT public.gwcc_sms_history()'),/permission denied/);await db.exec('RESET ROLE');
+  await asUser(db,root,async()=>{
+   const updated=(await apply(db,[upsert('communications',{...draft,message:'Updated after review'},draft.updated_at)])).rows[0].result[0].record;
+   await assert.rejects(smsPreview(db,draft),/cloud confirmation/);
+   const archived=(await apply(db,[upsert('communications',{...updated,archived_at:new Date().toISOString()},updated.updated_at)])).rows[0].result[0].record;
+   await assert.rejects(smsPreview(db,archived),/active SMS draft/);
+  });
+  await db.query("UPDATE public.profiles SET role='administrator',authorization_reviewed_at=NULL WHERE id=$1",[member]);
+  await asUser(db,member,async()=>await assert.rejects(db.query('SELECT public.gwcc_sms_history()'),/role cannot read/));
+ }finally{await db.close();}
+});
+test('SMS claims enforce test consent destinations and per-submission, daily and rate budgets without any network calls',async()=>{
+ const db=await setupDatabase();try{
+  await smsService(db,async()=>{
+   for(let i=0;i<3;i++)assert.equal((await smsClaim(db,null,null,{phone:'0240000001'})).created,true);
+   await assert.rejects(smsClaim(db,null,null,{phone:'0240000001'}),/three-test daily/);
+   await assert.rejects(smsClaim(db,null,null,{phone:'+12025550100'}),/valid Ghana mobile/);
+   await assert.rejects(smsClaim(db,null,null,{phone:'0240000002',segments:2}),/one valid Ghana/);
+   await smsClaim(db,null,null,{phone:'0240000002'});await smsClaim(db,null,null,{phone:'0240000002'});
+   await assert.rejects(smsClaim(db,null,null,{phone:'0240000003'}),/Too many SMS submissions/);
+  });
+  await db.exec('DELETE FROM gwcc_private.sms_dispatches');
+  let draft,preview;
+  await asUser(db,root,async()=>{
+   await apply(db,Array.from({length:60},(_,i)=>upsert('members',{id:'budget-sms-'+i,first_name:'Synthetic',last_name:String(i),phone:'024'+String(i).padStart(7,'0'),status:'active'})));
+   draft=(await apply(db,[upsert('communications',{id:'budget-draft',title:'Budget',message:'a'.repeat(1000),channel:'sms',recipient_type:'all_members',recipient_ids:[],recipient_count:0,sender_id:'GWCC'})])).rows[0].result[0].record;preview=await smsPreview(db,draft);
+  });
+  await smsService(db,async()=>await assert.rejects(smsClaim(db,draft,preview,{segments:10}),/500-segment/));
+  const snapshot=JSON.stringify({recipients:[{phone:'233240000001'}],is_test:false});
+  await db.query("INSERT INTO gwcc_private.sms_dispatches(id,actor_id,request_hash,snapshot,estimated_units,created_at) VALUES($1,$2,'daily',$3,500,now()-interval '2 hours'),($4,$2,'daily2',$3,500,now()-interval '1 hour')",[operation(),root,snapshot,operation()]);
+  await smsService(db,async()=>await assert.rejects(smsClaim(db,null,null,{phone:'0240000002'}),/1,000-segment daily/));
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM public.church_finances')).rows[0].n,0);
+ }finally{await db.close();}
+});
