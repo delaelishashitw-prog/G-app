@@ -3,6 +3,7 @@ import { X, UserPlus, Sparkles, MapPin, Phone, User, HeartHandshake, Check } fro
 import { GenderType, VisitorStatus } from '../../types/database.types';
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { useToast } from '../../contexts/ToastContext';
+import { cleanGhanaPhone } from '../../lib/currencyUtils';
 
 interface QuickAddVisitorModalProps {
   isOpen: boolean;
@@ -21,7 +22,7 @@ export const QuickAddVisitorModal: React.FC<QuickAddVisitorModalProps> = ({
   date,
   onVisitorAddedAndCheckedIn,
 }) => {
-  const { addVisitor, recordAttendance } = useChurchData();
+  const { registerVisitorAndCheckIn } = useChurchData();
   const { success, error } = useToast();
 
   const [formData, setFormData] = useState({
@@ -44,14 +45,19 @@ export const QuickAddVisitorModal: React.FC<QuickAddVisitorModalProps> = ({
       error('Full Name and Phone Number are required.');
       return;
     }
+    const phone = cleanGhanaPhone(formData.phone);
+    if (!/^233\d{9}$/.test(phone)) {
+      error('Enter a valid Ghana phone number, for example 024 123 4567.');
+      return;
+    }
 
     setIsSubmitting(true);
     try {
       // 1. Add Visitor to Church database
-      const newVisitor = addVisitor({
+      const newVisitor = registerVisitorAndCheckIn({
         full_name: formData.full_name.trim(),
         gender: formData.gender,
-        phone: formData.phone.trim(),
+        phone,
         address: formData.address.trim() || undefined,
         gps_address: formData.gps_address.trim() || undefined,
         visit_date: date,
@@ -60,10 +66,7 @@ export const QuickAddVisitorModal: React.FC<QuickAddVisitorModalProps> = ({
         prayer_request: formData.prayer_request.trim() || undefined,
         follow_up_status: 'new' as VisitorStatus,
         notes: `Registered via Attendance Terminal for ${serviceName} on ${date}`,
-      });
-
-      // 2. Check into service attendance immediately
-      const attRes = recordAttendance(serviceId, 'visitor', newVisitor.id, 'manual', date);
+      }, serviceId, date);
 
       success(`Welcome ${newVisitor.full_name}! Registered and checked in successfully.`);
       setFormData({
@@ -80,15 +83,14 @@ export const QuickAddVisitorModal: React.FC<QuickAddVisitorModalProps> = ({
       }
       onClose();
     } catch (err) {
-      console.error(err);
-      error('Failed to register visitor.');
+      error(err instanceof Error ? err.message : 'Failed to register visitor.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in">
+    <div role="dialog" aria-modal="true" aria-label="Register and check in visitor" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in">
       <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-lg w-full overflow-hidden animate-in zoom-in-95">
         {/* Header */}
         <div className="bg-gradient-to-r from-teal-700 to-emerald-800 p-5 text-white flex items-center justify-between">
@@ -104,6 +106,7 @@ export const QuickAddVisitorModal: React.FC<QuickAddVisitorModalProps> = ({
             </div>
           </div>
           <button
+            aria-label="Close visitor registration"
             onClick={onClose}
             className="p-1.5 rounded-lg text-teal-200 hover:text-white hover:bg-white/10 transition"
           >
@@ -121,6 +124,7 @@ export const QuickAddVisitorModal: React.FC<QuickAddVisitorModalProps> = ({
               type="text"
               required
               placeholder="e.g. Sister Mercy Afriyie"
+              aria-label="Visitor full name"
               value={formData.full_name}
               onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
               className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-teal-600 font-medium"
@@ -137,6 +141,7 @@ export const QuickAddVisitorModal: React.FC<QuickAddVisitorModalProps> = ({
                 type="tel"
                 required
                 placeholder="e.g. 024 123 4567"
+                aria-label="Visitor phone number"
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-teal-600 font-medium"

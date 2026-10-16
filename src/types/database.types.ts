@@ -241,6 +241,7 @@ export interface AttendanceRecord {
   check_in_method: 'manual' | 'search' | 'qr_code' | 'mobile';
   status: 'present' | 'absent' | 'excused';
   recorded_by?: string;
+  updated_at?: string;
 }
 
 export interface HeadcountRecord {
@@ -259,6 +260,7 @@ export interface HeadcountRecord {
   notes?: string;
   counted_by?: string;
   created_at?: string;
+  updated_at?: string;
 }
 
 export interface GivingRecord {

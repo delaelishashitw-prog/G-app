@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   X,
   Search,
@@ -16,17 +16,18 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { Member, Visitor, ChurchService, ChurchSettings } from '../../types/database.types';
+import { attendeeKey, matchesAttendeeSearch } from '../../features/attendance/attendanceInsights';
 
 interface AttendanceKioskModalProps {
   isOpen: boolean;
   onClose: () => void;
-  service: ChurchService;
+  service?: ChurchService;
   date: string;
   members: Member[];
   visitors: Visitor[];
   settings?: ChurchSettings;
   alreadyCheckedInIds: Set<string>;
-  onCheckIn: (personType: 'member' | 'visitor', personId: string) => void;
+  onCheckIn: (personType: 'member' | 'visitor', personId: string) => { success: boolean; message: string };
   onOpenQuickVisitorModal: () => void;
 }
 
@@ -48,10 +49,11 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
     type: 'member' | 'visitor';
     id: string;
   } | null>(null);
-  const [isLocked, setIsLocked] = useState(true);
-  const [pinPrompt, setPinPrompt] = useState(false);
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState(false);
+  const welcomeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!isOpen) { setSearchTerm(''); setWelcomeBanner(null); }
+    return () => { if (welcomeTimer.current) clearTimeout(welcomeTimer.current); };
+  }, [isOpen]);
 
   // Filter matching members and visitors
   const searchResults = useMemo(() => {
@@ -60,13 +62,7 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
 
     const matchedMembers = members
       .filter((m) => !m.is_archived)
-      .filter(
-        (m) =>
-          (m.first_name || '').toLowerCase().includes(term) ||
-          (m.last_name || '').toLowerCase().includes(term) ||
-          (m.member_id || '').toLowerCase().includes(term) ||
-          (m.phone && m.phone.includes(term))
-      )
+      .filter(m => matchesAttendeeSearch(m, term))
       .slice(0, 8)
       .map((m) => ({
         id: m.id,
@@ -74,11 +70,11 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
         subtitle: `${m.member_id} • ${m.phone}`,
         type: 'member' as const,
         photo: m.profile_photo_url,
-        isCheckedIn: alreadyCheckedInIds.has(m.id),
+        isCheckedIn: alreadyCheckedInIds.has(attendeeKey('member', m.id)),
       }));
 
     const matchedVisitors = visitors
-      .filter((v) => v.full_name.toLowerCase().includes(term) || (v.phone && v.phone.includes(term)))
+      .filter(v => matchesAttendeeSearch(v, term))
       .slice(0, 4)
       .map((v) => ({
         id: v.id,
@@ -86,40 +82,29 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
         subtitle: `Visitor • ${v.phone}`,
         type: 'visitor' as const,
         photo: undefined,
-        isCheckedIn: alreadyCheckedInIds.has(v.id),
+        isCheckedIn: alreadyCheckedInIds.has(attendeeKey('visitor', v.id)),
       }));
 
     return [...matchedMembers, ...matchedVisitors];
   }, [searchTerm, members, visitors, alreadyCheckedInIds]);
 
   const handlePerformCheckIn = (type: 'member' | 'visitor', id: string, name: string) => {
-    onCheckIn(type, id);
+    const result = onCheckIn(type, id);
+    if (!result.success) return;
     setWelcomeBanner({ name, type, id });
     setSearchTerm('');
 
     // Clear welcome banner after 4.5 seconds
-    setTimeout(() => {
+    if (welcomeTimer.current) clearTimeout(welcomeTimer.current);
+    welcomeTimer.current = setTimeout(() => {
       setWelcomeBanner((prev) => (prev?.id === id ? null : prev));
     }, 4500);
-  };
-
-  const handleUnlockAttempt = () => {
-    // Standard kiosk exit code: 1234 or gwcc
-    if (pinInput === '1234' || pinInput.toLowerCase() === 'gwcc') {
-      setIsLocked(false);
-      setPinPrompt(false);
-      setPinInput('');
-      onClose();
-    } else {
-      setPinError(true);
-      setTimeout(() => setPinError(false), 2000);
-    }
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950 text-white flex flex-col justify-between overflow-hidden animate-in fade-in duration-200">
+    <div role="dialog" aria-modal="true" aria-label="Staff check-in screen" className="fixed inset-0 z-50 bg-slate-950 text-white flex flex-col justify-between overflow-hidden animate-in fade-in duration-200">
       {/* Kiosk Header */}
       <header className="p-6 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -134,7 +119,7 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
             <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2">
               {settings?.church_name || 'Church Sanctuary'}
               <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-teal-500/20 text-teal-300 border border-teal-500/30">
-                Self Check-In Kiosk
+                Staff Check-In Screen
               </span>
             </h1>
             <p className="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
@@ -146,48 +131,9 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
           </div>
         </div>
 
-        {/* Exit / Admin Lock */}
-        <div>
-          {pinPrompt ? (
-            <div className="flex flex-col items-end gap-1">
-              <div className="flex items-center gap-2 bg-slate-800 p-1.5 rounded-xl border border-slate-700 animate-in slide-in-from-right">
-                <input
-                  type="password"
-                  placeholder="PIN (1234)"
-                  value={pinInput}
-                  onChange={(e) => setPinInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleUnlockAttempt()}
-                  className={`w-32 px-2.5 py-1 text-xs bg-slate-900 border rounded-lg text-white font-mono text-center focus:outline-none ${
-                    pinError ? 'border-rose-500' : 'border-slate-700'
-                  }`}
-                  autoFocus
-                />
-                <button
-                  onClick={handleUnlockAttempt}
-                  className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-xs font-bold rounded-lg transition"
-                >
-                  Exit
-                </button>
-                <button
-                  onClick={() => setPinPrompt(false)}
-                  className="p-1 text-slate-400 hover:text-white"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <span className="text-[10px] text-slate-400 font-mono">Default PIN: 1234 or gwcc</span>
-            </div>
-          ) : (
-            <button
-              onClick={() => setPinPrompt(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition border border-slate-800"
-              title="Exit Kiosk Mode"
-            >
-              <Lock className="w-3.5 h-3.5" />
-              <span>Exit Kiosk</span>
-            </button>
-          )}
-        </div>
+        <button onClick={onClose} aria-label="Return to attendance" className="px-3 py-2 rounded-xl text-xs font-bold border border-slate-600 hover:bg-slate-800">
+          Return to Attendance
+        </button>
       </header>
 
       {/* Main Interactive Touch Area */}
@@ -212,7 +158,7 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
               <Sparkles className="w-3.5 h-3.5" /> Welcome to God&apos;s Presence
             </span>
             <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-white">
-              Check In For Service
+              Staff-Assisted Check-In
             </h2>
             <p className="text-sm sm:text-base text-slate-400 max-w-md mx-auto">
               Enter your phone number, first or last name, or Member ID to check in.
@@ -263,7 +209,7 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {searchResults.map((item) => (
                     <div
-                      key={item.id}
+                      key={attendeeKey(item.type, item.id)}
                       className={`p-4 rounded-2xl border flex items-center justify-between transition ${
                         item.isCheckedIn
                           ? 'bg-slate-800/40 border-slate-800 opacity-70'

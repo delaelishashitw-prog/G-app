@@ -1,6 +1,13 @@
 import type { ChurchService } from '../../types/database.types';
 
 export const SERVICE_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+export function isArchivedServiceReference(service: { is_active?: boolean; day_of_week: string; start_time: string; end_time: string }): boolean {
+  return service.is_active === false && !service.day_of_week && !service.start_time && !service.end_time;
+}
+export function serviceScheduleLabel(service: ChurchService): string {
+  return isArchivedServiceReference(service) ? 'Archived history · original schedule unavailable'
+    : `${service.day_of_week}s · ${service.start_time} - ${service.end_time} GMT`;
+}
 export function programDurationSeconds(value?: string): number {
   const hours = value?.match(/(\d+)\s*h(?:ours?)?/i);
   const minutes = value?.match(/(\d+)\s*m(?:in(?:utes?)?)?/i);
@@ -40,11 +47,12 @@ export function upcomingService(services: readonly ChurchService[], now = new Da
   return { ...next, countdownText };
 }
 
-export function validateService(data: Pick<ChurchService, 'name' | 'day_of_week' | 'start_time' | 'end_time' | 'expected_attendance'>): string | null {
+export function validateService(data: Pick<ChurchService, 'name' | 'day_of_week' | 'start_time' | 'end_time' | 'expected_attendance'> & { is_active?: boolean }): string | null {
   if (!data.name.trim()) return 'Enter a service name.';
+  if (data.expected_attendance != null && (!Number.isInteger(data.expected_attendance) || data.expected_attendance < 0)) return 'Expected attendance must be a whole number of zero or more.';
+  if (isArchivedServiceReference(data)) return null;
   if (!SERVICE_DAYS.includes(data.day_of_week)) return 'Choose a valid day of the week.';
   const start = serviceTimeMinutes(data.start_time), end = serviceTimeMinutes(data.end_time);
   if (start === null || end === null || start === end) return 'Enter valid, different start and end times. Overnight services may end the following day.';
-  if (data.expected_attendance != null && (!Number.isInteger(data.expected_attendance) || data.expected_attendance < 0)) return 'Expected attendance must be a whole number of zero or more.';
   return null;
 }

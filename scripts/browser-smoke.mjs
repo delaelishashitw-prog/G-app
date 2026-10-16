@@ -3,6 +3,7 @@ import {spawn} from 'node:child_process';
 import {chromium} from 'playwright';
 import {initialSettings,sampleMembers} from '../src/lib/initialData.ts';
 import {serviceFixtures,checkServices} from './services-browser-checks.mjs';
+import {attendanceFixtures,checkAttendance} from './attendance-browser-checks.mjs';
 
 const port=Number(process.env.TEST_PORT||3401),origin=`http://127.0.0.1:${port}`;
 const child=spawn(process.execPath,['--import','tsx','server.ts'],{cwd:process.cwd(),env:{...process.env,NODE_ENV:'production',PORT:String(port),SUPABASE_URL:'https://gwcc-e2e.supabase.co',SUPABASE_ANON_KEY:'test-public-key'},stdio:'pipe'});
@@ -62,8 +63,8 @@ try{
       assert.equal(request.headers().authorization,`Bearer ${token}`);
       const body=request.postDataJSON();mutationRequests.push(body);
       if(rejectWrites){await route.fulfill({status:503,headers,body:JSON.stringify({message:'Test cloud unavailable; changes retained.'})});return;}
-      result=body.p_changes.filter(change=>change.table!=='audit_logs').map(change=>({table:change.table,record:{...change.record,updated_at:new Date().toISOString()}}));
-      for(const item of result){data[item.table]??=[];data[item.table]=[item.record,...data[item.table].filter(row=>row.id!==item.record.id)];}
+      result=body.p_changes.filter(change=>change.table!=='audit_logs').map(change=>change.operation==='delete'?{table:change.table,id:change.id,deleted:true}:{table:change.table,record:{...change.record,updated_at:new Date().toISOString()}});
+      for(const item of result){data[item.table]??=[];data[item.table]=item.deleted?data[item.table].filter(row=>row.id!==item.id):[item.record,...data[item.table].filter(row=>row.id!==item.record.id)];}
     }else if(url.pathname.startsWith('/rest/v1/')){
       const table=url.pathname.split('/').at(-1);const rows=data[table]||[];
       const range=request.headers().range?.split('-').map(Number);const offset=Number(url.searchParams.get('offset')||range?.[0]||0),limit=Number(url.searchParams.get('limit')||500);
@@ -73,11 +74,14 @@ try{
     await route.fulfill({status:200,headers,body:JSON.stringify(result)});
   });
   const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
-  const pages=['/','/members','/giving','/church-finance','/welfare','/pledges','/services','/reports','/users','/settings','/inventory','/pastoral-care','/communication'];
+  const pages=['/','/members','/giving','/church-finance','/welfare','/pledges','/services','/attendance','/reports','/users','/settings','/inventory','/pastoral-care','/communication'];
+  let attendanceFixture;
   for(const path of pages){
+    if(path==='/attendance'){attendanceFixture=attendanceFixtures(today,data.members);Object.assign(data,attendanceFixture.tables);}
     await page.goto(`${origin}${path}`);await page.locator('main').waitFor();await page.waitForTimeout(100);
     assert.ok(!new URL(page.url()).pathname.startsWith('/login'),`Authenticated route failed: ${path}`);
     if(path==='/services')await checkServices(page,{origin,data,profile,mutations:mutationRequests,setRejectWrites:value=>{rejectWrites=value;},userId:id,clock:serviceFixture.clock});
+    if(path==='/attendance')await checkAttendance(page,{origin,data,profile,mutations:mutationRequests,setRejectWrites:value=>{rejectWrites=value;},userId:id,date:attendanceFixture.date,previous:attendanceFixture.previous});
     if(path==='/welfare'){
       const balanceCard=()=>page.getByText('Welfare Dues Balance',{exact:true}).locator('..').locator('..');
       await balanceCard().getByText('GH₵ 10,895.00',{exact:true}).waitFor();

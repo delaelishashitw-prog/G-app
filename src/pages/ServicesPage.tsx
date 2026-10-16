@@ -55,7 +55,7 @@ import {
 } from '../types/database.types';
 import { cleanGhanaPhone } from '../lib/currencyUtils';
 import { buildServiceInsights, countCheckins, resolveServiceId } from '../features/services/serviceInsights';
-import { upcomingService } from '../features/services/serviceSchedule';
+import { upcomingService, isArchivedServiceReference, serviceScheduleLabel } from '../features/services/serviceSchedule';
 
 // Modals
 import { ServiceFormModal } from '../components/services/ServiceFormModal';
@@ -68,7 +68,7 @@ import { LiveStageRunnerModal } from '../components/services/LiveStageRunnerModa
 import { ShareScheduleModal } from '../components/services/ShareScheduleModal';
 import { BroadcastRosterModal } from '../components/services/BroadcastRosterModal';
 
-const DAYS_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DAYS_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Archived History'];
 
 export const ServicesPage: React.FC = () => {
   const {
@@ -241,7 +241,7 @@ export const ServicesPage: React.FC = () => {
 
     filteredServices.forEach((s) => {
       const rawDay = (s.day_of_week || '').trim();
-      const matchedDay = DAYS_ORDER.find((d) => d.toLowerCase() === rawDay.toLowerCase()) || 'Sunday';
+      const matchedDay = DAYS_ORDER.find((d) => d.toLowerCase() === rawDay.toLowerCase()) || 'Archived History';
       grouped[matchedDay].push(s);
     });
 
@@ -256,6 +256,10 @@ export const ServicesPage: React.FC = () => {
   const handleToggleActive = (s: ChurchService) => {
     if (!canManageServices) {
       warning('Access Denied', 'You do not have permissions to modify service statuses.');
+      return;
+    }
+    if (isArchivedServiceReference(s)) {
+      warning('Schedule required', 'Edit this archived service and enter its schedule before activating it.');
       return;
     }
     const updatedStatus = !s.is_active;
@@ -739,7 +743,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                         <div className="flex items-center gap-2 mt-1">
                           <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800 inline-flex items-center gap-1">
                             <Clock className="w-3 h-3 text-emerald-700 dark:text-emerald-400" />
-                            {svc.day_of_week}s • {svc.start_time} - {svc.end_time}
+                            {serviceScheduleLabel(svc)}
                           </span>
                           <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">
                             {svc.type}
@@ -974,7 +978,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                   <div className="flex items-center gap-2">
                     <span className={`w-3 h-3 rounded-full ${isToday ? 'bg-emerald-500 ring-4 ring-emerald-300/40 animate-pulse' : 'bg-emerald-700 dark:bg-emerald-500'}`}></span>
                     <h4 className="font-extrabold text-sm text-slate-900 dark:text-white uppercase tracking-wider">
-                      {day}s
+                      {day === 'Archived History' ? day : `${day}s`}
                     </h4>
                     {isToday && (
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-600 text-white">
@@ -994,7 +998,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-900 dark:text-white text-sm">{svc.name}</span>
                           <span className="font-mono text-xs font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/60 px-2 py-0.5 rounded">
-                            {svc.start_time} - {svc.end_time}
+                            {isArchivedServiceReference(svc) ? 'Archived history' : `${svc.start_time} - ${svc.end_time}`}
                           </span>
                         </div>
                         <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2">{svc.description}</p>
@@ -1063,7 +1067,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                     <div>
                       <h4 className="font-bold text-slate-900 dark:text-white text-sm">{svc.name}</h4>
                       <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                        {svc.day_of_week}s • {svc.start_time} - {svc.end_time} GMT
+                        {serviceScheduleLabel(svc)}
                       </span>
                     </div>
                     <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 text-[11px] font-bold">

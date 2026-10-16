@@ -1,6 +1,9 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { AttendanceRecord, ChurchService, HeadcountRecord, Member, Visitor } from '../../types/database.types';
 import { validateService } from '../services/serviceSchedule';
+import { attendanceSessionError, headcountError, headcountTotal } from './attendanceInsights';
+import { resolveServiceId } from '../services/serviceInsights';
+import { getChurchDateString, isValidDateString } from '../../lib/attendanceDateUtils';
 
 export function createService(
   data: Omit<ChurchService, 'id'>,
@@ -64,28 +67,32 @@ export function recordAttendance(
   method: 'manual' | 'search' | 'qr_code' = 'manual',
   customDate?: string
 ): { success: boolean; message: string } {
-  const targetDate = customDate || new Date().toISOString().split('T')[0];
+  const targetDate = customDate ?? getChurchDateString();
+  const targetService = services.find((s) => s.id === serviceId);
+  const sessionError = attendanceSessionError(targetService, targetDate);
+  if (sessionError) return { success: false, message: sessionError };
+  const member = personType === 'member' ? members.find((x) => x.id === personId && !x.is_archived) : undefined;
+  const visitor = personType === 'visitor' ? visitors.find((x) => x.id === personId) : undefined;
+  if (!member && !visitor) return { success: false, message: 'Choose an existing member or visitor.' };
 
-  const exists = attendance.some(
+  const existing = attendance.find(
     (a) =>
-      a.service_id === serviceId &&
+      resolveServiceId(a, services) === serviceId &&
       a.date === targetDate &&
       ((personType === 'member' && a.member_id === personId) ||
         (personType === 'visitor' && a.visitor_id === personId))
   );
 
-  if (exists) {
+  if (existing?.status === 'present') {
     return { success: false, message: 'Person already checked in for this service date.' };
   }
 
-  const targetService = services.find((s) => s.id === serviceId);
-  const serviceName = targetService ? targetService.name : 'Worship Service';
-  const member = personType === 'member' ? members.find((x) => x.id === personId) : undefined;
-  const visitor = personType === 'visitor' ? visitors.find((x) => x.id === personId) : undefined;
+  const serviceName = targetService!.name;
   const name = member ? `${member.first_name} ${member.last_name}` : visitor ? visitor.full_name : 'Attendee';
 
-  const newRecord: AttendanceRecord = {
-    id: `att-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+  const newRecord = {
+    ...existing,
+    id: existing?.id || crypto.randomUUID(),
     service_id: serviceId,
     service_name: serviceName,
     date: targetDate,
@@ -94,12 +101,15 @@ export function recordAttendance(
     visitor_id: personType === 'visitor' ? personId : undefined,
     visitor_name: visitor ? visitor.full_name : undefined,
     person_name: name,
+    person_type: personType,
     check_in_time: new Date().toISOString(),
     check_in_method: method,
     status: 'present',
-  };
+    updated_at: new Date().toISOString(),
+    _expected_updated_at: existing?.updated_at,
+  } satisfies AttendanceRecord & { _expected_updated_at?: string };
 
-  setAttendance((prev) => [newRecord, ...prev]);
+  setAttendance((prev) => [newRecord, ...prev.filter(row => row.id !== newRecord.id)]);
   dbSyncUpsert('attendance', newRecord);
   logAction('RECORD_ATTENDANCE', 'Attendance', `Checked in ${name} (${personType}) for ${targetDate}`, newRecord.id);
   return { success: true, message: `Checked in ${name} successfully!` };
@@ -118,29 +128,40 @@ export function batchRecordAttendance(
   dbSyncUpsert: (table: string, record: unknown) => void
 ): { added: number; skipped: number } {
   const targetService = services.find((s) => s.id === serviceId);
-  const serviceName = targetService ? targetService.name : 'Worship Service';
+  const sessionError = attendanceSessionError(targetService, date);
+  if (sessionError) throw new Error(sessionError);
+  if (items.some(item => item.personType === 'member'
+    ? !members.some(member => member.id === item.personId && !member.is_archived)
+    : item.personType !== 'visitor' || !visitors.some(visitor => visitor.id === item.personId))) {
+    throw new Error('Every attendee must be an existing member or visitor.');
+  }
+  const serviceName = targetService!.name;
   const newRecords: AttendanceRecord[] = [];
+  const seen = new Set<string>();
   let skipped = 0;
 
   items.forEach((item) => {
-    const exists = attendance.some(
+    const key = `${item.personType}:${item.personId}`;
+    const existing = attendance.find(
       (a) =>
-        a.service_id === serviceId &&
+        resolveServiceId(a, services) === serviceId &&
         a.date === date &&
         ((item.personType === 'member' && a.member_id === item.personId) ||
           (item.personType === 'visitor' && a.visitor_id === item.personId))
     );
-    if (exists) {
+    if (existing?.status === 'present' || seen.has(key)) {
       skipped++;
       return;
     }
+    seen.add(key);
 
     const member = item.personType === 'member' ? members.find((x) => x.id === item.personId) : undefined;
     const visitor = item.personType === 'visitor' ? visitors.find((x) => x.id === item.personId) : undefined;
     const name = member ? `${member.first_name} ${member.last_name}` : visitor ? visitor.full_name : 'Attendee';
 
-    const rec: AttendanceRecord = {
-      id: `att-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+    const rec = {
+      ...existing,
+      id: existing?.id || crypto.randomUUID(),
       service_id: serviceId,
       service_name: serviceName,
       date,
@@ -149,15 +170,19 @@ export function batchRecordAttendance(
       visitor_id: item.personType === 'visitor' ? item.personId : undefined,
       visitor_name: visitor ? visitor.full_name : undefined,
       person_name: name,
+      person_type: item.personType,
       check_in_time: new Date().toISOString(),
       check_in_method: item.method || 'manual',
       status: 'present',
-    };
+      updated_at: new Date().toISOString(),
+      _expected_updated_at: existing?.updated_at,
+    } satisfies AttendanceRecord & { _expected_updated_at?: string };
     newRecords.push(rec);
   });
 
   if (newRecords.length > 0) {
-    setAttendance((prev) => [...newRecords, ...prev]);
+    const replacedIds = new Set(newRecords.map(row => row.id));
+    setAttendance((prev) => [...newRecords, ...prev.filter(row => !replacedIds.has(row.id))]);
     newRecords.forEach((r) => dbSyncUpsert('attendance', r));
     logAction('BATCH_ATTENDANCE', 'Attendance', `Batch checked in ${newRecords.length} attendees for ${date}`);
   }
@@ -172,18 +197,25 @@ export function recordHeadcount(
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
   dbSyncUpsert: (table: string, record: unknown) => void
 ): HeadcountRecord {
+  const validationError = headcountError(data);
+  if (validationError) throw new Error(validationError);
+  if (!isValidDateString(data.date) || data.date > getChurchDateString()) throw new Error('Choose a valid service date that is not in the future.');
   const existingIndex = headcounts.findIndex((h) => h.service_id === data.service_id && h.date === data.date);
-  const newRecord: HeadcountRecord = {
+  const existing = headcounts[existingIndex];
+  const newRecord = {
     ...data,
-    id: existingIndex >= 0 ? headcounts[existingIndex].id : `hc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    id: existing?.id || crypto.randomUUID(),
+    total_auditorium: headcountTotal(data),
+    updated_at: new Date().toISOString(),
+    _expected_updated_at: existing?.updated_at,
     created_at:
       existingIndex >= 0 && headcounts[existingIndex].created_at
         ? headcounts[existingIndex].created_at
         : new Date().toISOString(),
-  };
+  } satisfies HeadcountRecord & { _expected_updated_at?: string };
 
   if (existingIndex >= 0) {
-    setHeadcounts((prev) => prev.map((h, i) => (i === existingIndex ? newRecord : h)));
+    setHeadcounts((prev) => prev.map((h) => (h.id === existing.id ? newRecord : h)));
     logAction(
       'UPDATE_HEADCOUNT',
       'Attendance',
@@ -209,19 +241,18 @@ export function updateHeadcount(
   updates: Partial<HeadcountRecord>,
   setHeadcounts: Dispatch<SetStateAction<HeadcountRecord[]>>,
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void
+  dbSyncUpsert: (table: string, record: unknown) => void,
+  headcounts: HeadcountRecord[]
 ) {
-  setHeadcounts((prev) =>
-    prev.map((h) => {
-      if (h.id === id) {
-        const updated = { ...h, ...updates };
-        logAction('UPDATE_HEADCOUNT', 'Attendance', `Updated headcount record ${id}`, id);
-        dbSyncUpsert('headcounts', updated);
-        return updated;
-      }
-      return h;
-    })
-  );
+  const existing = headcounts.find(row => row.id === id);
+  if (!existing) throw new Error('Headcount not found. Refresh and try again.');
+  const updated = { ...existing, ...updates, id, updated_at: new Date().toISOString(), _expected_updated_at: existing.updated_at };
+  const validationError = headcountError(updated);
+  if (validationError) throw new Error(validationError);
+  updated.total_auditorium = headcountTotal(updated);
+  setHeadcounts(prev => prev.map(row => row.id === id ? updated : row));
+  logAction('UPDATE_HEADCOUNT', 'Attendance', `Updated headcount record ${id}`, id);
+  dbSyncUpsert('headcounts', updated);
 }
 
 export function deleteHeadcount(
