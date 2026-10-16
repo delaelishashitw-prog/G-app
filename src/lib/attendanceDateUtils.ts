@@ -14,13 +14,23 @@ export function getLocalDateString(date: Date = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
+export function getChurchDateString(date: Date = new Date()): string {
+  return date.toISOString().slice(0, 10); // Africa/Accra uses GMT year-round.
+}
+
+export function isValidDateString(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T12:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 /**
  * Parses a YYYY-MM-DD string into a Date object set at noon local time.
  * Setting time to 12:00:00 guarantees that day boundaries are not crossed
  * regardless of daylight saving or client timezone offsets.
  */
 export function parseLocalDate(dateStr: string): Date {
-  if (!dateStr) return new Date();
+  if (!isValidDateString(dateStr)) return new Date(NaN);
   const parts = dateStr.split('-');
   if (parts.length === 3) {
     const year = parseInt(parts[0], 10);
@@ -38,6 +48,7 @@ export function parseLocalDate(dateStr: string): Date {
  * e.g., "Tuesday, 6 Oct 2026" or "Sunday, 4 Oct 2026", without timezone drift.
  */
 export function formatServiceDayString(dateStr: string, locale = 'en-GB'): string {
+  if (!isValidDateString(dateStr)) return 'Choose a valid service date';
   const dateObj = parseLocalDate(dateStr);
   return dateObj.toLocaleDateString(locale, {
     weekday: 'long',
@@ -56,18 +67,18 @@ export function getQuickDate(
   referenceDate: Date = new Date()
 ): string {
   const date = new Date(referenceDate.getTime());
-  const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  const dayOfWeek = date.getUTCDay(); // The church schedule uses Africa/Accra (GMT).
 
   if (preset === 'today') {
-    return getLocalDateString(date);
+    return getChurchDateString(date);
   }
 
   if (preset === 'lastSunday') {
     // If today is Sunday, return today. Otherwise subtract dayOfWeek days.
     const daysToSubtract = dayOfWeek === 0 ? 0 : dayOfWeek;
     const target = new Date(date);
-    target.setDate(date.getDate() - daysToSubtract);
-    return getLocalDateString(target);
+    target.setUTCDate(date.getUTCDate() - daysToSubtract);
+    return getChurchDateString(target);
   }
 
   if (preset === 'lastWednesday') {
@@ -83,9 +94,9 @@ export function getQuickDate(
       daysToSubtract = dayOfWeek + 4;
     }
     const target = new Date(date);
-    target.setDate(date.getDate() - daysToSubtract);
-    return getLocalDateString(target);
+    target.setUTCDate(date.getUTCDate() - daysToSubtract);
+    return getChurchDateString(target);
   }
 
-  return getLocalDateString(date);
+  return getChurchDateString(date);
 }

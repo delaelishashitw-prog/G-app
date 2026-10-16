@@ -40,6 +40,7 @@ import {
   DepartmentBudget,
 } from '../types/database.types';
 import { initialSettings } from '../lib/initialData';
+import { attendanceSessionError } from '../features/attendance/attendanceInsights';
 import { useAuth } from './AuthContext';
 import {
   isSupabaseConfigured,
@@ -229,6 +230,7 @@ interface ChurchDataContextType {
     method?: 'manual' | 'search' | 'qr_code',
     customDate?: string
   ) => { success: boolean; message: string };
+  registerVisitorAndCheckIn: (data: Omit<Visitor, 'id' | 'created_at' | 'updated_at'>, serviceId: string, date: string) => Visitor;
   batchRecordAttendance: (
     serviceId: string,
     date: string,
@@ -790,6 +792,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   // ATTENDANCE & SERVICES
+  const requireAttendanceAccess = () => {
+    if (!isAuthenticated || !canAccess('attendance')) throw new Error('Attendance staff access is required.');
+  };
   const createService = (data: Omit<ChurchService, 'id'>): ChurchService =>
     createServiceRecord(data, setServices, logAction, dbSyncUpsert);
 
@@ -810,8 +815,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     personId: string,
     method: 'manual' | 'search' | 'qr_code' = 'manual',
     customDate?: string
-  ): { success: boolean; message: string } =>
-    recordAttendanceRecord(
+  ): { success: boolean; message: string } => {
+    if (!isAuthenticated || !canAccess('attendance')) return { success: false, message: 'Attendance staff access is required.' };
+    return recordAttendanceRecord(
       serviceId,
       personType,
       personId,
@@ -825,13 +831,28 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       method,
       customDate
     );
+  };
+
+  const registerVisitorAndCheckIn = (data: Omit<Visitor, 'id' | 'created_at' | 'updated_at'>, serviceId: string, date: string): Visitor => {
+    requireAttendanceAccess();
+    if (!canAccess('visitors')) throw new Error('Visitor registration access is required.');
+    const validationError = attendanceSessionError(services.find(service => service.id === serviceId), date);
+    if (validationError) throw new Error(validationError);
+    return withSyncTransaction(() => {
+      const visitor = addVisitor(data);
+      const result = recordAttendanceRecord(serviceId, 'visitor', visitor.id, members, [visitor, ...visitors], attendance, setAttendance, services, logAction, dbSyncUpsert, 'manual', date);
+      if (!result.success) throw new Error(result.message);
+      return visitor;
+    });
+  };
 
   const batchRecordAttendance = (
     serviceId: string,
     date: string,
     items: Array<{ personType: 'member' | 'visitor'; personId: string; method?: 'manual' | 'search' | 'qr_code' }>
-  ): { added: number; skipped: number } =>
-    batchRecordAttendanceRecord(
+  ): { added: number; skipped: number } => {
+    requireAttendanceAccess();
+    return withSyncTransaction(() => batchRecordAttendanceRecord(
       serviceId,
       date,
       items,
@@ -842,21 +863,36 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setAttendance,
       logAction,
       dbSyncUpsert
-    );
+    ));
+  };
 
-  const recordHeadcount = (data: Omit<HeadcountRecord, 'id' | 'created_at'>): HeadcountRecord =>
-    recordHeadcountRecord(data, headcounts, setHeadcounts, logAction, dbSyncUpsert);
+  const recordHeadcount = (data: Omit<HeadcountRecord, 'id' | 'created_at'>): HeadcountRecord => {
+    requireAttendanceAccess();
+    const validationError = attendanceSessionError(services.find(service => service.id === data.service_id), data.date);
+    if (validationError) throw new Error(validationError);
+    return recordHeadcountRecord(data, headcounts, setHeadcounts, logAction, dbSyncUpsert);
+  };
 
   const updateHeadcount = (id: string, updates: Partial<HeadcountRecord>) => {
-    updateHeadcountRecord(id, updates, setHeadcounts, logAction, dbSyncUpsert);
+    requireAttendanceAccess();
+    const existing = headcounts.find(record => record.id === id);
+    const validationError = attendanceSessionError(services.find(service => service.id === (updates.service_id || existing?.service_id)), updates.date ?? existing?.date ?? '');
+    if (validationError) throw new Error(validationError);
+    updateHeadcountRecord(id, updates, setHeadcounts, logAction, dbSyncUpsert, headcounts);
   };
 
   const deleteHeadcount = (id: string) => {
+    requireAttendanceAccess();
     deleteHeadcountRecord(id, setHeadcounts, logAction, dbSyncDelete);
   };
 
   const deleteAttendanceRecord = (id: string) => {
-    deleteAttendanceRecordRecord(id, setAttendance, logAction, dbSyncDelete);
+    requireAttendanceAccess();
+    const target = attendance.find(row => row.id === id);
+    if (!target) return;
+    const ids = attendance.filter(row => row.service_id === target.service_id && row.date === target.date && row.status === 'present' &&
+      ((target.member_id && row.member_id === target.member_id) || (target.visitor_id && row.visitor_id === target.visitor_id))).map(row => row.id);
+    withSyncTransaction(() => ids.forEach(recordId => deleteAttendanceRecordRecord(recordId, setAttendance, logAction, dbSyncDelete)));
   };
 
   // FINANCE & GIVING
@@ -1410,6 +1446,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       updateService,
       deleteService,
       recordAttendance,
+      registerVisitorAndCheckIn,
       batchRecordAttendance,
       deleteAttendanceRecord,
       removeAttendance: deleteAttendanceRecord,

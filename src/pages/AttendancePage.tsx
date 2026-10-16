@@ -54,8 +54,11 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useSearchParams } from 'react-router-dom';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useToast } from '../contexts/ToastContext';
+import { useAuth } from '../contexts/AuthContext';
 import { ChurchService, AttendanceRecord, HeadcountRecord, Member, Visitor } from '../types/database.types';
-import { getLocalDateString, formatServiceDayString, getQuickDate } from '../lib/attendanceDateUtils';
+import { getChurchDateString, isValidDateString, formatServiceDayString, getQuickDate } from '../lib/attendanceDateUtils';
+import { attendancePersonType, attendeeKey, uniquePresentAttendance, matchesAttendeeSearch, attendanceSessionError, headcountError, headcountTotal, buildAttendanceSessions, membersNotCheckedIn, attendanceCsv } from '../features/attendance/attendanceInsights';
+import { resolveServiceId } from '../features/services/serviceInsights';
 
 // Modals
 import { AttendanceKioskModal } from '../components/attendance/AttendanceKioskModal';
@@ -85,34 +88,31 @@ export const AttendancePage: React.FC = () => {
     refreshData,
   } = useChurchData();
   const { success, error, warning, info } = useToast();
+  const { isAuthenticated, canAccess } = useAuth();
+  const canEditAttendance = isAuthenticated && canAccess('attendance');
   const [searchParams] = useSearchParams();
 
   // Active service and date selection
   const requestedServiceId = searchParams.get('serviceId');
-  const [selectedServiceId, setSelectedServiceId] = useState(requestedServiceId || services[0]?.id || '');
+  const [selectedServiceId, setSelectedServiceId] = useState(requestedServiceId || services.find(service => service.is_active)?.id || services[0]?.id || '');
   React.useEffect(() => {
     if (requestedServiceId) setSelectedServiceId(requestedServiceId);
   }, [requestedServiceId]);
   const [selectedDate, setSelectedDate] = useState(() => {
     const urlDate = searchParams.get('date');
-    if (urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
-      return urlDate;
-    }
-    return getLocalDateString();
+    return urlDate == null ? getChurchDateString() : isValidDateString(urlDate) ? urlDate : '';
   });
 
   // Keep selectedDate in sync if URL param changes
   React.useEffect(() => {
     const urlDate = searchParams.get('date');
-    if (urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
-      setSelectedDate(urlDate);
-    }
+    if (urlDate != null) setSelectedDate(isValidDateString(urlDate) ? urlDate : '');
   }, [searchParams]);
 
   // Ensure selectedServiceId is kept in sync if services load or change
   React.useEffect(() => {
     if (!selectedServiceId && services.length > 0) {
-      setSelectedServiceId(services[0].id);
+      setSelectedServiceId(services.find(service => service.is_active)?.id || services[0].id);
     }
   }, [services, selectedServiceId]);
 
@@ -155,42 +155,49 @@ export const AttendancePage: React.FC = () => {
 
   // Selected Service
   const selectedService = useMemo(
-    () => services.find((s) => s.id === selectedServiceId) || services[0],
+    () => services.find((s) => s.id === selectedServiceId),
     [services, selectedServiceId]
   );
 
   // Current session attendance records
   const currentSessionRecords = useMemo(
     () =>
-      attendance.filter(
-        (a) => a.service_id === selectedServiceId && a.date === selectedDate
-      ),
-    [attendance, selectedServiceId, selectedDate]
+      uniquePresentAttendance(attendance.filter(
+        (a) => (resolveServiceId(a, services) || a.service_id) === selectedServiceId && a.date === selectedDate
+      ).map(row => ({ ...row, service_id: selectedServiceId }))),
+    [attendance, services, selectedServiceId, selectedDate]
   );
 
   const membersCheckedIn = useMemo(
-    () => currentSessionRecords.filter((a) => a.person_type === 'member'),
+    () => currentSessionRecords.filter((a) => attendancePersonType(a) === 'member'),
     [currentSessionRecords]
   );
   const visitorsCheckedIn = useMemo(
-    () => currentSessionRecords.filter((a) => a.person_type === 'visitor'),
+    () => currentSessionRecords.filter((a) => attendancePersonType(a) === 'visitor'),
     [currentSessionRecords]
   );
 
   const alreadyCheckedInIds = useMemo(() => {
     const set = new Set<string>();
     currentSessionRecords.forEach((r) => {
-      if (r.member_id) set.add(r.member_id);
-      if (r.visitor_id) set.add(r.visitor_id);
+      if (r.member_id) set.add(attendeeKey('member', r.member_id));
+      if (r.visitor_id) set.add(attendeeKey('visitor', r.visitor_id));
     });
     return set;
   }, [currentSessionRecords]);
 
   // Current Headcount Record for active service and date
   const currentHeadcountRecord = useMemo(
-    () => headcounts.find((h) => h.service_id === selectedServiceId && h.date === selectedDate),
-    [headcounts, selectedServiceId, selectedDate]
+    () => headcounts.filter((h) => (resolveServiceId(h, services) || h.service_id) === selectedServiceId && h.date === selectedDate).sort((a, b) => (b.updated_at || b.created_at || '').localeCompare(a.updated_at || a.created_at || ''))[0],
+    [headcounts, services, selectedServiceId, selectedDate]
   );
+  const sessionError = attendanceSessionError(selectedService, selectedDate);
+  const canRecordSession = canEditAttendance && !sessionError;
+  const canRegisterVisitor = canRecordSession && canAccess('visitors');
+  const selectedDay = isValidDateString(selectedDate) ? new Date(`${selectedDate}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'Africa/Accra' }) : '';
+  const sessionChildren = childCheckIns.filter(record => record.service_id === selectedServiceId && record.date === selectedDate);
+  const sessions = useMemo(() => buildAttendanceSessions(services, attendance, headcounts), [services, attendance, headcounts]);
+  const serviceSessions = sessions.filter(session => session.service_id === selectedServiceId);
 
   // Headcount form state
   const [headcountForm, setHeadcountForm] = useState({
@@ -204,6 +211,13 @@ export const AttendancePage: React.FC = () => {
     counted_by: currentHeadcountRecord?.counted_by ?? '',
     notes: currentHeadcountRecord?.notes ?? '',
   });
+  const [headcountDirty, setHeadcountDirty] = useState(false);
+  const headcountDraftVersion = React.useRef(currentHeadcountRecord?.updated_at);
+  const headcountConflict = headcountDirty && currentHeadcountRecord?.updated_at !== headcountDraftVersion.current;
+  const editHeadcountForm = (values: typeof headcountForm) => {
+    setHeadcountDirty(true);
+    setHeadcountForm(values);
+  };
 
   // Active session key to only re-initialize when switching service or date
   const activeSessionKey = `${selectedServiceId}_${selectedDate}`;
@@ -211,17 +225,18 @@ export const AttendancePage: React.FC = () => {
 
   // Sync form when selectedServiceId or selectedDate changes
   React.useEffect(() => {
-    if (prevSessionKeyRef.current !== activeSessionKey) {
+    if (prevSessionKeyRef.current !== activeSessionKey || !headcountDirty) {
       prevSessionKeyRef.current = activeSessionKey;
+      headcountDraftVersion.current = currentHeadcountRecord?.updated_at;
       if (currentHeadcountRecord) {
         setHeadcountForm({
-          men: currentHeadcountRecord.men,
-          women: currentHeadcountRecord.women,
-          youth: currentHeadcountRecord.youth,
-          children: currentHeadcountRecord.children,
-          visitors: currentHeadcountRecord.visitors,
-          ushers_protocol: currentHeadcountRecord.ushers_protocol,
-          online_viewers: currentHeadcountRecord.online_viewers,
+          men: currentHeadcountRecord.men ?? 0,
+          women: currentHeadcountRecord.women ?? 0,
+          youth: currentHeadcountRecord.youth ?? 0,
+          children: currentHeadcountRecord.children ?? 0,
+          visitors: currentHeadcountRecord.visitors ?? 0,
+          ushers_protocol: currentHeadcountRecord.ushers_protocol ?? 0,
+          online_viewers: currentHeadcountRecord.online_viewers ?? 0,
           counted_by: currentHeadcountRecord.counted_by || '',
           notes: currentHeadcountRecord.notes || '',
         });
@@ -238,18 +253,16 @@ export const AttendancePage: React.FC = () => {
           notes: '',
         });
       }
+      setHeadcountDirty(false);
     }
-  }, [activeSessionKey, currentHeadcountRecord, visitorsCheckedIn.length]);
+  }, [activeSessionKey, currentHeadcountRecord, visitorsCheckedIn.length, headcountDirty]);
 
-  const totalAuditorium =
-    headcountForm.men +
-    headcountForm.women +
-    headcountForm.youth +
-    headcountForm.children +
-    headcountForm.visitors +
-    headcountForm.ushers_protocol;
+  React.useEffect(() => { setBatchSelectedMembers(new Set()); }, [activeSessionKey, selectedMinistryId, batchSearchTerm]);
 
-  const totalChurchReach = totalAuditorium + headcountForm.online_viewers;
+  const totalAuditorium = headcountTotal(headcountForm);
+
+  const savedHeadcount = currentHeadcountRecord?.total_auditorium ?? 0;
+  const totalChurchReach = savedHeadcount + (currentHeadcountRecord?.online_viewers ?? 0);
 
   // Search Members for Live Check-In
   const matchingMembers = useMemo(() => {
@@ -257,13 +270,7 @@ export const AttendancePage: React.FC = () => {
     if (!term) return [];
     return members
       .filter((m) => !m.is_archived)
-      .filter(
-        (m) =>
-          (m.first_name || '').toLowerCase().includes(term) ||
-          (m.last_name || '').toLowerCase().includes(term) ||
-          (m.member_id || '').toLowerCase().includes(term) ||
-          (m.phone && m.phone.includes(term))
-      )
+      .filter(m => matchesAttendeeSearch(m, term))
       .slice(0, 10);
   }, [members, searchMemberTerm]);
 
@@ -273,6 +280,11 @@ export const AttendancePage: React.FC = () => {
     personId: string,
     method: 'manual' | 'search' | 'qr_code' = 'search'
   ) => {
+    if (!canRecordSession) {
+      const message = sessionError || 'Attendance staff access is required.';
+      error(message);
+      return { success: false, message };
+    }
     const res = recordAttendance(selectedServiceId, personType, personId, method, selectedDate);
     if (res.success) {
       success(res.message);
@@ -280,6 +292,7 @@ export const AttendancePage: React.FC = () => {
     } else {
       error(res.message);
     }
+    return res;
   };
 
   // Quick preset dates using timezone-safe calculator
@@ -290,11 +303,13 @@ export const AttendancePage: React.FC = () => {
 
   // Save Headcount
   const handleSaveHeadcount = () => {
-    if (!selectedServiceId) {
-      error('Please select a service before saving headcount.');
+    if (headcountConflict) { error('This headcount changed while you were editing. Load the latest saved headcount before saving.'); return; }
+    if (!canRecordSession || headcountError(headcountForm)) {
+      error(sessionError || headcountError(headcountForm) || 'Attendance staff access is required.');
       return;
     }
-    recordHeadcount({
+    try {
+      recordHeadcount({
       service_id: selectedServiceId,
       service_name: selectedService?.name || 'Worship Service',
       date: selectedDate,
@@ -308,8 +323,12 @@ export const AttendancePage: React.FC = () => {
       total_auditorium: totalAuditorium,
       counted_by: headcountForm.counted_by,
       notes: headcountForm.notes,
-    });
-    success('Auditorium headcount saved and locked into official records.');
+      });
+      setHeadcountDirty(false);
+      success('Headcount saved for this service session.');
+    } catch (err) {
+      error(err instanceof Error ? err.message : 'Headcount could not be saved.');
+    }
   };
 
   // Reset Headcount (opens in-app confirmation modal)
@@ -318,7 +337,7 @@ export const AttendancePage: React.FC = () => {
   };
 
   const handleConfirmResetHeadcount = () => {
-    setHeadcountForm({
+    editHeadcountForm({
       men: 0,
       women: 0,
       youth: 0,
@@ -346,50 +365,46 @@ export const AttendancePage: React.FC = () => {
     }
     if (batchSearchTerm.trim()) {
       const term = batchSearchTerm.toLowerCase();
-      list = list.filter(
-        (m) =>
-          (m.first_name || '').toLowerCase().includes(term) ||
-          (m.last_name || '').toLowerCase().includes(term) ||
-          (m.member_id || '').toLowerCase().includes(term) ||
-          (m.phone && m.phone.includes(term))
-      );
+      list = list.filter(m => matchesAttendeeSearch(m, term));
     }
     return list;
   }, [members, ministries, selectedMinistryId, batchSearchTerm]);
 
   // Handle Commit Batch Check-In
   const handleCommitBatchCheckIn = () => {
+    if (!canRecordSession) { error(sessionError || 'Attendance staff access is required.'); return; }
     if (batchSelectedMembers.size === 0) {
       error('Please select at least one member to check in.');
       return;
     }
 
-    const items = Array.from(batchSelectedMembers).map((id) => ({
+    const visibleIds = new Set(departmentMembers.map(member => member.id));
+    const items = Array.from(batchSelectedMembers).filter(id => visibleIds.has(id)).map((id) => ({
       personType: 'member' as const,
       personId: id,
       method: 'manual' as const,
     }));
 
-    const result = batchRecordAttendance(selectedServiceId, selectedDate, items);
+    try {
+      const result = batchRecordAttendance(selectedServiceId, selectedDate, items);
     success(
       `Successfully checked in ${result.added} member(s). ${
         result.skipped > 0 ? `(${result.skipped} were already checked in)` : ''
       }`
     );
     setBatchSelectedMembers(new Set());
+    } catch (err) { error(err instanceof Error ? err.message : 'Batch check-in could not be saved.'); }
   };
 
   // Absentee Radar: Members who are NOT checked in for selected service
   const absentMembers = useMemo(() => {
-    const presentMemberIds = new Set(membersCheckedIn.map((r) => r.member_id));
-    return members
-      .filter((m) => !m.is_archived && m.status === 'active')
-      .filter((m) => !presentMemberIds.has(m.id))
+    if (!isValidDateString(selectedDate) || selectedDate > getChurchDateString() || (!currentSessionRecords.length && !currentHeadcountRecord)) return [];
+    return membersNotCheckedIn(members, currentSessionRecords, selectedDate)
       .map((m) => {
         // Find last attended record
         const memberPastAtt = attendance
-          .filter((a) => a.member_id === m.id)
-          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          .filter((a) => a.member_id === m.id && a.status === 'present' && a.date <= selectedDate)
+          .sort((a, b) => b.date.localeCompare(a.date));
         const lastAttended = memberPastAtt[0]?.date || 'Never recorded';
 
         return {
@@ -397,13 +412,13 @@ export const AttendancePage: React.FC = () => {
           lastAttended,
         };
       });
-  }, [members, membersCheckedIn, attendance]);
+  }, [members, currentSessionRecords, currentHeadcountRecord, attendance, selectedDate]);
 
   // Filtered Attendees in Terminal
   const filteredLoggedAttendees = useMemo(() => {
     return currentSessionRecords.filter((rec) => {
-      if (attendeeFilter === 'member' && rec.person_type !== 'member') return false;
-      if (attendeeFilter === 'visitor' && rec.person_type !== 'visitor') return false;
+      if (attendeeFilter === 'member' && attendancePersonType(rec) !== 'member') return false;
+      if (attendeeFilter === 'visitor' && attendancePersonType(rec) !== 'visitor') return false;
 
       if (attendeeSearch.trim()) {
         const term = attendeeSearch.toLowerCase();
@@ -415,143 +430,63 @@ export const AttendancePage: React.FC = () => {
   }, [currentSessionRecords, attendeeFilter, attendeeSearch]);
 
   const handleConfirmUndoCheckIn = () => {
-    if (!recordToUndo) return;
+    if (!recordToUndo || !canEditAttendance) return;
     removeAttendance(recordToUndo.id);
     info(`Check-in for ${recordToUndo.person_name || recordToUndo.member_name || 'attendee'} reversed.`);
     setRecordToUndo(null);
   };
 
-  // Export Attendance CSV
-  const handleExportCSV = () => {
-    if (currentSessionRecords.length === 0) {
-      error('No attendance records to export for this service session.');
-      return;
-    }
-
-    const headers = [
-      'Attendance ID',
-      'Service Name',
-      'Date',
-      'Person Name',
-      'Person Type',
-      'Check-In Method',
-      'Check-In Time',
-      'Status',
-    ];
-
-    const rows = currentSessionRecords.map((r) => [
-      r.id,
-      r.service_name,
-      r.date,
-      `"${r.person_name || r.member_name || r.visitor_name || 'Attendee'}"`,
-      r.person_type || 'member',
-      r.check_in_method || 'manual',
-      r.check_in_time || '',
-      r.status,
-    ]);
-
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
-
-    const safeServiceName = (selectedService?.name || 'Worship_Service').replace(/[^a-zA-Z0-9]/g, '_');
-    const churchPrefix = (settings?.short_name || 'Church').replace(/[^a-zA-Z0-9]/g, '_');
-    const encodedUri = encodeURI(csvContent);
+  // The session export follows the selected service; the audit export contains every stored row.
+  const handleExportCSV = (allRecords = false) => {
+    const rows = allRecords ? attendance : currentSessionRecords;
+    if (!rows.length) { error('No attendance records to export.'); return; }
+    const url = URL.createObjectURL(new Blob([attendanceCsv(rows)], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute(
-      'download',
-      `${churchPrefix}_Attendance_${safeServiceName}_${selectedDate}.csv`
-    );
-    document.body.appendChild(link);
+    link.href = url;
+    const serviceName = (selectedService?.name || 'Service').replace(/[^a-zA-Z0-9]/g, '_');
+    const prefix = (settings.short_name || 'Church').replace(/[^a-zA-Z0-9]/g, '_');
+    link.download = allRecords ? `${prefix}_All_Attendance.csv` : `${prefix}_Attendance_${serviceName}_${selectedDate}.csv`;
     link.click();
-    document.body.removeChild(link);
-
-    success('Attendance record CSV downloaded.');
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    success('Attendance CSV downloaded.');
   };
 
-  // Analytics Data (Weekly trends)
-  const weeklyTrendData = useMemo(() => {
-    // Unique dates from headcounts and attendance
-    const datesMap = new Map<string, { date: string; total: number; men: number; women: number; children: number; visitors: number }>();
+  // One point per selected service session. A saved headcount takes precedence over unique check-ins.
+  const weeklyTrendData = serviceSessions.filter(session => session.date <= getChurchDateString())
+    .slice(0, 6).reverse().map(session => ({
+      date: session.date,
+      total: session.headcount?.total_auditorium ?? session.checkins,
+    }));
 
-    // Load from headcounts
-    headcounts.forEach((h) => {
-      datesMap.set(h.date, {
-        date: h.date,
-        total: h.total_auditorium,
-        men: h.men,
-        women: h.women,
-        children: h.children,
-        visitors: h.visitors,
-      });
-    });
-
-    // Also include attendance check-in dates if not already present
-    attendance.forEach((a) => {
-      if (!datesMap.has(a.date)) {
-        const recordsOnDate = attendance.filter((att) => att.date === a.date);
-        const visitorsCount = recordsOnDate.filter((att) => att.person_type === 'visitor').length;
-        datesMap.set(a.date, {
-          date: a.date,
-          total: recordsOnDate.length,
-          men: 0,
-          women: 0,
-          children: 0,
-          visitors: visitorsCount,
-        });
-      }
-    });
-
-    return Array.from(datesMap.values())
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-      .slice(-6);
-  }, [headcounts, attendance]);
-
-  // Demographic Pie Data
   const demographicData = useMemo(() => {
-    const fromHeadcount = [
-      { name: 'Men', value: headcountForm.men, color: '#0d9488' },
-      { name: 'Women', value: headcountForm.women, color: '#0284c7' },
-      { name: 'Youth', value: headcountForm.youth, color: '#8b5cf6' },
-      { name: 'Children', value: headcountForm.children, color: '#f59e0b' },
-      { name: 'Visitors', value: headcountForm.visitors, color: '#10b981' },
-    ].filter((d) => d.value > 0);
+    if (currentHeadcountRecord) return [
+      { name: 'Men', value: currentHeadcountRecord.men ?? 0, color: '#0d9488' },
+      { name: 'Women', value: currentHeadcountRecord.women ?? 0, color: '#0284c7' },
+      { name: 'Youth', value: currentHeadcountRecord.youth ?? 0, color: '#8b5cf6' },
+      { name: 'Children', value: currentHeadcountRecord.children ?? 0, color: '#f59e0b' },
+      { name: 'Visitors', value: currentHeadcountRecord.visitors ?? 0, color: '#10b981' },
+      { name: 'Ushers', value: currentHeadcountRecord.ushers_protocol ?? 0, color: '#64748b' },
+    ].filter(item => item.value > 0);
+    const memberMap = new Map(members.map(member => [member.id, member]));
+    let male = 0, female = 0, unspecified = 0, visitorCount = 0;
+    currentSessionRecords.forEach(row => {
+      if (attendancePersonType(row) === 'visitor') { visitorCount++; return; }
+      const gender = memberMap.get(row.member_id || '')?.gender;
+      if (gender === 'male') male++;
+      else if (gender === 'female') female++;
+      else unspecified++;
+    });
+    return [
+      { name: 'Male Members', value: male, color: '#0d9488' },
+      { name: 'Female Members', value: female, color: '#0284c7' },
+      { name: 'Unspecified', value: unspecified, color: '#64748b' },
+      { name: 'Visitors', value: visitorCount, color: '#10b981' },
+    ].filter(item => item.value > 0);
+  }, [currentHeadcountRecord, currentSessionRecords, members]);
 
-    if (fromHeadcount.length > 0) return fromHeadcount;
-
-    // Fallback to current session check-ins if headcount form has not been entered yet
-    if (currentSessionRecords.length > 0) {
-      let maleMembers = 0;
-      let femaleMembers = 0;
-      let visitorsCount = 0;
-
-      currentSessionRecords.forEach((r) => {
-        if (r.person_type === 'visitor') {
-          visitorsCount++;
-        } else {
-          const m = members.find((mem) => mem.id === r.member_id);
-          if (m?.gender === 'female') femaleMembers++;
-          else maleMembers++;
-        }
-      });
-
-      return [
-        { name: 'Male Members', value: maleMembers, color: '#0d9488' },
-        { name: 'Female Members', value: femaleMembers, color: '#0284c7' },
-        { name: 'Visitors', value: visitorsCount, color: '#10b981' },
-      ].filter((d) => d.value > 0);
-    }
-
-    return [];
-  }, [headcountForm, currentSessionRecords, members]);
-
-  // Expected capacity comparison
   const capacityTarget = selectedService?.expected_attendance || 0;
-  const capacityPercent = Math.min(
-    capacityTarget > 0 ? Math.round((totalAuditorium / capacityTarget) * 100) : 0,
-    150
-  );
+  const capacityPercent = capacityTarget > 0
+    ? Math.round(((currentHeadcountRecord?.total_auditorium ?? currentSessionRecords.length) / capacityTarget) * 100) : 0;
 
   return (
     <div className="space-y-6">
@@ -597,10 +532,11 @@ export const AttendancePage: React.FC = () => {
 
           <button
             onClick={() => setIsKioskOpen(true)}
+            disabled={!canRecordSession}
             className="flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-teal-700 to-emerald-700 hover:from-teal-800 hover:to-emerald-800 text-white rounded-xl text-xs font-bold transition shadow-md shadow-teal-700/20"
           >
             <Maximize2 className="w-4 h-4" />
-            <span>Launch Kiosk Mode</span>
+            <span>Open Check-In Screen</span>
           </button>
 
           <button
@@ -612,7 +548,7 @@ export const AttendancePage: React.FC = () => {
           </button>
 
           <button
-            onClick={handleExportCSV}
+            onClick={() => handleExportCSV()}
             className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition shadow-xs"
           >
             <Download className="w-4 h-4 text-slate-600" />
@@ -624,7 +560,7 @@ export const AttendancePage: React.FC = () => {
       {/* Service & Date Selector Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
-          <div>
+          <div className="min-w-0 max-w-full">
             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
               Select Service
             </label>
@@ -632,11 +568,12 @@ export const AttendancePage: React.FC = () => {
               aria-label="Attendance service"
               value={selectedServiceId}
               onChange={(e) => setSelectedServiceId(e.target.value)}
-              className="text-xs font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 focus:outline-teal-600 focus:bg-white"
+              className="max-w-full text-xs font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 focus:outline-teal-600 focus:bg-white"
             >
+              {!services.some(service => service.id === selectedServiceId) && <option value={selectedServiceId}>Unlinked historical service</option>}
               {services.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.name} ({s.start_time})
+                  {s.is_active ? s.name : `Archived · ${s.name} [${s.id.slice(-8)}]`}{s.start_time ? ` (${s.start_time})` : ''}
                 </option>
               ))}
             </select>
@@ -648,6 +585,8 @@ export const AttendancePage: React.FC = () => {
             </label>
             <input
               type="date"
+              aria-label="Attendance date (GMT)"
+              max={getChurchDateString()}
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
               className="text-xs font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 focus:outline-teal-600 focus:bg-white"
@@ -684,6 +623,9 @@ export const AttendancePage: React.FC = () => {
         </div>
       </div>
 
+      {sessionError && <p role="status" className="p-3 rounded-xl bg-amber-50 text-amber-900 text-sm">{sessionError}</p>}
+      {!sessionError && selectedService && selectedDay !== selectedService.day_of_week && <p role="status" className="p-3 rounded-xl bg-amber-50 text-amber-900 text-sm">The selected date is a {selectedDay}; this service is normally on {selectedService.day_of_week}. Check the service and date before recording an exceptional session.</p>}
+
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5">
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
@@ -703,31 +645,31 @@ export const AttendancePage: React.FC = () => {
             Auditorium Headcount
           </span>
           <div className="text-2xl font-black text-teal-800 mt-1">
-            {totalAuditorium}
+            {savedHeadcount}
           </div>
           <p className="text-[11px] text-teal-700 mt-0.5">
-            Usher verified tally
+            {currentHeadcountRecord ? 'Saved usher headcount' : 'No headcount saved'}
           </p>
         </div>
 
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-            Total Church Reach
+            Headcount + Online Views
           </span>
           <div className="text-2xl font-black text-slate-900 mt-1">
             {totalChurchReach}
           </div>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            +{headcountForm.online_viewers} online streamers
+            +{currentHeadcountRecord?.online_viewers ?? 0} online views
           </p>
         </div>
 
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-            First-Time Visitors
+            Visitor Check-Ins
           </span>
           <div className="text-2xl font-black text-blue-800 mt-1">
-            {headcountForm.visitors || visitorsCheckedIn.length}
+            {visitorsCheckedIn.length}
           </div>
           <p className="text-[11px] text-blue-700 mt-0.5">
             Ready for follow-up
@@ -736,12 +678,12 @@ export const AttendancePage: React.FC = () => {
 
         <div className="col-span-2 lg:col-span-1 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-            Capacity Fill Rate
+            Attendance Target
           </span>
           <div className="flex items-baseline gap-2 mt-1">
             <span className="text-2xl font-black text-slate-900">{capacityPercent}%</span>
             <span className="text-xs text-slate-400">
-              / {capacityTarget > 0 ? `${capacityTarget} seats` : 'capacity not set'}
+              / {capacityTarget > 0 ? `${capacityTarget} expected` : 'target not set'}
             </span>
           </div>
           <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2 overflow-hidden">
@@ -805,7 +747,7 @@ export const AttendancePage: React.FC = () => {
           }`}
         >
           <UserX className="w-4 h-4" />
-          <span>Absentee Radar & Pastoral Follow-Up</span>
+                <span>Not Checked In & Pastoral Follow-Up</span>
           {absentMembers.length > 0 && (
             <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-100 text-amber-800 border border-amber-200">
               {absentMembers.length}
@@ -824,7 +766,7 @@ export const AttendancePage: React.FC = () => {
           <ShieldCheck className="w-4 h-4 text-emerald-600" />
           <span>Children & Security Passes</span>
           <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-emerald-100 text-emerald-800">
-            {childCheckIns.filter((c) => c.status === 'checked_in').length} In Hall
+            {sessionChildren.filter((c) => c.status === 'checked_in').length} In Hall
           </span>
         </button>
 
@@ -863,7 +805,7 @@ export const AttendancePage: React.FC = () => {
                 Children in Sunday School
               </span>
               <div className="text-2xl font-black text-emerald-800 mt-1">
-                {childCheckIns.filter((c) => c.status === 'checked_in').length}
+                {sessionChildren.filter((c) => c.status === 'checked_in').length}
               </div>
               <p className="text-[11px] text-emerald-700 mt-0.5">Currently under church supervision</p>
             </div>
@@ -873,7 +815,7 @@ export const AttendancePage: React.FC = () => {
                 Safely Released
               </span>
               <div className="text-2xl font-black text-slate-900 mt-1">
-                {childCheckIns.filter((c) => c.status === 'checked_out').length}
+                {sessionChildren.filter((c) => c.status === 'checked_out').length}
               </div>
               <p className="text-[11px] text-slate-500 mt-0.5">Checked out with verified pass</p>
             </div>
@@ -883,7 +825,7 @@ export const AttendancePage: React.FC = () => {
                 Medical / Allergy Alerts
               </span>
               <div className="text-2xl font-black text-rose-700 mt-1">
-                {childCheckIns.filter((c) => c.status === 'checked_in' && c.has_allergy_alert).length}
+                {sessionChildren.filter((c) => c.status === 'checked_in' && c.has_allergy_alert).length}
               </div>
               <p className="text-[11px] text-rose-600 mt-0.5">High-priority care required</p>
             </div>
@@ -951,7 +893,7 @@ export const AttendancePage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {childCheckIns
+                  {sessionChildren
                     .filter((c) => {
                       if (!childSearchTerm.trim()) return true;
                       const term = childSearchTerm.toLowerCase();
@@ -1056,6 +998,7 @@ export const AttendancePage: React.FC = () => {
 
                 <button
                   onClick={() => setIsQuickVisitorOpen(true)}
+                  disabled={!canRegisterVisitor}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-xl text-xs font-bold transition shadow-2xs"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -1069,6 +1012,7 @@ export const AttendancePage: React.FC = () => {
                   type="text"
                   value={searchMemberTerm}
                   onChange={(e) => setSearchMemberTerm(e.target.value)}
+                  aria-label="Find attendance member"
                   placeholder={`Search member to check-in (e.g. Kwame, Abena, ${settings.short_name || 'GWCC'}-0002, 0244...)`}
                   className="w-full pl-10 pr-4 py-3 text-sm border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-teal-600 font-medium transition shadow-inner"
                   autoFocus
@@ -1125,6 +1069,7 @@ export const AttendancePage: React.FC = () => {
                             ) : (
                               <button
                                 onClick={() => handleCheckIn('member', m.id, 'search')}
+                                disabled={!canRecordSession}
                                 className="px-3.5 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-bold transition shadow-xs"
                               >
                                 Check In
@@ -1139,6 +1084,7 @@ export const AttendancePage: React.FC = () => {
                       <p>No registered members match &quot;{searchMemberTerm}&quot;.</p>
                       <button
                         onClick={() => setIsQuickVisitorOpen(true)}
+                  disabled={!canRegisterVisitor}
                         className="text-teal-700 hover:text-teal-800 font-bold underline"
                       >
                         Click here to register them as a visitor
@@ -1174,6 +1120,7 @@ export const AttendancePage: React.FC = () => {
                   </div>
 
                   <select
+                    aria-label="Attendance person type"
                     value={attendeeFilter}
                     onChange={(e) => setAttendeeFilter(e.target.value as any)}
                     className="text-xs font-bold text-slate-700 border border-slate-200 rounded-xl px-2.5 py-1.5 bg-white"
@@ -1203,12 +1150,12 @@ export const AttendancePage: React.FC = () => {
                           <div className="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
                             <span
                               className={`px-1.5 py-0.5 rounded text-[10px] font-bold capitalize ${
-                                rec.person_type === 'visitor'
+                                attendancePersonType(rec) === 'visitor'
                                   ? 'bg-blue-50 text-blue-700 border border-blue-200'
                                   : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                               }`}
                             >
-                              {rec.person_type || 'member'}
+                              {attendancePersonType(rec) || 'unknown'}
                             </span>
                             <span>•</span>
                             <span className="capitalize">Method: {rec.check_in_method}</span>
@@ -1219,6 +1166,7 @@ export const AttendancePage: React.FC = () => {
                                   {new Date(rec.check_in_time).toLocaleTimeString([], {
                                     hour: '2-digit',
                                     minute: '2-digit',
+                                    timeZone: 'Africa/Accra',
                                   })}
                                 </span>
                               </>
@@ -1229,6 +1177,7 @@ export const AttendancePage: React.FC = () => {
 
                       <button
                         onClick={() => setRecordToUndo(rec)}
+                        disabled={!canEditAttendance}
                         className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition"
                         title="Undo check-in"
                       >
@@ -1240,7 +1189,7 @@ export const AttendancePage: React.FC = () => {
                   <div className="p-8 text-center text-xs text-slate-400 space-y-1">
                     <p>No individual check-ins recorded yet for {selectedService?.name} on this date.</p>
                     <p className="text-[11px] text-slate-400">
-                      Use the search bar above or launch Kiosk Mode for the foyer entrance desk.
+                      Use the search bar above or use the staff check-in screen at the entrance desk.
                     </p>
                   </div>
                 )}
@@ -1289,6 +1238,7 @@ export const AttendancePage: React.FC = () => {
               <div className="pt-2">
                 <button
                   onClick={() => setIsKioskOpen(true)}
+            disabled={!canRecordSession}
                   className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow-xs"
                 >
                   <Maximize2 className="w-3.5 h-3.5 text-teal-400" />
@@ -1301,13 +1251,14 @@ export const AttendancePage: React.FC = () => {
             <div className="bg-gradient-to-br from-blue-900 to-slate-900 p-5 rounded-2xl text-white shadow-xs space-y-3">
               <div className="flex items-center gap-2">
                 <HeartHandshake className="w-5 h-5 text-blue-300" />
-                <h4 className="font-bold text-sm">First-Time Visitors ({visitorsCheckedIn.length})</h4>
+                <h4 className="font-bold text-sm">Visitor Check-Ins ({visitorsCheckedIn.length})</h4>
               </div>
               <p className="text-xs text-blue-100/80 leading-relaxed">
                 Connect our newcomers to the Pastoral Care & Follow-Up team before they leave the premises.
               </p>
               <button
                 onClick={() => setIsQuickVisitorOpen(true)}
+                  disabled={!canRegisterVisitor}
                 className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-xs flex items-center justify-center gap-1.5"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -1329,13 +1280,16 @@ export const AttendancePage: React.FC = () => {
                   Official Auditorium Headcount & Usher Tally Sheet
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Count reported by protocol and ushering board for {selectedService?.name} on {selectedDate}
+                  Tally for {selectedService?.name} on {selectedDate}. Count each person once; exclude visitors and ushers from the other categories.
                 </p>
               </div>
 
               <div className="flex items-center gap-2">
+                {headcountDirty && <span className="text-xs text-amber-800">Unsaved changes</span>}
+                {headcountConflict && <button onClick={() => setHeadcountDirty(false)} className="px-3 py-2 text-xs text-amber-900 bg-amber-100 rounded-xl">Load latest saved headcount</button>}
                 <button
                   onClick={handleResetHeadcount}
+                  disabled={!canRecordSession}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
@@ -1343,10 +1297,11 @@ export const AttendancePage: React.FC = () => {
                 </button>
                 <button
                   onClick={handleSaveHeadcount}
+                  disabled={!canRecordSession || headcountConflict || !!headcountError(headcountForm)}
                   className="flex items-center gap-1.5 px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold transition shadow-md shadow-teal-700/20"
                 >
                   <Save className="w-4 h-4" />
-                  <span>Save & Lock to Records</span>
+                  <span>Save Headcount</span>
                 </button>
               </div>
             </div>
@@ -1360,9 +1315,13 @@ export const AttendancePage: React.FC = () => {
                 <input
                   type="number"
                   min="0"
+                  aria-label="Headcount men"
+                  step="1"
+                  max="1000000"
+                  disabled={!canRecordSession}
                   value={headcountForm.men}
                   onChange={(e) =>
-                    setHeadcountForm({ ...headcountForm, men: parseInt(e.target.value, 10) || 0 })
+                    editHeadcountForm({ ...headcountForm, men: Number(e.target.value) })
                   }
                   className="w-full text-2xl font-black text-slate-900 bg-white border border-slate-300 rounded-xl p-2.5 font-mono"
                 />
@@ -1376,9 +1335,13 @@ export const AttendancePage: React.FC = () => {
                 <input
                   type="number"
                   min="0"
+                  aria-label="Headcount women"
+                  step="1"
+                  max="1000000"
+                  disabled={!canRecordSession}
                   value={headcountForm.women}
                   onChange={(e) =>
-                    setHeadcountForm({ ...headcountForm, women: parseInt(e.target.value, 10) || 0 })
+                    editHeadcountForm({ ...headcountForm, women: Number(e.target.value) })
                   }
                   className="w-full text-2xl font-black text-slate-900 bg-white border border-slate-300 rounded-xl p-2.5 font-mono"
                 />
@@ -1392,9 +1355,13 @@ export const AttendancePage: React.FC = () => {
                 <input
                   type="number"
                   min="0"
+                  aria-label="Headcount youth"
+                  step="1"
+                  max="1000000"
+                  disabled={!canRecordSession}
                   value={headcountForm.youth}
                   onChange={(e) =>
-                    setHeadcountForm({ ...headcountForm, youth: parseInt(e.target.value, 10) || 0 })
+                    editHeadcountForm({ ...headcountForm, youth: Number(e.target.value) })
                   }
                   className="w-full text-2xl font-black text-slate-900 bg-white border border-slate-300 rounded-xl p-2.5 font-mono"
                 />
@@ -1408,9 +1375,13 @@ export const AttendancePage: React.FC = () => {
                 <input
                   type="number"
                   min="0"
+                  aria-label="Headcount children"
+                  step="1"
+                  max="1000000"
+                  disabled={!canRecordSession}
                   value={headcountForm.children}
                   onChange={(e) =>
-                    setHeadcountForm({ ...headcountForm, children: parseInt(e.target.value, 10) || 0 })
+                    editHeadcountForm({ ...headcountForm, children: Number(e.target.value) })
                   }
                   className="w-full text-2xl font-black text-slate-900 bg-white border border-slate-300 rounded-xl p-2.5 font-mono"
                 />
@@ -1419,18 +1390,22 @@ export const AttendancePage: React.FC = () => {
 
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-1">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                  First-Time Visitors
+                  Visitors In Auditorium
                 </span>
                 <input
                   type="number"
                   min="0"
+                  aria-label="Headcount visitors"
+                  step="1"
+                  max="1000000"
+                  disabled={!canRecordSession}
                   value={headcountForm.visitors}
                   onChange={(e) =>
-                    setHeadcountForm({ ...headcountForm, visitors: parseInt(e.target.value, 10) || 0 })
+                    editHeadcountForm({ ...headcountForm, visitors: Number(e.target.value) })
                   }
                   className="w-full text-2xl font-black text-blue-800 bg-white border border-slate-300 rounded-xl p-2.5 font-mono"
                 />
-                <p className="text-[11px] text-blue-600">New first-time attendees</p>
+                <p className="text-[11px] text-blue-600">Visitors counted separately</p>
               </div>
 
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-1">
@@ -1440,11 +1415,15 @@ export const AttendancePage: React.FC = () => {
                 <input
                   type="number"
                   min="0"
+                  aria-label="Headcount ushers_protocol"
+                  step="1"
+                  max="1000000"
+                  disabled={!canRecordSession}
                   value={headcountForm.ushers_protocol}
                   onChange={(e) =>
-                    setHeadcountForm({
+                    editHeadcountForm({
                       ...headcountForm,
-                      ushers_protocol: parseInt(e.target.value, 10) || 0,
+                      ushers_protocol: Number(e.target.value),
                     })
                   }
                   className="w-full text-2xl font-black text-slate-900 bg-white border border-slate-300 rounded-xl p-2.5 font-mono"
@@ -1459,11 +1438,15 @@ export const AttendancePage: React.FC = () => {
                 <input
                   type="number"
                   min="0"
+                  aria-label="Headcount online_viewers"
+                  step="1"
+                  max="1000000"
+                  disabled={!canRecordSession}
                   value={headcountForm.online_viewers}
                   onChange={(e) =>
-                    setHeadcountForm({
+                    editHeadcountForm({
                       ...headcountForm,
-                      online_viewers: parseInt(e.target.value, 10) || 0,
+                      online_viewers: Number(e.target.value),
                     })
                   }
                   className="w-full text-2xl font-black text-slate-900 bg-white border border-slate-300 rounded-xl p-2.5 font-mono"
@@ -1491,7 +1474,7 @@ export const AttendancePage: React.FC = () => {
                 <input
                   type="text"
                   value={headcountForm.counted_by}
-                  onChange={(e) => setHeadcountForm({ ...headcountForm, counted_by: e.target.value })}
+                  onChange={(e) => editHeadcountForm({ ...headcountForm, counted_by: e.target.value })}
                   placeholder="Enter usher or verifier name"
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-teal-600 font-medium"
                 />
@@ -1504,7 +1487,7 @@ export const AttendancePage: React.FC = () => {
                 <input
                   type="text"
                   value={headcountForm.notes}
-                  onChange={(e) => setHeadcountForm({ ...headcountForm, notes: e.target.value })}
+                  onChange={(e) => editHeadcountForm({ ...headcountForm, notes: e.target.value })}
                   placeholder="e.g. Overflow courtyard canopy opened; heavy rain in early morning..."
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-teal-600 font-medium"
                 />
@@ -1516,7 +1499,7 @@ export const AttendancePage: React.FC = () => {
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
             <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
               <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700">
-                Archived Headcounts Log ({headcounts.length} Recorded)
+                Service Headcounts Log ({serviceSessions.filter(session => session.headcount).length} Recorded)
               </h4>
               <span className="text-xs text-slate-500">Usher Audit Records</span>
             </div>
@@ -1538,7 +1521,7 @@ export const AttendancePage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {headcounts.map((h) => (
+                  {serviceSessions.flatMap(session => session.headcount ? [session.headcount] : []).map((h) => (
                     <tr key={h.id} className="hover:bg-slate-50 transition">
                       <td className="p-3 font-bold text-slate-900 font-mono">{h.date}</td>
                       <td className="p-3 font-medium text-slate-800">{h.service_name}</td>
@@ -1595,7 +1578,7 @@ export const AttendancePage: React.FC = () => {
               </button>
               <button
                 onClick={handleCommitBatchCheckIn}
-                disabled={batchSelectedMembers.size === 0}
+                disabled={!canRecordSession || batchSelectedMembers.size === 0}
                 className="flex items-center gap-1.5 px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold transition shadow-md shadow-teal-700/20 disabled:opacity-40"
               >
                 <Check className="w-4 h-4" />
@@ -1611,6 +1594,7 @@ export const AttendancePage: React.FC = () => {
                 Filter by Ministry / Department
               </label>
               <select
+                aria-label="Batch ministry"
                 value={selectedMinistryId}
                 onChange={(e) => setSelectedMinistryId(e.target.value)}
                 className="w-full px-3 py-2 text-xs font-bold text-slate-800 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-teal-600"
@@ -1633,6 +1617,7 @@ export const AttendancePage: React.FC = () => {
                 <input
                   type="text"
                   placeholder="Filter name or ID..."
+                  aria-label="Batch member search"
                   value={batchSearchTerm}
                   onChange={(e) => setBatchSearchTerm(e.target.value)}
                   className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-teal-600 font-medium"
@@ -1646,19 +1631,11 @@ export const AttendancePage: React.FC = () => {
             {departmentMembers.length > 0 ? (
               departmentMembers.map((m) => {
                 const isSelected = batchSelectedMembers.has(m.id);
-                const isAlreadyCheckedIn = alreadyCheckedInIds.has(m.id);
+                const isAlreadyCheckedIn = alreadyCheckedInIds.has(attendeeKey('member', m.id));
 
                 return (
-                  <div
+                  <label
                     key={m.id}
-                    onClick={() => {
-                      if (!isAlreadyCheckedIn) {
-                        const next = new Set(batchSelectedMembers);
-                        if (next.has(m.id)) next.delete(m.id);
-                        else next.add(m.id);
-                        setBatchSelectedMembers(next);
-                      }
-                    }}
                     className={`p-3.5 flex items-center justify-between transition cursor-pointer ${
                       isAlreadyCheckedIn
                         ? 'bg-slate-50 opacity-60 cursor-default'
@@ -1671,8 +1648,13 @@ export const AttendancePage: React.FC = () => {
                       <input
                         type="checkbox"
                         checked={isSelected || isAlreadyCheckedIn}
-                        disabled={isAlreadyCheckedIn}
-                        onChange={() => {}} // handled by row click
+                        disabled={!canRecordSession || isAlreadyCheckedIn}
+                        aria-label={`Select ${m.first_name} ${m.last_name}`}
+                        onChange={event => setBatchSelectedMembers(previous => {
+                          const next = new Set(previous);
+                          if (event.target.checked) next.add(m.id); else next.delete(m.id);
+                          return next;
+                        })}
                         className="w-4 h-4 text-teal-600 rounded-sm focus:ring-teal-500"
                       />
                       <div className="w-8 h-8 rounded-lg bg-teal-100 text-teal-800 font-bold flex items-center justify-center text-xs">
@@ -1700,7 +1682,7 @@ export const AttendancePage: React.FC = () => {
                         </span>
                       )}
                     </div>
-                  </div>
+                  </label>
                 );
               })
             ) : (
@@ -1729,7 +1711,7 @@ export const AttendancePage: React.FC = () => {
 
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-amber-800 bg-amber-50 px-3 py-1 rounded-xl border border-amber-200">
-                {absentMembers.length} Members Missing Today
+                {absentMembers.length} Members Not Checked In
               </span>
             </div>
           </div>
@@ -1755,7 +1737,7 @@ export const AttendancePage: React.FC = () => {
                       : cleanPhone;
 
                     const whatsappMessage = encodeURIComponent(
-                      `Praise the Lord Brother/Sister ${m.first_name}, greetings from ${settings.church_name || 'the church family'}! We missed your presence at our worship service today. Just checking on your well-being and praying God's richest blessings over your week. Let us know if you need any pastoral prayers. God bless you!`
+                      `Praise the Lord Brother/Sister ${m.first_name}, greetings from ${settings.church_name || 'the church family'}! We missed your presence at our ${selectedService?.name || 'service'} on ${formatServiceDayString(selectedDate)}. Just checking on your well-being and praying God's richest blessings over your week. Let us know if you need any pastoral prayers. God bless you!`
                     );
 
                     return (
@@ -1807,7 +1789,7 @@ export const AttendancePage: React.FC = () => {
                 ) : (
                   <tr>
                     <td colSpan={6} className="p-8 text-center text-slate-400 text-xs">
-                      All active registered members are logged present today! Glory to God!
+                      {currentSessionRecords.length || currentHeadcountRecord ? 'No active members without a check-in are listed for this session.' : 'Record a service session before reviewing members who have not checked in.'}
                     </td>
                   </tr>
                 )}
@@ -1829,7 +1811,7 @@ export const AttendancePage: React.FC = () => {
                     Congregation Attendance Trend (Recent Weeks)
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Total auditorium headcount across verified Sunday services
+                    Selected service only. Saved headcounts take precedence over unique check-ins.
                   </p>
                 </div>
                 <span className="text-xs font-bold text-teal-800 bg-teal-50 px-2.5 py-1 rounded-lg">
@@ -1866,7 +1848,7 @@ export const AttendancePage: React.FC = () => {
                       strokeWidth={3}
                       fillOpacity={1}
                       fill="url(#colorTotal)"
-                      name="Total Auditorium"
+                      name="Session Attendance"
                     />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -1876,8 +1858,8 @@ export const AttendancePage: React.FC = () => {
             {/* Demographic Breakdown Pie */}
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
               <div>
-                <h3 className="font-bold text-slate-900 text-sm">Demographic Share</h3>
-                <p className="text-xs text-slate-500">Gender & Age group distribution</p>
+                <h3 className="font-bold text-slate-900 text-sm">Session Demographics</h3>
+                <p className="text-xs text-slate-500">Saved headcount categories, or check-in demographics when no headcount is saved</p>
               </div>
 
               <div className="h-64 w-full">
@@ -1905,19 +1887,19 @@ export const AttendancePage: React.FC = () => {
               <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-100">
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-teal-600"></span>
-                  <span className="text-slate-600">Men: {headcountForm.men}</span>
+                  <span className="text-slate-600">Men: {currentHeadcountRecord?.men ?? 0}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-sky-600"></span>
-                  <span className="text-slate-600">Women: {headcountForm.women}</span>
+                  <span className="text-slate-600">Women: {currentHeadcountRecord?.women ?? 0}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-purple-500"></span>
-                  <span className="text-slate-600">Youth: {headcountForm.youth}</span>
+                  <span className="text-slate-600">Youth: {currentHeadcountRecord?.youth ?? 0}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
-                  <span className="text-slate-600">Children: {headcountForm.children}</span>
+                  <span className="text-slate-600">Children: {currentHeadcountRecord?.children ?? 0}</span>
                 </div>
               </div>
             </div>
@@ -1935,23 +1917,23 @@ export const AttendancePage: React.FC = () => {
                 Historical Attendance Logs & Registers
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Past Sunday and midweek worship sessions across church calendar
+                All recorded sessions for the selected service, including sessions without a headcount
               </p>
             </div>
 
             <button
-              onClick={handleExportCSV}
+              onClick={() => handleExportCSV(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>Export All Records</span>
+              <span>Export All Attendance</span>
             </button>
           </div>
 
           <div className="divide-y divide-slate-100">
-            {headcounts.map((h) => (
+            {serviceSessions.map((h) => (
               <div
-                key={h.id}
+                key={h.key}
                 className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50/50 p-3 rounded-xl transition"
               >
                 <div className="space-y-1">
@@ -1961,18 +1943,18 @@ export const AttendancePage: React.FC = () => {
                       {h.date}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500">{h.notes || 'Worship service session'}</p>
-                  <p className="text-[11px] text-slate-400">Recorded by: {h.counted_by || 'Usher Board'}</p>
+                  <p className="text-xs text-slate-500">{h.headcount?.notes || `${h.checkins} verified check-ins`}</p>
+                  <p className="text-[11px] text-slate-400">Recorded by: {h.headcount?.counted_by || 'Check-in register'}</p>
                 </div>
 
                 <div className="flex items-center gap-6 text-xs">
                   <div className="text-right">
                     <span className="text-[10px] uppercase font-bold text-slate-400">Headcount</span>
-                    <p className="font-black text-teal-800 text-base">{h.total_auditorium}</p>
+                    <p className="font-black text-teal-800 text-base">{h.headcount?.total_auditorium ?? '—'}</p>
                   </div>
                   <div className="text-right">
                     <span className="text-[10px] uppercase font-bold text-slate-400">Visitors</span>
-                    <p className="font-bold text-blue-700">{h.visitors}</p>
+                    <p className="font-bold text-blue-700">{h.headcount?.visitors ?? h.visitors}</p>
                   </div>
                   <button
                     onClick={() => {
@@ -2001,7 +1983,7 @@ export const AttendancePage: React.FC = () => {
         visitors={visitors}
         settings={settings}
         alreadyCheckedInIds={alreadyCheckedInIds}
-        onCheckIn={(type, id) => handleCheckIn(type, id, 'qr_code')}
+        onCheckIn={(type, id) => handleCheckIn(type, id, 'search')}
         onOpenQuickVisitorModal={() => {
           setIsKioskOpen(false);
           setIsQuickVisitorOpen(true);

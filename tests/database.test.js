@@ -233,7 +233,7 @@ test('service safeguards preserve legacy history, reject new broken links, prote
       for(const table of ['attendance','headcounts','roster_assignments','giving']) {
         const id='guard-'+table;
         await apply(db,[upsert('services',{id,name:'Guard '+table,type:'sunday',day_of_week:'Sunday',start_time:'08:00',end_time:'10:30',announcements:'Orientation after service',announcements_minister:'QA Secretary'})]);
-        const row={id:'record-'+table,service_id:id,service_name:'Guard '+table,date:'2026-10-11',member_name:'QA',role_title:'Usher',department:'ushers_protocol',category:'Offering',amount:50};
+        const row={id:'record-'+table,service_id:id,service_name:'Guard '+table,date:'2026-10-11',member_id:'qa-service-person',member_name:'QA',role_title:'Usher',department:'ushers_protocol',category:'Offering',amount:50};
         await apply(db,[upsert(table,row)]);
         await assert.rejects(apply(db,[{table:'services',id,operation:'delete'}]),/foreign key|history.*archived/i);
         await apply(db,[upsert('services',{id,is_active:false})]);
@@ -249,5 +249,57 @@ test('service safeguards preserve legacy history, reject new broken links, prote
       await assert.rejects(apply(db,[upsert('services',{id:'unauthorized',name:'Not allowed'})]),error=>error.code==='42501');
     });
     assert.equal((await db.query("SELECT count(*)::int n FROM public.attendance WHERE id='legacy-service-attendance'")).rows[0].n,1);
+  }finally{await db.close();}
+});
+
+test('attendance integrity classifies visitors, rejects duplicates and invalid tallies, and restricts write access',async()=>{
+  const db=await setupDatabase();
+  try{
+    await asUser(db,root,async()=>{
+      await apply(db,[upsert('services',{id:'attendance-service',name:'Test service',type:'sunday',day_of_week:'Sunday',start_time:'08:00',end_time:'10:30'})]);
+      const row={id:'visit-one',service_id:'attendance-service',service_name:'Test service',date:'2026-10-11',visitor_id:'visitor',person_type:'member',status:'present'};
+      await apply(db,[upsert('attendance',row)]);
+      assert.equal((await db.query("SELECT person_type FROM public.attendance WHERE id='visit-one'")).rows[0].person_type,'visitor');
+      await assert.rejects(apply(db,[upsert('attendance',{...row,id:'visit-duplicate'})]),/unique constraint/);
+      await assert.rejects(apply(db,[upsert('attendance',{...row,id:'both',member_id:'member'})]),/exactly one/);
+      await assert.rejects(apply(db,[upsert('attendance',{...row,id:'none',visitor_id:null})]),/exactly one/);
+      await assert.rejects(apply(db,[upsert('attendance',{...row,id:'future',date:'2999-01-01'})]),/check constraint/);
+      await assert.rejects(apply(db,[upsert('attendance',{...row,id:'bad-status',status:'unknown'})]),/check constraint/);
+      const head={id:'head',service_id:'attendance-service',date:'2026-10-11',men:2,women:3,youth:4,children:5,visitors:1,ushers_protocol:2,online_viewers:7,total_auditorium:17};
+      await apply(db,[upsert('headcounts',head)]);
+      await assert.rejects(apply(db,[upsert('headcounts',{...head,id:'head-duplicate'})]),/unique constraint/);
+      await assert.rejects(apply(db,[upsert('headcounts',{...head,date:'2026-10-10',id:'head-negative',men:-1,total_auditorium:14})]),/check constraint/);
+      await assert.rejects(apply(db,[upsert('headcounts',{...head,date:'2026-10-10',id:'head-bad-total',total_auditorium:999})]),/check constraint/);
+      await apply(db,[upsert('services',{id:'archive',name:'Archived original',type:'special',day_of_week:'',start_time:'',end_time:'',is_active:false})]);
+      await assert.rejects(apply(db,[upsert('services',{id:'archive',is_active:true})]),/check constraint/);
+    });
+    await asUser(db,member,async()=>{
+      await assert.rejects(apply(db,[upsert('attendance',{id:'unauthorized',service_id:'attendance-service',member_id:'member',date:'2026-10-11'})]),error=>error.code==='42501');
+    });
+    await db.exec(`UPDATE public.profiles SET role='attendance_officer',authorization_reviewed_at=now() WHERE id='${other}'`);
+    await asUser(db,other,async()=>{
+      await apply(db,[upsert('attendance',{id:'officer',service_id:'attendance-service',member_id:'member',date:'2026-10-11'})]);
+      assert.equal((await db.query("SELECT person_type FROM public.attendance WHERE id='officer'")).rows[0].person_type,'member');
+    });
+  }finally{await db.close();}
+});
+
+test('service history recovery preserves original IDs and overlapping sessions, leaves ambiguous names untouched and is repeatable',async()=>{
+  const db=await setupDatabase({beforeSecurityUpgrade:async db=>{
+    await db.exec(`INSERT INTO public.attendance(id,service_id,service_name,date,member_id) VALUES
+      ('history-one','old-one','Former Sunday','2026-10-04','history-member'),
+      ('history-two','old-two','Former Sunday','2026-10-04','history-member'),
+      ('ambiguous-one','ambiguous','One service','2026-10-04','history-other'),
+      ('ambiguous-two','ambiguous','Another service','2026-10-11','history-other');`);
+  }});
+  try{
+    const before=(await db.query('SELECT id,service_id,date,member_id FROM public.attendance ORDER BY id')).rows;
+    const recovery=fs.readFileSync('scripts/recover-service-history.sql','utf8');
+    await db.exec(recovery);
+    assert.equal((await db.query("SELECT count(*)::int n FROM public.services WHERE id IN ('old-one','old-two') AND NOT is_active AND start_time='' AND end_time='' AND day_of_week=''")).rows[0].n,2);
+    assert.equal((await db.query("SELECT count(*)::int n FROM public.services WHERE id='ambiguous'")).rows[0].n,0);
+    assert.deepEqual((await db.query('SELECT id,service_id,date,member_id FROM public.attendance ORDER BY id')).rows,before);
+    await db.exec(recovery);
+    assert.equal((await db.query("SELECT count(*)::int n FROM public.audit_logs WHERE action='RESTORE_SERVICE_REFERENCES'")).rows[0].n,1);
   }finally{await db.close();}
 });

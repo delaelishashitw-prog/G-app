@@ -100,9 +100,9 @@ export const Header: React.FC<HeaderProps> = ({
     prayerRequests.filter((p) => p.status === 'new').length;
 
   return (
-    <header className="sticky top-0 z-30 flex items-center justify-between h-16 px-4 sm:px-6 bg-white dark:bg-[#0b1120] border-b border-slate-200 dark:border-slate-800 shadow-xs transition-colors duration-200">
+    <header className="sticky top-0 z-30 flex items-center justify-between gap-2 h-16 px-3 sm:px-6 bg-white dark:bg-[#0b1120] border-b border-slate-200 dark:border-slate-800 shadow-xs transition-colors duration-200">
       {/* Left side: Mobile menu toggle + Location info */}
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <button
           onClick={onToggleMobileMenu}
           className="p-2 rounded-lg text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 lg:hidden"
@@ -121,10 +121,10 @@ export const Header: React.FC<HeaderProps> = ({
               loading="eager"
             />
           </div>
-          <span className="font-bold text-xs text-slate-900 dark:text-white truncate">CMS</span>
+          <span className="hidden sm:inline font-bold text-xs text-slate-900 dark:text-white truncate">CMS</span>
         </div>
 
-        <div className="hidden sm:flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+        <div className="hidden 2xl:flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
           <img
             src="/assets/logo.png"
             alt="Church Logo"
@@ -145,7 +145,7 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Global Command Palette / Quick Search Bar */}
-      <div className="flex-1 max-w-md mx-3 lg:mx-6 hidden md:block">
+      <div className="min-w-0 flex-1 max-w-md mx-3 lg:mx-6 hidden xl:block">
         <button
           type="button"
           onClick={onOpenSearch}
@@ -170,7 +170,7 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Center/Right controls */}
-      <div className="flex items-center gap-2 sm:gap-3">
+      <div className="flex shrink-0 items-center gap-1 sm:gap-2">
         {/* Offline Connectivity Warning Badge */}
         {!isOnline && (
           <span
@@ -178,14 +178,14 @@ export const Header: React.FC<HeaderProps> = ({
             title="Navigator reports offline. System operating with local caching."
           >
             <WifiOff className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-            <span>Offline Mode</span>
+            <span className="hidden sm:inline">Offline Mode</span>
           </span>
         )}
 
         {/* Supabase Cloud Status Indicator */}
         <Link
           to="/settings"
-          className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition border ${
+          className={`hidden 2xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition border ${
             supabaseStatus === 'connected'
               ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 shadow-2xs'
               : supabaseStatus === 'tables_missing'
@@ -236,7 +236,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={handleHeaderRefresh}
           disabled={isRefreshing}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white text-xs font-semibold transition shadow-2xs cursor-pointer disabled:opacity-60"
+          className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white text-xs font-semibold transition shadow-2xs cursor-pointer disabled:opacity-60"
           title={`Refresh Church Data (Ctrl+Shift+R) • Last updated: ${lastRefreshedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
         >
           <RefreshCw
@@ -244,7 +244,7 @@ export const Header: React.FC<HeaderProps> = ({
               isRefreshing ? 'animate-spin text-emerald-600 dark:text-emerald-400' : ''
             }`}
           />
-          <span className="hidden md:inline">
+          <span className="hidden 2xl:inline">
             {isRefreshing ? 'Refreshing...' : 'Refresh'}
           </span>
         </button>
@@ -252,11 +252,11 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Mobile / Compact Search Trigger */}
         <button
           onClick={onOpenSearch}
-          className="md:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 text-xs transition shadow-2xs"
+          className="xl:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 text-xs transition shadow-2xs"
           title="Global Search across Members, Pages, Tasks (Ctrl+K or /)"
         >
           <Search className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-          <span className="font-mono text-[10px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1 py-0.2 rounded text-slate-400 dark:text-slate-500">
+          <span className="hidden sm:inline font-mono text-[10px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1 py-0.2 rounded text-slate-400 dark:text-slate-500">
             ⌘K
           </span>
         </button>
@@ -265,7 +265,7 @@ export const Header: React.FC<HeaderProps> = ({
         {onOpenShortcutsHelp && (
           <button
             onClick={onOpenShortcutsHelp}
-            className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 text-xs transition shadow-2xs"
+            className="hidden 2xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 text-xs transition shadow-2xs"
             title="Keyboard Shortcuts Cheat Sheet (Press ? anytime)"
           >
             <Keyboard className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
@@ -279,18 +279,18 @@ export const Header: React.FC<HeaderProps> = ({
         {onOpenAssistant && (
           <button
             onClick={onOpenAssistant}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-800 to-teal-800 hover:from-emerald-700 hover:to-teal-700 text-white text-xs sm:text-sm font-semibold shadow-xs transition border border-emerald-600/40"
+            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-800 to-teal-800 hover:from-emerald-700 hover:to-teal-700 text-white text-xs sm:text-sm font-semibold shadow-xs transition border border-emerald-600/40"
             title="Open GWCC Pastoral AI Assistant (Gemini 3.8 Flash)"
           >
             <Sparkles className="w-4 h-4 text-emerald-300 animate-pulse" />
-            <span className="hidden sm:inline">AI Assistant</span>
+            <span className="hidden 2xl:inline">AI Assistant</span>
           </button>
         )}
 
         {/* Member Portal Link for quick staff preview */}
         <Link
           to="/portal"
-          className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold border border-emerald-200 transition"
+          className="hidden 2xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold border border-emerald-200 transition"
           title="Open Member Self-Service Portal"
         >
           <User className="w-3.5 h-3.5 text-emerald-700" />
@@ -301,11 +301,11 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="relative">
           <button
             onClick={() => setQuickMenuOpen(!quickMenuOpen)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#064e3b] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold shadow-xs transition"
+            className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg bg-[#064e3b] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold shadow-xs transition"
           >
             <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">Quick Action</span>
-            <ChevronDown className="w-3.5 h-3.5 opacity-80" />
+            <span className="hidden 2xl:inline">Quick Action</span>
+            <ChevronDown className="hidden sm:block w-3.5 h-3.5 opacity-80" />
           </button>
 
           {quickMenuOpen && (
@@ -374,7 +374,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           type="button"
           onClick={toggleTheme}
-          className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/90 text-slate-600 dark:text-amber-400 hover:text-slate-900 dark:hover:text-amber-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition shadow-2xs group cursor-pointer"
+          className="p-1.5 sm:p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/90 text-slate-600 dark:text-amber-400 hover:text-slate-900 dark:hover:text-amber-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition shadow-2xs group cursor-pointer"
           title={isDark ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
           aria-label={isDark ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
         >
@@ -388,7 +388,7 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Notifications Button */}
         <button
           onClick={onOpenNotifications}
-          className="relative p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700 transition shadow-2xs cursor-pointer"
+          className="relative p-1.5 sm:p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700 transition shadow-2xs cursor-pointer"
           title="Notifications & Action Items"
         >
           <Bell className="w-5 h-5" />
@@ -403,7 +403,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="relative pl-1">
           <button
             onClick={() => setProfileOpen(!profileOpen)}
-            className="flex items-center gap-2 p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+            className="flex items-center gap-2 p-1 sm:p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
           >
             {currentUser.avatar_url ? (
               <img
@@ -417,7 +417,7 @@ export const Header: React.FC<HeaderProps> = ({
                 {currentUser.last_name[0]}
               </div>
             )}
-            <div className="hidden xl:flex flex-col text-left">
+            <div className="hidden 2xl:flex flex-col text-left">
               <span className="text-xs font-bold text-slate-800 dark:text-slate-200 leading-tight">
                 {currentUser.first_name} {currentUser.last_name}
               </span>
@@ -425,7 +425,7 @@ export const Header: React.FC<HeaderProps> = ({
                 {ROLE_LABELS[currentRole].title}
               </span>
             </div>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+            <ChevronDown className="hidden sm:block w-3.5 h-3.5 text-slate-400" />
           </button>
 
           {profileOpen && (

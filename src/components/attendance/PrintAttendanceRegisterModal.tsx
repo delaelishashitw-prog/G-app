@@ -3,6 +3,8 @@ import { Printer, X, Download, ShieldCheck, CheckCircle2, Users } from 'lucide-r
 import { ChurchSettings, ChurchService, AttendanceRecord, HeadcountRecord } from '../../types/database.types';
 import { formatServiceDayString } from '../../lib/attendanceDateUtils';
 import { PastorSignature } from '../common/PastorSignature';
+import { attendancePersonType, uniquePresentAttendance } from '../../features/attendance/attendanceInsights';
+import { serviceScheduleLabel } from '../../features/services/serviceSchedule';
 
 interface PrintAttendanceRegisterModalProps {
   isOpen: boolean;
@@ -29,13 +31,14 @@ export const PrintAttendanceRegisterModal: React.FC<PrintAttendanceRegisterModal
     window.print();
   };
 
-  const membersList = records.filter((r) => r.person_type === 'member');
-  const visitorsList = records.filter((r) => r.person_type === 'visitor');
+  const presentRecords = uniquePresentAttendance(records);
+  const membersList = presentRecords.filter((r) => attendancePersonType(r) === 'member');
+  const visitorsList = presentRecords.filter((r) => attendancePersonType(r) === 'visitor');
 
   const formattedDate = formatServiceDayString(date);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-in fade-in">
+    <div role="dialog" aria-modal="true" aria-label="Attendance register" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-in fade-in">
       <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in-95 my-auto">
         {/* Modal Toolbar (hidden when printing) */}
         <div className="no-print p-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
@@ -54,6 +57,7 @@ export const PrintAttendanceRegisterModal: React.FC<PrintAttendanceRegisterModal
             </button>
             <button
               onClick={onClose}
+              aria-label="Close attendance register"
               className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition"
             >
               <X className="w-5 h-5" />
@@ -105,7 +109,7 @@ export const PrintAttendanceRegisterModal: React.FC<PrintAttendanceRegisterModal
             <div>
               <span className="text-[10px] font-bold uppercase text-slate-400">Time</span>
               <p className="font-bold text-slate-900 mt-0.5">
-                {service ? `${service.start_time} - ${service.end_time}` : 'Morning Service'}
+                {service ? serviceScheduleLabel(service) : 'Historical session'}
               </p>
             </div>
             <div>
@@ -142,12 +146,11 @@ export const PrintAttendanceRegisterModal: React.FC<PrintAttendanceRegisterModal
                   <td className="border border-slate-300 p-2">{headcount?.women || 0}</td>
                   <td className="border border-slate-300 p-2">{headcount?.youth || 0}</td>
                   <td className="border border-slate-300 p-2">{headcount?.children || 0}</td>
-                  <td className="border border-slate-300 p-2 text-blue-700">{headcount?.visitors || visitorsList.length}</td>
+                  <td className="border border-slate-300 p-2 text-blue-700">{headcount?.visitors ?? visitorsList.length}</td>
                   <td className="border border-slate-300 p-2">{headcount?.ushers_protocol || 0}</td>
                   <td className="border border-slate-300 p-2 text-slate-500">{headcount?.online_viewers || 0}</td>
                   <td className="border border-slate-300 p-2 bg-teal-50 text-teal-800 text-base font-black">
-                    {headcount?.total_auditorium ||
-                      (headcount ? headcount.men + headcount.women + headcount.children + headcount.visitors : records.length)}
+                    {headcount?.total_auditorium ?? presentRecords.length}
                   </td>
                 </tr>
               </tbody>
@@ -158,7 +161,7 @@ export const PrintAttendanceRegisterModal: React.FC<PrintAttendanceRegisterModal
           <div className="mb-8">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                Logged Attendees Roster ({records.length} Recorded)
+                Logged Attendees Roster ({presentRecords.length} Recorded)
               </h3>
               <span className="text-[11px] text-slate-500">
                 {membersList.length} Members • {visitorsList.length} Visitors
@@ -176,8 +179,8 @@ export const PrintAttendanceRegisterModal: React.FC<PrintAttendanceRegisterModal
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {records.length > 0 ? (
-                  records.map((rec, index) => (
+                {presentRecords.length > 0 ? (
+                  presentRecords.map((rec, index) => (
                     <tr key={rec.id} className="hover:bg-slate-50">
                       <td className="border border-slate-300 p-2 text-center text-slate-400 font-mono">
                         {index + 1}
@@ -188,19 +191,19 @@ export const PrintAttendanceRegisterModal: React.FC<PrintAttendanceRegisterModal
                       <td className="border border-slate-300 p-2 capitalize">
                         <span
                           className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            rec.person_type === 'visitor'
+                            attendancePersonType(rec) === 'visitor'
                               ? 'bg-blue-100 text-blue-800'
                               : 'bg-emerald-100 text-emerald-800'
                           }`}
                         >
-                          {rec.person_type || 'member'}
+                          {attendancePersonType(rec) || 'unknown'}
                         </span>
                       </td>
                       <td className="border border-slate-300 p-2 text-slate-600 capitalize">
                         {rec.check_in_method || 'manual'}
                       </td>
                       <td className="border border-slate-300 p-2 text-right font-mono text-slate-500">
-                        {rec.check_in_time ? new Date(rec.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                        {rec.check_in_time ? new Date(rec.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Accra' }) : '—'}
                       </td>
                     </tr>
                   ))
