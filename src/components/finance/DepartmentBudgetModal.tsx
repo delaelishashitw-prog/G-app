@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { X, Check, Building, Plus } from 'lucide-react';
 import { useToast } from '../../contexts/ToastContext';
+import {budgetPeriodRange} from '../../lib/budgetPeriod';
+import {ghanaToday} from '../../lib/financeViewUtils';
 
 export interface DepartmentBudget {
   id: string;
@@ -8,11 +10,12 @@ export interface DepartmentBudget {
   allocated: number;
   spent: number;
   lead: string;
+  period?:string;
 }
 
 interface DepartmentBudgetModalProps {
   initialBudget?: DepartmentBudget | null;
-  onSave: (budget: DepartmentBudget) => void;
+  onSave: (budget: DepartmentBudget & {period:string}) => void;
   onDelete?: (id: string) => void;
   onClose: () => void;
 }
@@ -30,12 +33,13 @@ export const DepartmentBudgetModal: React.FC<DepartmentBudgetModalProps> = ({
     name: initialBudget?.name || '',
     allocated: initialBudget ? initialBudget.allocated.toString() : '',
     lead: initialBudget?.lead || '',
+    period:initialBudget?.period||`${ghanaToday().slice(0,4)} Annual`,
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const allocatedNum = parseFloat(form.allocated);
-    if (isNaN(allocatedNum) || allocatedNum <= 0) {
+    const allocatedNum = Math.round(Number(form.allocated)*100)/100;
+    if (!Number.isFinite(allocatedNum) || allocatedNum <= 0) {
       error('Invalid Budget Allocation', 'Please enter a valid positive allocation.');
       return;
     }
@@ -44,14 +48,16 @@ export const DepartmentBudgetModal: React.FC<DepartmentBudgetModalProps> = ({
       error('Missing Name', 'Please provide a department or ministry name.');
       return;
     }
+    if(!budgetPeriodRange(form.period)){error('Invalid Budget Period','Use a year (2026 Annual), quarter (Q1-2026) or month (2026-10).');return;}
 
-    onSave({
-      id: initialBudget?.id || `bdg-${Date.now()}`,
+    try{onSave({
+      id: initialBudget?.id || crypto.randomUUID(),
       name: form.name.trim(),
       allocated: allocatedNum,
       spent: initialBudget?.spent || 0,
       lead: form.lead.trim() || 'Department Committee',
-    });
+      period:form.period.trim(),
+    });}catch(cause){error('Budget not recorded',(cause as Error).message);}
   };
 
   return (
@@ -67,7 +73,7 @@ export const DepartmentBudgetModal: React.FC<DepartmentBudgetModalProps> = ({
               <h3 className="text-base font-bold">
                 {initialBudget ? 'Adjust Department Budget' : 'Add Department Budget'}
               </h3>
-              <p className="text-xs text-purple-200">Financial Year {new Date().getFullYear()} Allocations</p>
+              <p className="text-xs text-purple-200">Allocation and reporting period</p>
             </div>
           </div>
           <button onClick={onClose} className="p-1 text-purple-200 hover:text-white cursor-pointer">
@@ -77,11 +83,12 @@ export const DepartmentBudgetModal: React.FC<DepartmentBudgetModalProps> = ({
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4 text-xs">
           <div>
-            <label className="block font-semibold text-slate-700 mb-1">
+            <label htmlFor="budget-department" className="block font-semibold text-slate-700 mb-1">
               Department / Ministry Name *
             </label>
             <input
               type="text"
+              id="budget-department"
               required
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -91,12 +98,14 @@ export const DepartmentBudgetModal: React.FC<DepartmentBudgetModalProps> = ({
           </div>
 
           <div>
-            <label className="block font-semibold text-slate-700 mb-1">
+            <label htmlFor="budget-allocation" className="block font-semibold text-slate-700 mb-1">
               Budget Allocation (GH₵) *
             </label>
             <input
               type="number"
-              step="100"
+              id="budget-allocation"
+              step="0.01"
+              min="0.01"
               required
               value={form.allocated}
               onChange={(e) => setForm({ ...form, allocated: e.target.value })}
@@ -104,6 +113,11 @@ export const DepartmentBudgetModal: React.FC<DepartmentBudgetModalProps> = ({
               placeholder="5000.00"
             />
           </div>
+
+          <label className="block font-semibold text-slate-700">Budget period
+            <input aria-label="Budget period" type="text" required value={form.period} onChange={e=>setForm({...form,period:e.target.value})} className="mt-1 block w-full border border-slate-300 rounded-lg p-2"/>
+            <span className="block mt-1 font-normal text-slate-500">For example: 2026 Annual, Q1-2026 or 2026-10.</span>
+          </label>
 
           <div>
             <label className="block font-semibold text-slate-700 mb-1">

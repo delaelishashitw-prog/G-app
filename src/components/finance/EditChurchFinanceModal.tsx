@@ -21,6 +21,7 @@ export const EditChurchFinanceModal: React.FC<EditChurchFinanceModalProps> = ({
 }) => {
   const isIncomeType = record.transaction_type === 'income' || record.transaction_type === 'grant';
   const categoryOptions = isIncomeType ? CHURCH_INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const isCashCount=Boolean(record.cash_count_key);
 
   const [title, setTitle] = useState(record.title || '');
   const [amount, setAmount] = useState(record.amount ? record.amount.toFixed(2) : '');
@@ -41,8 +42,8 @@ export const EditChurchFinanceModal: React.FC<EditChurchFinanceModalProps> = ({
     e.preventDefault();
     setErrorMsg('');
 
-    const parsedAmt = parseFloat(amount);
-    if (isNaN(parsedAmt) || parsedAmt <= 0) {
+    const parsedAmt = Number(amount);
+    if (!Number.isFinite(parsedAmt) || parsedAmt <= 0) {
       setErrorMsg('Please enter a valid amount greater than 0.');
       return;
     }
@@ -53,6 +54,7 @@ export const EditChurchFinanceModal: React.FC<EditChurchFinanceModalProps> = ({
     }
 
     const selectedAcc = churchAccounts.find((a) => a.id === accountId);
+    if(!selectedAcc?.is_active){setErrorMsg('Select an active holding account. Resolve missing historical account links through reconciliation before editing.');return;}
     const roundedAmt = Math.round(parsedAmt * 100) / 100;
 
     setIsSubmitting(true);
@@ -110,6 +112,7 @@ export const EditChurchFinanceModal: React.FC<EditChurchFinanceModalProps> = ({
           </div>
         )}
 
+        {isCashCount&&<p className="text-sm rounded-lg bg-amber-50 text-amber-950 p-3 mb-3">To correct this cash count’s amount, date, account or denominations, void it and post a replacement sheet. Its descriptive details can be edited here.</p>}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -130,7 +133,7 @@ export const EditChurchFinanceModal: React.FC<EditChurchFinanceModalProps> = ({
                 Holding Account *
               </label>
               <select
-                value={accountId}
+                value={accountId} disabled={isCashCount}
                 onChange={(e) => setAccountId(e.target.value)}
                 className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
               >
@@ -151,7 +154,7 @@ export const EditChurchFinanceModal: React.FC<EditChurchFinanceModalProps> = ({
                 step="0.01"
                 min="0.01"
                 required
-                value={amount}
+                value={amount} readOnly={isCashCount}
                 onChange={(e) => setAmount(e.target.value)}
                 className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white font-bold focus:outline-none"
               />
@@ -210,7 +213,7 @@ export const EditChurchFinanceModal: React.FC<EditChurchFinanceModalProps> = ({
               <input
                 type="date"
                 required
-                value={date}
+                value={date} readOnly={isCashCount}
                 onChange={(e) => setDate(e.target.value)}
                 className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
               />
@@ -223,7 +226,7 @@ export const EditChurchFinanceModal: React.FC<EditChurchFinanceModalProps> = ({
                 Payment Channel
               </label>
               <select
-                value={paymentMethod}
+                value={paymentMethod} disabled={isCashCount}
                 onChange={(e) => setPaymentMethod(e.target.value)}
                 className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
               >
