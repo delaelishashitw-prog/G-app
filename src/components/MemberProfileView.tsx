@@ -49,6 +49,7 @@ import { AddPastoralNoteModal } from './members/AddPastoralNoteModal';
 import { MemberDossierModal } from './members/MemberDossierModal';
 import { MemberGivingStatementModal } from './finance/MemberGivingStatementModal';
 import { ArchiveMemberModal } from './members/ArchiveMemberModal';
+import { MemberPortalAccessModal } from './members/MemberPortalAccessModal';
 import {
   getLinkedFamilyMembers,
   buildFamilyBlessingWhatsAppUrl,
@@ -139,6 +140,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
 
   // Modals state
   const [isIdCardOpen, setIsIdCardOpen] = useState(false);
+  const [isPortalAccessOpen, setIsPortalAccessOpen] = useState(false);
   const [isGivingModalOpen, setIsGivingModalOpen] = useState(false);
   const [isPastoralModalOpen, setIsPastoralModalOpen] = useState(false);
   const [isDossierOpen, setIsDossierOpen] = useState(false);
@@ -308,6 +310,10 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
 
         {/* Quick Top Actions Toolbar */}
         <div className="flex items-center flex-wrap gap-2">
+          {currentRole === 'super_admin' && <button type="button" onClick={() => setIsPortalAccessOpen(true)}
+            className="px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 text-xs font-bold flex items-center gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5" />Portal Access
+          </button>}
           {/* Quick Record Giving Button */}
           <button
             type="button"
@@ -1723,6 +1729,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
       </div>
 
       {/* Member Modals */}
+      {isPortalAccessOpen && currentRole === 'super_admin' && <MemberPortalAccessModal key={member.id} member={member} onClose={() => setIsPortalAccessOpen(false)} />}
       <MemberIdCardModal
         isOpen={isIdCardOpen}
         onClose={() => setIsIdCardOpen(false)}

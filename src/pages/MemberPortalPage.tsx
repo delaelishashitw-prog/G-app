@@ -228,6 +228,8 @@ export const MemberPortalPage: React.FC = () => {
     currentRole,
     isAuthenticated,
     loginAsMember,
+    resetPassword,
+    isAuthLoading,
     setPortalMember,
     logout,
   } = useAuth();
@@ -316,6 +318,8 @@ export const MemberPortalPage: React.FC = () => {
   const [identifier, setIdentifier] = useState('');
   const [pin, setPin] = useState('');
   const [showPin, setShowPin] = useState(false);
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
+  const [resetMessage, setResetMessage] = useState('');
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -917,18 +921,23 @@ export const MemberPortalPage: React.FC = () => {
   const handleMemberSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
+    setResetMessage('');
     if (!identifier.trim()) {
       setLoginError('Please enter your verified email address.');
       return;
     }
-    if (!pin.trim()) {
-      setLoginError(requiresCloudMemberAuth
-        ? 'Please enter your verified Supabase account password.'
-        : 'Please enter your 4-digit PIN or password.');
+    if (!isResettingPassword && !pin.trim()) {
+      setLoginError('Please enter your account password.');
       return;
     }
     setIsSigningIn(true);
     try {
+      if (isResettingPassword) {
+        const result = await resetPassword(identifier);
+        if (result.success) setResetMessage(result.message + ' Check your inbox and spam folder.');
+        else setLoginError(result.message);
+        return;
+      }
       const res = await loginAsMember(identifier, pin);
       if (res.success) {
         toastSuccess('Member Portal Opened', res.message);
@@ -1032,7 +1041,7 @@ export const MemberPortalPage: React.FC = () => {
       return;
     }
     if (newPortalPin && newPortalPin.length < 12) {
-      toastError('Password Too Short', 'Supabase member account passwords must be at least 12 characters.');
+      toastError('Password Too Short', 'Member account passwords must be at least 12 characters.');
       return;
     }
     if (
@@ -1100,9 +1109,7 @@ export const MemberPortalPage: React.FC = () => {
               Member Self-Service Portal
             </p>
             <p className="text-[11px] text-slate-400">
-              {requiresCloudMemberAuth
-                ? 'Sign in with your Member ID, phone number, or email and your verified Supabase account password.'
-                : 'Sign in with your Member ID, registered phone number, or email and your 4-digit PIN.'}
+              Sign in with your verified email address and account password.
             </p>
           </div>
 
@@ -1134,23 +1141,30 @@ export const MemberPortalPage: React.FC = () => {
           )}
 
           {loginError && (
-            <div className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-center gap-2">
+            <div role="alert" className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
               <span>{loginError}</span>
             </div>
           )}
+          {resetMessage && <p role="status" className="mb-4 p-3 rounded-xl bg-emerald-500/10 text-emerald-200 text-xs">{resetMessage}</p>}
+          {!isAuthLoading && isAuthenticated && currentRole === 'member' && !currentMember && <div role="alert" className="mb-4 p-3 rounded-xl bg-amber-500/10 text-amber-200 text-xs space-y-2">
+            <p>Your login is not linked to a member record yet. Contact the church office to activate your Portal Access.</p>
+            <button type="button" onClick={() => void logout()} className="underline font-bold">Sign out</button>
+          </div>}
 
           {/* Member Sign-in Form */}
           <form onSubmit={handleMemberSignIn} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1">
-                Member ID, Phone, or Email <span className="text-red-400">*</span>
+              <label htmlFor="member-login-email" className="block text-xs font-bold text-slate-300 mb-1">
+                Email address <span className="text-red-400">*</span>
               </label>
               <div className="relative">
                 <input
-                  type="text"
+                  id="member-login-email"
+                  type="email"
+                  autoComplete="username"
                   required
-                  placeholder="e.g. GWCC-000002 or 0208765432"
+                  placeholder="Your verified email address"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   className="w-full pl-10 pr-3 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
@@ -1159,20 +1173,22 @@ export const MemberPortalPage: React.FC = () => {
               </div>
             </div>
 
-            <div>
+            {!isResettingPassword && <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-bold text-slate-300">
-                  {requiresCloudMemberAuth ? 'Supabase Account Password' : 'Password or 4-Digit PIN'} <span className="text-red-400">*</span>
+                <label htmlFor="member-login-password" className="block text-xs font-bold text-slate-300">
+                  Password <span className="text-red-400">*</span>
                 </label>
                 <span className="text-[10px] text-emerald-400 font-medium">
-                  {requiresCloudMemberAuth ? 'Use your verified member account' : 'Default: Phone last 4 digits'}
+                  Use your member account password
                 </span>
               </div>
               <div className="relative">
                 <input
                   type={showPin ? 'text' : 'password'}
+                  id="member-login-password"
+                  autoComplete="current-password"
                   required
-                  placeholder={requiresCloudMemberAuth ? 'Enter your account password' : 'Enter 4-digit PIN (e.g. 5432)'}
+                  placeholder="Enter your account password"
                   value={pin}
                   onChange={(e) => setPin(e.target.value)}
                   className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
@@ -1181,27 +1197,31 @@ export const MemberPortalPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowPin(!showPin)}
+                  aria-label={showPin ? 'Hide password' : 'Show password'}
                   className="absolute right-3.5 top-3 text-slate-400 hover:text-slate-200"
                 >
                   {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-            </div>
+            </div>}
 
             <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-700/60 text-[11px] text-slate-300 flex items-start gap-2">
               <Info className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
               <span>
-                <strong>Secure member account:</strong> Use your verified email and password. Ask the church office to link your account if you need access.
+                {isResettingPassword ? <>Enter your account email to request a secure password reset link.</> : <><strong>First time here?</strong> Ask the church office for a member invitation. Open the email and set your password before signing in. Member IDs, phone numbers and PINs are not used for sign-in.</>}
               </span>
             </div>
 
             <button
               type="submit"
-              disabled={isSigningIn}
+              disabled={isSigningIn || isAuthLoading}
               className="w-full py-3 bg-[#064e3b] hover:bg-[#047857] text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/50 disabled:opacity-50"
             >
               <Church className="w-4 h-4" />
-              <span>{isSigningIn ? 'Verifying Member...' : 'Sign In to Member Portal'}</span>
+              <span>{isSigningIn ? 'Please wait…' : isResettingPassword ? 'Send password reset link' : 'Sign In to Member Portal'}</span>
+            </button>
+            <button type="button" disabled={isSigningIn} onClick={() => { setIsResettingPassword(value => !value); setLoginError(null); setResetMessage(''); setPin(''); }} className="w-full text-xs text-emerald-300 hover:text-emerald-200 underline py-1">
+              {isResettingPassword ? 'Back to member sign-in' : 'Forgot password?'}
             </button>
           </form>
 
@@ -3732,26 +3752,26 @@ export const MemberPortalPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Portal PIN Security */}
+              {/* Account password */}
               <div className="pt-4 border-t border-slate-200">
                 <h3 className="text-sm font-bold text-slate-900 mb-1 flex items-center gap-2">
                   <Lock className="w-4 h-4 text-emerald-700" />
-                  {usesPrivateCloudRoster ? 'Member Account Password' : 'Member Portal Security PIN / Password'}
+                  Member Account Password
                 </h3>
                 <p className="text-xs text-slate-500 mb-3">
-                  {usesPrivateCloudRoster
-                    ? 'Update the password for your verified Supabase member account.'
-                    : 'Set a private 4 to 6-digit PIN or password for your Member Portal login.'}
+                  Update your member account password. Use at least 12 characters.
                 </p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                   <div>
                     <label className="block font-bold text-slate-700 mb-1">
-                      {usesPrivateCloudRoster ? 'New Account Password' : 'New Portal PIN / Password'}
+                      New Account Password
                     </label>
                     <input
                       type="password"
-                      placeholder={usesPrivateCloudRoster ? 'Enter a new password (12+ characters)' : 'Enter new 4-digit PIN'}
+                      placeholder="Enter a new password (12+ characters)"
+                      autoComplete="new-password"
+                      minLength={12}
                       value={newPortalPin}
                       onChange={(e) => setNewPortalPin(e.target.value)}
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"

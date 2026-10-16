@@ -31,7 +31,7 @@ async function mountAuth(client,seeds={}){
   return {get value(){return value;},unmount:()=>act(async()=>tree.unmount())};
 }
 function mockClient(overrides={}){
-  const client={auth:{getSession:async()=>({data:{session:null}}),onAuthStateChange:()=>({data:{subscription:{unsubscribe:noop}}}),...overrides}};
+  const client={auth:{getSession:async()=>({data:{session:null}}),onAuthStateChange:()=>({data:{subscription:{unsubscribe:noop}}}),signOut:async()=>({error:null}),...overrides}};
   return client;
 }
 test('forged local flags and staff directories cannot establish a session; a rejected password remains rejected',async()=>{
@@ -44,6 +44,25 @@ test('forged local flags and staff directories cannot establish a session; a rej
     assert.equal(localStorage.getItem('gwcc_registered_users'),null);
     assert.equal((await auth.value.loginAsMember('0241234567','4567')).success,false);
   }finally{await auth.unmount();}
+});
+test('member login rejects unlinked accounts and staff credentials, and clears the Supabase session on rejection',async()=>{
+  for(const kind of ['unlinked','staff','linked']){
+    let signouts=0;
+    const record={...profile,role:kind==='staff'?'administrator':'member',authorization_reviewed_at:'2026-10-15'};
+    const client=mockClient({
+      signInWithPassword:async()=>({data:{session:{access_token:'verified-test-token',user}}}),
+      getUser:async()=>({data:{user}}),signOut:async()=>{signouts++;return {error:null};},
+    });
+    client.from=table=>({select(){return this;},eq(){return this;},single:async()=>({data:record}),maybeSingle:async()=>({data:kind==='linked'?{id:'own-member',auth_user_id:user.id}:null})});
+    client.channel=()=>({on(){return this;},subscribe(){return this;}});client.removeChannel=()=>{};
+    const auth=await mountAuth(client);
+    try{
+      let result;await act(async()=>{result=await auth.value.loginAsMember(user.email,'a-long-member-password');});
+      assert.equal(result.success,kind==='linked',kind);
+      if(kind==='linked'){assert.equal(auth.value.currentMember.id,'own-member');assert.equal(auth.value.isAuthenticated,true);assert.equal(signouts,0);}
+      else {assert.equal(auth.value.isAuthenticated,false);assert.equal(signouts,1);assert.match(result.message,kind==='staff'?/Staff Login/:/not linked/);}
+    }finally{await auth.unmount();}
+  }
 });
 test('authorization ignores identity names and editable auth metadata, and requires verified active protected profiles',async()=>{
   const client={from:()=>({select:()=>({eq:()=>({single:async()=>({data:profile})})})})};

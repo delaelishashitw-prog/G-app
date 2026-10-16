@@ -250,24 +250,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onFocus); client.removeChannel(channel); };
   }, [session?.access_token, currentUser.id, hydrate]);
 
-  const login = async (email: string, password?: string) => {
+  const login = async (email: string, password?: string, memberOnly = false) => {
     const client = getSupabaseClient();
     if (!client) return { success: false, message: 'Secure sign-in is not configured. Set the Supabase environment variables.' };
     if (!email.trim() || !password) return { success: false, message: 'Enter your email address and password.' };
     try {
       const { data, error } = await client.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
       if (error || !data.session) throw new Error(error?.message || 'Sign-in failed.');
+      if (memberOnly) {
+        const { data: verified, error: userError } = await client.auth.getUser(data.session.access_token);
+        if (userError || !verified.user) throw new Error('Your session could not be verified. Please sign in again.');
+        const profile = await readVerifiedProfile(client, verified.user);
+        if (profile.role !== 'member') throw new Error('This is a staff account. Use Staff Login to access the church system.');
+        const { data: linked, error: linkError } = await client.from('members').select('id').eq('auth_user_id', verified.user.id).maybeSingle();
+        if (linkError) throw new Error('Your member account could not be checked. Please try again.');
+        if (!linked) throw new Error('Your login is not linked to a member record yet. Ask the church office to open your member profile and link Portal Access.');
+      }
       await hydrate(data.session);
       return { success: true, message: 'Signed in securely.' };
     } catch (error) {
       resetIdentity();
+      await client.auth.signOut({ scope: 'local' }).catch(() => {});
       return { success: false, message: error instanceof Error ? error.message : 'Sign-in failed.' };
     }
   };
 
   const loginAsMember = async (identifier: string, password?: string) => {
     if (!identifier.includes('@')) return { success: false, message: 'Sign in with your verified email address and password. Contact the church office if you need an account.' };
-    const result = await login(identifier, password);
+    const result = await login(identifier, password, true);
     return result;
   };
 

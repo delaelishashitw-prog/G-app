@@ -4,6 +4,7 @@ import {chromium} from 'playwright';
 import {initialSettings,sampleMembers} from '../src/lib/initialData.ts';
 import {serviceFixtures,checkServices} from './services-browser-checks.mjs';
 import {attendanceFixtures,checkAttendance} from './attendance-browser-checks.mjs';
+import {checkPublicMemberLogin,checkMemberAccess,checkMemberPasswordSetup} from './member-access-browser-checks.mjs';
 
 const port=Number(process.env.TEST_PORT||3401),origin=`http://127.0.0.1:${port}`;
 const child=spawn(process.execPath,['--import','tsx','server.ts'],{cwd:process.cwd(),env:{...process.env,NODE_ENV:'production',PORT:String(port),SUPABASE_URL:'https://gwcc-e2e.supabase.co',SUPABASE_ANON_KEY:'test-public-key'},stdio:'pipe'});
@@ -22,13 +23,14 @@ try{
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{channel:'chromium'}),args:['--no-sandbox']});
   const errors=[];
   const unsigned=await browser.newContext({viewport:{width:390,height:844}});
-  await unsigned.addInitScript(()=>{localStorage.setItem('gwcc_auth_authenticated','true');localStorage.setItem('gwcc_active_user',JSON.stringify({id:'forged',role:'super_admin'}));localStorage.setItem('members',JSON.stringify([{first_name:'Hidden private data'}]));});
+  await unsigned.addInitScript(()=>{localStorage.setItem('gwcc_supabase_url','https://gwcc-e2e.supabase.co');localStorage.setItem('gwcc_supabase_anon_key','test-public-key');localStorage.setItem('gwcc_auth_authenticated','true');localStorage.setItem('gwcc_active_user',JSON.stringify({id:'forged',role:'super_admin'}));localStorage.setItem('members',JSON.stringify([{first_name:'Hidden private data'}]));});
   const phonePage=await unsigned.newPage();phonePage.on('pageerror',error=>errors.push(error.message));
   await phonePage.goto(`${origin}/members`);await phonePage.waitForURL('**/login');
   assert.equal(await phonePage.getByText('Hidden private data').count(),0);
   assert.ok(await phonePage.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Mobile sign-in overflows.');
   await phonePage.goto(`${origin}/portal`);await phonePage.getByText('Member Portal', {exact:false}).first().waitFor();
-  assert.equal(await phonePage.getByText('Hidden private data').count(),0);await unsigned.close();
+  assert.equal(await phonePage.getByText('Hidden private data').count(),0);
+  await checkPublicMemberLogin(phonePage,unsigned,{origin});await unsigned.close();
 
   const id='11111111-1111-4111-8111-111111111111';
   const user={id,email:'qa@example.test',email_confirmed_at:'2026-10-15T00:00:00Z',created_at:'2026-10-15T00:00:00Z',app_metadata:{provider:'email'},user_metadata:{first_name:'QA',last_name:'Admin'},aud:'authenticated',role:'authenticated'};
@@ -74,7 +76,7 @@ try{
     await route.fulfill({status:200,headers,body:JSON.stringify(result)});
   });
   const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
-  const pages=['/','/members','/giving','/church-finance','/welfare','/pledges','/services','/attendance','/reports','/users','/settings','/inventory','/pastoral-care','/communication'];
+  const pages=process.env.TEST_SCOPE==='member'?['/members']:['/','/members','/giving','/church-finance','/welfare','/pledges','/services','/attendance','/reports','/users','/settings','/inventory','/pastoral-care','/communication'];
   let attendanceFixture;
   for(const path of pages){
     if(path==='/attendance'){attendanceFixture=attendanceFixtures(today,data.members);Object.assign(data,attendanceFixture.tables);}
@@ -164,6 +166,9 @@ try{
       await page.getByText('Arrears start only after the first welfare dues payment.',{exact:true}).waitFor();
     }
   }
+  await checkMemberAccess(page,{origin,data,profile});
+  await checkMemberPasswordSetup(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  await page.goto(`${origin}/communication`);
   await page.getByLabel('Title',{exact:true}).fill('QA saved draft');
   await page.getByLabel('Message',{exact:true}).fill('This is a draft. Nothing was sent.');
   await page.getByRole('button',{name:'Save draft',exact:true}).click();
@@ -178,7 +183,7 @@ try{
   await page.getByRole('button',{name:/Sign Out|Log Out|Logout/i}).first().click();await page.waitForURL('**/login');
   assert.equal(await page.evaluate(id=>Object.keys(localStorage).filter(key=>key.startsWith(`gwcc_cache_${id}_`)).length,id),0);
   assert.deepEqual(errors,[]);
-  console.info(`Browser smoke passed: mobile authorization, ${pages.length} signed-in pages, welfare arrears/defaulter filters/CSV/partial claim approval/member portal, durable draft retry, and logout cache clearing.`);
+  console.info(`Browser smoke passed: mobile authorization, ${pages.length} signed-in pages, member invitation/linking/suspension guards/password help/password setup/portal, welfare arrears/defaulter filters/CSV/partial claim approval/member portal, durable draft retry, and logout cache clearing.`);
 }finally{
   if(browser)await browser.close();child.kill('SIGTERM');
 }
