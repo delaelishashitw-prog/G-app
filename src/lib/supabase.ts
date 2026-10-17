@@ -1006,12 +1006,13 @@ export function withSyncTransaction<T>(work:()=>T):T {
   try {const value=work();const changes=atomicChanges;atomicChanges=null;if(changes.length)void queueMany(changes);return value;}
   catch(error){atomicChanges=null;throw error;}
 }
-export const mergePendingRecords = (table: string, rows: any[]) => outbox?.merge(table,rows) || rows;
+export const mergePendingRecords = (table: string, rows: any[]) => syncRole==='member'&&table==='events'?rows:outbox?.merge(table,rows) || rows;
 
 export async function flushSyncOutbox({approveRestored=false}:{approveRestored?:boolean}={}): Promise<SyncResult> {
   const client=getSupabaseClient(); const active=outbox; const owner=syncOwner;
   if(!client || !active || !owner) return {success:false,pending:active?.status.pending || 0,error:'Please sign in to synchronize changes.'};
   await active.ready;
+  if(syncRole==='member') return {...active.status,success:active.status.pending===0,error:active.status.pending?'Older changes are preserved for administrator review. Member requests use secure online actions.':undefined};
   if(active!==outbox || owner!==syncOwner)return {success:false,pending:active.status.pending,error:'The signed-in account changed. Pending changes remain with their owner.'};
   if(typeof navigator!=='undefined' && !navigator.onLine) return {...active.status,success:false,error:'Offline. Changes remain queued on this device.'};
   const { data: {session} }=await client.auth.getSession();
@@ -1024,7 +1025,7 @@ export async function flushSyncOutbox({approveRestored=false}:{approveRestored?:
   },approveRestored);
 }
 async function queueMany(changes:Mutation[],autoFlush=true):Promise<SyncResult> {
-  if(!outbox) return {success:false,pending:0,error:'A verified staff session is required.'};
+  if(!outbox || syncRole==='member') return {success:false,pending:outbox?.status.pending||0,error:'A verified staff session is required. Member requests use secure online actions.'};
   const active=outbox;
   try {
     const result=await active.enqueueMany(changes);
@@ -1091,12 +1092,14 @@ export async function pullAllDataFromSupabase(): Promise<{success:boolean;data:P
     if(table==='communications'&&!COMMUNICATION_ROLES.includes(syncRole||'')){result.communications=[];return;}
     try {
       let records:any[];
-      if(syncRole==='member' && ['welfare_claims','pastoral_care','welfare_events','foundation_cohorts','foundation_students'].includes(table)){
+      if(syncRole==='member' && table==='events'){
+        const {data,error}=await client.rpc('gwcc_member_events');if(error)throw error;records=data||[];
+      }else if(syncRole==='member' && ['welfare_claims','pastoral_care','welfare_events','foundation_cohorts','foundation_students'].includes(table)){
         const {data,error}=await client.rpc('gwcc_member_records',{p_table:table});if(error)throw error;records=data||[];
       }else {const rows=await fetchAllRows(client,document?'gwcc_documents':table,document?table:undefined);records=document?rows.map(row=>row.data):rows;}
       if(owner!==syncOwner)return;
       await active?.observe(table,records);
-      const merged=active?.merge(table,records)||records;
+      const merged=syncRole==='member'&&table==='events'?records:active?.merge(table,records)||records;
       if(key==='settings') result.settings=merged[0] || undefined;
       else (result as any)[key]=merged;
     } catch(error) { errors.push(`${table}: ${(error as Error).message}`); }

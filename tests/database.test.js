@@ -1087,3 +1087,72 @@ test('personal drafts reject unavailable phones or contacts, and the server refu
   });
  }finally{await db.close();}
 });
+
+
+test('member event projection denies full attendee reads, hides contact data and budgets, and retains staff visibility',async()=>{
+  const db=await setupDatabase();
+  try{
+    await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,phone,auth_user_id) VALUES('event-own','GWCC-EVENT-OWN','Own','Member','0240000001','${member}');
+      INSERT INTO public.events(id,title,event_type,start_date,end_date,start_time,end_time,budget,attendees) VALUES('portal-event','Synthetic event','conference',current_date+10,current_date+10,'18:00','20:00',1000,'[{"id":"someone-else","member_id":"other","name":"Another Member","phone":"0240000003","email":"other@example.test","private":"hidden"},{"id":"own-legacy","member_id":"GWCC-EVENT-OWN","name":"Own Member","phone":"0240000001","email":"own@example.test"}]');`);
+    await db.exec('SET ROLE anon');
+    await assert.rejects(db.query('SELECT public.gwcc_member_events()'),/permission denied/);
+    await assert.rejects(db.query("SELECT public.gwcc_member_rsvp('portal-event')"),/permission denied/);await db.exec('RESET ROLE');
+    await asUser(db,member,async()=>{
+      assert.deepEqual((await db.query('SELECT * FROM public.events')).rows,[]);
+      const events=(await db.query('SELECT public.gwcc_member_events() result')).rows[0].result;
+      assert.equal(events.length,1);assert.equal(events[0].title,'Synthetic event');assert.equal(events[0].budget,undefined);
+      assert.equal(events[0].attendees.length,1);assert.equal(events[0].attendees[0].member_id,'GWCC-EVENT-OWN');
+      assert.doesNotMatch(JSON.stringify(events),/phone|email|someone-else|Another Member|hidden/);
+      await assert.rejects(db.query("UPDATE public.events SET attendees='[]' WHERE id='portal-event'"),/permission denied/);
+      await assert.rejects(apply(db,[upsert('events',{id:'portal-event',attendees:[]})]),/Staff authorization/);
+    });
+    await asUser(db,root,async()=>{
+      assert.equal((await db.query("SELECT attendees FROM public.events WHERE id='portal-event'")).rows[0].attendees.length,2);
+      await assert.rejects(db.query('SELECT public.gwcc_member_events()'),/member sign-in/);
+    });
+    await db.exec(`UPDATE public.members SET is_archived=true WHERE id='event-own'`);
+    await asUser(db,member,async()=>await assert.rejects(db.query('SELECT public.gwcc_member_events()'),/active member record/));
+    await db.exec(`UPDATE public.members SET is_archived=false WHERE id='event-own';UPDATE public.profiles SET is_active=false WHERE id='${member}'`);
+    await asUser(db,member,async()=>await assert.rejects(db.query('SELECT public.gwcc_member_events()'),/member sign-in/));
+  }finally{await db.close();}
+});
+
+test('member RSVP saves canonical identity, preserves other attendees and safely retries lost responses without duplicates',async()=>{
+  const db=await setupDatabase();
+  const register=()=>db.query("SELECT public.gwcc_member_rsvp('rsvp-event') result");
+  try{
+    await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,phone,email,auth_user_id) VALUES('rsvp-own','GWCC-RSVP-OWN','Own','Member','0240000001','own@example.test','${member}'),('rsvp-other','GWCC-RSVP-OTHER','Other','Member','0240000002','other@example.test','${other}');
+      INSERT INTO public.events(id,title,event_type,start_date,end_date,start_time,end_time,budget,attendees) VALUES('rsvp-event','Preserved event','conference',current_date+10,current_date+10,'18:00','20:00',1500,'[{"id":"prior","member_id":"unrelated","name":"Another Member","phone":"0240000003","checked_in":true}]');`);
+    const before=(await db.query("SELECT attendees->0 prior FROM public.events WHERE id='rsvp-event'")).rows[0].prior;
+    await asUser(db,member,async()=>{
+      const first=(await register()).rows[0].result;
+      assert.equal(first.attendees.length,1);assert.equal(first.attendees[0].member_id,'rsvp-own');
+      const retry=(await register()).rows[0].result;assert.deepEqual(retry,first);
+    });
+    await asUser(db,other,async()=>{
+      const second=(await register()).rows[0].result;assert.equal(second.attendees.length,1);assert.equal(second.attendees[0].member_id,'rsvp-other');
+    });
+    const saved=(await db.query("SELECT * FROM public.events WHERE id='rsvp-event'")).rows[0];
+    assert.equal(saved.attendees.length,3);assert.equal(saved.registration_count,3);assert.deepEqual(saved.attendees[0],before);
+    assert.equal(saved.budget,'1500.00');assert.equal(saved.title,'Preserved event');
+    assert.equal(saved.attendees[1].name,'Own Member');assert.equal(saved.attendees[1].phone,'0240000001');
+    assert.equal((await db.query("SELECT count(*)::int n FROM public.audit_logs WHERE action='MEMBER_EVENT_RSVP'")).rows[0].n,2);
+    await asUser(db,root,async()=>await assert.rejects(register(),/member sign-in/));
+  }finally{await db.close();}
+});
+
+test('member RSVP rejects closed events and missing, unverified or archived member identities without changing event data',async()=>{
+  const db=await setupDatabase();
+  try{
+    await db.exec(`INSERT INTO public.events(id,title,start_date,end_date,start_time,end_time,status) VALUES('closed','Cancelled',current_date+1,current_date+1,'18:00','20:00','cancelled'),('past','Past',current_date-2,current_date-1,'18:00','20:00','upcoming');`);
+    await asUser(db,member,async()=>await assert.rejects(db.query("SELECT public.gwcc_member_rsvp('closed')"),/active member record/));
+    await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,phone,auth_user_id) VALUES('blocked-rsvp','GWCC-BLOCKED','Own','Member','0240000001','${member}');`);
+    await asUser(db,member,async()=>{
+      for(const id of ['closed','past'])await assert.rejects(db.query('SELECT public.gwcc_member_rsvp($1)',[id]),/Registration is closed/);
+      await assert.rejects(db.query("SELECT public.gwcc_member_rsvp('missing')"),/no longer available/);
+    });
+    await db.exec(`UPDATE auth.users SET email_confirmed_at=NULL WHERE id='${member}'`);
+    await asUser(db,member,async()=>await assert.rejects(db.query("SELECT public.gwcc_member_rsvp('closed')"),/member sign-in/));
+    assert.equal((await db.query('SELECT sum(registration_count)::int n FROM public.events')).rows[0].n,0);
+  }finally{await db.close();}
+});

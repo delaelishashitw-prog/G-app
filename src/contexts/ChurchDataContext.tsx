@@ -619,6 +619,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const local:Partial<ChurchAllData>={};
     for(const {key,table} of SYNC_TABLES) {
       if(key==='settings') {local.settings=mergePendingRecords('settings',[{id:'gwcc_global_settings',...loadFromStorage('settings',initialSettings)}])[0];continue;}
+      if(currentUser.role==='member' && table==='events'){local.events=[];continue;}
       (local as any)[key]=table==='communications'&&!canAccess('communication')?[]:mergePendingRecords(table,loadFromStorage(key,[]));
     }
     applyData(local);setDataOwner(`${currentUser.id}:${currentUser.role}`);
