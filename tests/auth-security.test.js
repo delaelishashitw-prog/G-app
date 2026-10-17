@@ -215,3 +215,18 @@ test('a new password sign-in immediately suspends the old verified session while
   await act(async()=>{release();});assert.equal(auth.value.currentUser.id,'');assert.equal(auth.value.isAuthenticated,false);
  }finally{await auth.unmount();}
 });
+
+test('a member who opts into MFA reaches the code challenge before any member-record lookup, then loads only their linked portal record',async()=>{
+ const session={access_token:'synthetic-member-mfa-session',user};let satisfied=false,lookups=0;
+ const client=mockClient({getUser:async()=>({data:{user}}),signInWithPassword:async()=>({data:{session}})});
+ client.rpc=async()=>({data:{role:'member',required:true,verified_factors:1,satisfied}});
+ client.from=table=>({select(){return this;},eq(){return this;},single:async()=>({data:profile}),maybeSingle:async()=>{assert.equal(table,'members');assert.equal(satisfied,true,'No member record lookup before MFA');lookups++;return {data:{id:'linked-mfa-member',auth_user_id:user.id}};}});
+ client.channel=()=>({on(){return this;},subscribe(){return this;}});client.removeChannel=()=>{};
+ const auth=await mountAuth(client);
+ try{
+  let result;await act(async()=>{result=await auth.value.loginAsMember(user.email,'a-long-synthetic-password');});
+  assert.equal(result.success,true);assert.equal(auth.value.isAuthenticated,false);assert.equal(auth.value.securityStatus.required,true);assert.equal(lookups,0);
+  client.auth.getSession=async()=>({data:{session}});satisfied=true;
+  await act(async()=>{await auth.value.refreshSecurity();});assert.equal(auth.value.isAuthenticated,true);assert.equal(auth.value.currentMember.id,'linked-mfa-member');assert.equal(lookups,1);
+ }finally{await auth.unmount();}
+});
