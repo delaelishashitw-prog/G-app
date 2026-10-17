@@ -63,7 +63,6 @@ export async function checkMfa(browser,{origin,settings}){
   await panel.getByRole('button',{name:'Discard unfinished setup',exact:true}).click();await panel.getByText('Unfinished setup removed.',{exact:false}).waitFor();
   await panel.getByLabel('Device name',{exact:true}).fill('Primary phone');await panel.getByRole('button',{name:'Start authenticator setup',exact:true}).click();await panel.getByAltText('Private authenticator setup QR code').waitFor();
   await panel.getByLabel('Six-digit code',{exact:true}).fill('000000');await panel.getByRole('button',{name:'Verify authenticator',exact:true}).click();await panel.getByRole('alert').waitFor();assert.equal(records.length,0);assert.equal(attempts.length,0);assert.equal(mutations.length,0);
-  await page.screenshot({path:`/workspace/scratch/643e5bedb30a/rollout-check/mfa-${width}.png`,fullPage:true});
   await panel.getByLabel('Six-digit code',{exact:true}).fill('123456');await panel.getByRole('button',{name:'Verify authenticator',exact:true}).click();
   await page.getByRole('heading',{name:'Church Finance',exact:false}).first().waitFor();assert.ok(records.length>0);
   const saved=await readSavedOutbox(page,id);assert.equal(saved.batches[0].id,operation);assert.equal(saved.batches[0].requiresReview,true);assert.equal(mutations.length,0);
