@@ -149,7 +149,6 @@ import {
 import {
   deleteWelfareClaim as deleteWelfareClaimRecord,
   deleteWelfareContribution as deleteWelfareContributionRecord,
-  disburseWelfareClaim as disburseWelfareClaimRecord,
   recordWelfareContribution as recordWelfareContributionRecord,
   submitWelfareClaim as submitWelfareClaimRecord,
   updateWelfareClaim as updateWelfareClaimRecord,
@@ -1216,13 +1215,11 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const remaining=(claim.amount_approved||0)-(claim.amount_disbursed||0);
     if(!Number.isFinite(amount)||amount<=0||amount>remaining)throw new Error('Enter a payment within the remaining approved amount.');
     if(!details.finance_account_id)throw new Error('Select a church holding account for the payout.');
-    const actor=`${currentUser.first_name} ${currentUser.last_name}`;
-    withSyncTransaction(()=>{
-    const receipt=recordChurchFinance({transaction_type:'disbursement',account_id:details.finance_account_id,account_name:details.finance_account_name||'Welfare Account',
+    const pending=churchFinances.filter(row=>row.welfare_claim_id===id&&['requested','approved'].includes(row.approval_state||'')).reduce((sum,row)=>sum+row.amount,0);
+    if(amount+pending>remaining)throw new Error('Open payment requests already cover this claim amount. Review them in Church Finance.');
+    recordChurchFinance({transaction_type:'disbursement',account_id:details.finance_account_id,account_name:details.finance_account_name||'Welfare Account',
       category:'Benevolence & Welfare',title:`Welfare Grant: ${claim.member_name}`,recipient_or_vendor:claim.member_name,amount,currency:'GHS',date:new Date().toISOString().slice(0,10),
-      payment_method:details.disbursement_method,reference_no:details.disbursement_voucher_no,department:'Welfare & Benevolence',recorded_by:actor,status:'completed'});
-    disburseWelfareClaimRecord(id,{...details,recorded_by:actor,finance_transaction_id:receipt.id},setWelfareClaims,logAction,dbSyncUpsert,welfareClaims);
-    });
+      payment_method:details.disbursement_method,reference_no:details.disbursement_voucher_no,department:'Welfare & Benevolence',welfare_claim_id:id,notes:details.pastoral_notes,status:'pending'});
   };
 
   // WELFARE CONTRIBUTION EVENTS

@@ -353,6 +353,19 @@ export interface ChurchAccount {
 }
 
 export interface ChurchFinanceRecord {
+  approval_state?: 'requested' | 'approved' | 'rejected' | 'cancelled' | 'paid' | 'voided' | null;
+  requested_by_id?: string | null;
+  requested_by?: string | null;
+  requested_at?: string | null;
+  approved_by_id?: string | null;
+  approved_at?: string | null;
+  paid_by_id?: string | null;
+  paid_by?: string | null;
+  paid_at?: string | null;
+  payment_reference?: string | null;
+  welfare_claim_id?: string | null;
+  approval_history?: {action:string;actor_id:string;actor_name:string;at:string;reason?:string;payment_reference?:string;amount?:number;account_id?:string}[];
+
   id: string;
   transaction_type: 'expense' | 'disbursement' | 'transfer' | 'income' | 'grant' | string;
   account_id?: string;

@@ -45,6 +45,8 @@ import { formatGHS } from '../lib/currencyUtils';
 import {budgetPeriodRange} from '../lib/budgetPeriod';
 import {budgetSpending,validateBudgetAllocation,financeTotals,financeReconciliation,financeCsv,financeReference,financeDateMatches,isCashAccount,validateCashCount,ghanaToday as todayISO,downloadCsvFile} from '../lib/financeViewUtils';
 import {money} from '../lib/ledgerUtils';
+import {FinanceApprovals} from '../components/finance/FinanceApprovals';
+import {financeApprovalLabel,verifiedApprover,isOutbound} from '../lib/financeApprovals';
 import {FinanceReconciliation} from '../components/finance/FinanceReconciliation';
 
 // Modals
@@ -169,7 +171,7 @@ export const ChurchFinancePage: React.FC = () => {
   const { canAccess, currentUser } = useAuth();
   const { success, error, info } = useToast();
 
-  const [activeTab, setActiveTab] = useState<'treasury' | 'ledger' | 'budgets' | 'counter' | 'reconciliation'>('treasury');
+  const [activeTab, setActiveTab] = useState<'treasury' | 'ledger' | 'budgets' | 'counter' | 'reconciliation' | 'approvals'>('treasury');
   const [budgetYear,setBudgetYear]=useState(todayISO().slice(0,4));
   const departmentBudgets=useMemo(()=>storedDepartmentBudgets.map(budget=>({...budget,spent_amount:budgetSpending(budget,churchFinances)??0})),[storedDepartmentBudgets,churchFinances]);
   const visibleBudgets=useMemo(()=>departmentBudgets.filter(budget=>budgetPeriodRange(budget.period)?.year===budgetYear),[departmentBudgets,budgetYear]);
@@ -224,7 +226,7 @@ export const ChurchFinancePage: React.FC = () => {
   const [incomeReceivedBy, setIncomeReceivedBy] = useState(settings.senior_pastor || 'Prophet Elisha K. Richard');
   const [incomeNotes, setIncomeNotes] = useState('');
 
-  // Form: Record Church Expenditure
+  // Form: Request Church Expenditure
   const [formTitle, setFormTitle] = useState('');
   const [formTransactionType, setFormTransactionType] = useState<'expense' | 'disbursement' | 'income' | 'grant'>('expense');
   const [formAccountId, setFormAccountId] = useState(churchAccounts[0]?.id || '');
@@ -235,7 +237,7 @@ export const ChurchFinancePage: React.FC = () => {
   const [formDate, setFormDate] = useState(todayISO());
   const [formPaymentMethod, setFormPaymentMethod] = useState('bank_transfer');
   const [formReferenceNo, setFormReferenceNo] = useState('');
-  const [formApprovedBy, setFormApprovedBy] = useState(settings.senior_pastor || 'Prophet Elisha K. Richard');
+
   const [formNotes, setFormNotes] = useState('');
 
   // Form: Add Church Account
@@ -432,7 +434,7 @@ export const ChurchFinancePage: React.FC = () => {
 
     setIsSubmittingExpense(true);
     try {
-      const newRec = recordChurchFinance({
+      recordChurchFinance({
         transaction_type: formTransactionType,
         account_id: selectedAcc?.id,
         account_name: accName,
@@ -445,18 +447,17 @@ export const ChurchFinancePage: React.FC = () => {
         payment_method: formPaymentMethod,
         reference_no: voucherId,
         department: formDepartment,
-        approved_by: formApprovedBy.trim() || 'Prophet Elisha K. Richard',
         notes: formNotes.trim() || undefined,
         recorded_by: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat',
-        status: 'completed',
+        status: 'pending',
       });
 
-      info('Expenditure awaiting confirmation', `${formatGHS(amountNum)} recorded locally against ${accName}. Follow sync status for cloud confirmation.`);
+      info('Payment request saved', `${formatGHS(amountNum)} awaits cloud confirmation and independent approval. No payment has been posted.`);
       setShowRecordExpenseModal(false);
       resetExpenseForm();
 
-      // Offer voucher preview
-      setSelectedVoucherRecord(newRec);
+      // Open the queue; unpaid requests cannot issue a payment voucher.
+      setActiveTab('approvals');
     } catch(cause){error('Expenditure not recorded',(cause as Error).message);
     } finally {
       setIsSubmittingExpense(false);
@@ -474,7 +475,7 @@ export const ChurchFinancePage: React.FC = () => {
     setFormDate(todayISO());
     setFormPaymentMethod('bank_transfer');
     setFormReferenceNo('');
-    setFormApprovedBy(settings.senior_pastor || 'Prophet Elisha K. Richard');
+
     setFormNotes('');
   };
 
@@ -593,6 +594,7 @@ export const ChurchFinancePage: React.FC = () => {
       setShowTransferModal(false);
       setTransferAmount('');
       setTransferNotes('');
+      setActiveTab('approvals');
     } else {
       error('Transfer Failed', res.message);
     }
@@ -675,7 +677,7 @@ export const ChurchFinancePage: React.FC = () => {
     // Table
     const tableData = exportRows.map((item) => [
       item.date,
-      item._sync_status==='pending'?'AWAITING CLOUD':item.status!=='completed'?item.status.toUpperCase():(item.transaction_type === 'income' || item.transaction_type === 'grant')
+      item._sync_status==='pending'?'AWAITING CLOUD':item.approval_state?financeApprovalLabel(item):item.status!=='completed'?item.status.toUpperCase():(item.transaction_type === 'income' || item.transaction_type === 'grant')
         ? 'Income'
         : item.transaction_type === 'transfer'
         ? 'Transfer'
@@ -686,7 +688,7 @@ export const ChurchFinancePage: React.FC = () => {
       item.transaction_type==='transfer'?`${item.account_name} -> ${item.to_account_name||item.to_account_id||'Unknown destination'}`:item.account_name,
       item.category,
       `${item.transaction_type==='transfer'?'':(item.transaction_type==='income'||item.transaction_type==='grant')?'+':'-'} GHS ${item.amount.toFixed(2)}${item.status==='voided'?' (VOID)':''}`,
-      item.approved_by || settings.senior_pastor || 'Senior Pastor',
+      isOutbound(item)?verifiedApprover(item):item.approved_by||'Not recorded',
     ]);
 
     autoTable(doc, {
@@ -780,7 +782,7 @@ export const ChurchFinancePage: React.FC = () => {
                 title="Record operational expense vouchers & disbursements"
               >
                 <Plus className="w-4 h-4" />
-                <span>Record Expenditure</span>
+                <span>Request Expenditure</span>
               </button>
 
               <button
@@ -986,6 +988,7 @@ export const ChurchFinancePage: React.FC = () => {
         {[
           { id: 'treasury', label: 'Holding Accounts & Treasury', icon: Landmark },
           { id: 'ledger', label: 'Income & Expense Ledger', icon: Receipt },
+          { id: 'approvals', label: 'Approvals & Payments', icon: ShieldCheck },
           { id: 'budgets', label: 'Department Budgets', icon: BarChart3 },
           { id: 'reconciliation', label: 'Reconciliation', icon: ShieldCheck },
           { id: 'counter', label: 'Sunday Cash Counter Sheet', icon: Calculator },
@@ -1013,6 +1016,8 @@ export const ChurchFinancePage: React.FC = () => {
           );
         })}
       </div>
+
+      {activeTab==='approvals'&&<FinanceApprovals key={currentUser.id}/>}
 
       {/* TAB 1: TREASURY & HOLDING ACCOUNTS */}
       {activeTab === 'treasury' && (
@@ -1135,7 +1140,7 @@ export const ChurchFinancePage: React.FC = () => {
                 Rebalance Holding Accounts & Cash Floats
               </h3>
               <p className="text-xs text-slate-300 max-w-xl mt-1 leading-relaxed">
-                Move church funds between GCB Bank, MTN MoMo Merchant, and Cathedral Petty Cash. Transfers automatically log two-way debit/credit entries for full council audit compliance.
+                Move church funds between GCB Bank, MTN MoMo Merchant, and Cathedral Petty Cash. Transfers need independent approval. Both account balances update when the completed transfer is recorded as paid.
               </p>
             </div>
 
@@ -1144,7 +1149,7 @@ export const ChurchFinancePage: React.FC = () => {
                 onClick={() => setShowTransferModal(true)}
                 className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-xs transition-all cursor-pointer"
               >
-                Execute Transfer →
+                Request Transfer →
               </button>
             </div>
           </div>
@@ -1302,7 +1307,7 @@ export const ChurchFinancePage: React.FC = () => {
                               className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 shadow-2xs"
                             >
                               <Plus className="w-4 h-4" />
-                              <span>Record Expenditure</span>
+                              <span>Request Expenditure</span>
                             </button>
                           </div>
                         )}
@@ -1355,7 +1360,7 @@ export const ChurchFinancePage: React.FC = () => {
                               </span>
                             )}
                             {item._sync_status==='pending'&&<span className="block text-[10px] font-semibold text-amber-800 mt-1">Awaiting cloud confirmation</span>}
-                            {!['completed','voided'].includes(item.status)&&<span className="block text-[10px] font-semibold text-amber-800 mt-1">{item.status.toUpperCase()} · not posted</span>}
+                            {!['completed','voided'].includes(item.status)&&<span className="block text-[10px] font-semibold text-amber-800 mt-1">{financeApprovalLabel(item)} · not posted</span>}
                           </td>
                           <td className={`py-3 px-4 whitespace-nowrap font-mono text-xs font-bold ${isVoid ? 'text-slate-400' : isInc ? 'text-emerald-700 dark:text-emerald-400' : isTransfer ? 'text-purple-700 dark:text-purple-400' : 'text-rose-700 dark:text-rose-400'}`}>
                             {financeReference(item)}
@@ -1407,7 +1412,7 @@ export const ChurchFinancePage: React.FC = () => {
                               : `- GH₵ ${item.amount.toFixed(2)}`}
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap text-xs text-slate-600 dark:text-slate-400">
-                            {item.approved_by || settings.senior_pastor}
+                            {isInc?item.approved_by||'Not recorded':verifiedApprover(item)}
                           </td>
                           <td className="py-3 px-4 text-center whitespace-nowrap no-underline">
                             <div className="flex items-center justify-center gap-1">
@@ -1423,7 +1428,7 @@ export const ChurchFinancePage: React.FC = () => {
                                 <Printer className="w-4 h-4" />
                               </button>
 
-                              {canAccess('finance') && !isVoid && !isTransfer && (
+                              {canAccess('finance') && !isVoid && !isTransfer && !isOutbound(item) && !item.approval_state && (
                                 <button
                                   onClick={() => setEditingFinanceRecord(item)}
                                   className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-all cursor-pointer"
@@ -1433,7 +1438,7 @@ export const ChurchFinancePage: React.FC = () => {
                                 </button>
                               )}
 
-                              {canAccess('finance') && !isVoid && (
+                              {canAccess('finance') && !isVoid && !item.approval_state && (
                                 <button
                                   onClick={() => setVoidingFinanceRecord(item)}
                                   className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-all cursor-pointer"
@@ -2065,8 +2070,8 @@ export const ChurchFinancePage: React.FC = () => {
                   <Plus className="w-5 h-5" />
                 </span>
                 <div>
-                  <h3 className="font-bold text-slate-900 dark:text-white text-base">Record Church Expenditure</h3>
-                  <p className="text-xs text-slate-500">Official church disbursement & payment voucher</p>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">Request Church Expenditure</h3>
+                  <p className="text-xs text-slate-500">Submit for independent approval before recording payment</p>
                 </div>
               </div>
               <button
@@ -2222,17 +2227,7 @@ export const ChurchFinancePage: React.FC = () => {
                 </div>
               </div>
 
-              <div>
-                <label htmlFor="church-finance-field-21" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Authorized By
-                </label>
-                <input id="church-finance-field-21"
-                  type="text"
-                  value={formApprovedBy}
-                  onChange={(e) => setFormApprovedBy(e.target.value)}
-                  className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none font-semibold text-rose-800 dark:text-rose-300"
-                />
-              </div>
+              <p className="text-sm text-slate-600 dark:text-slate-300">Your signed-in account will be recorded as the requester. A different finance staff member must approve this request before payment can be recorded.</p>
 
               <div>
                 <label htmlFor="church-finance-field-22" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -2260,7 +2255,7 @@ export const ChurchFinancePage: React.FC = () => {
                   disabled={isSubmittingExpense}
                   className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs sm:text-sm font-bold shadow-xs transition-all cursor-pointer"
                 >
-                  {isSubmittingExpense ? 'Recording...' : 'Save & Issue Voucher'}
+                  {isSubmittingExpense ? 'Saving...' : 'Submit Payment Request'}
                 </button>
               </div>
             </form>
@@ -2498,7 +2493,7 @@ export const ChurchFinancePage: React.FC = () => {
                   type="submit"
                   className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs sm:text-sm font-bold shadow-xs cursor-pointer"
                 >
-                  Execute Transfer
+                  Submit Transfer Request
                 </button>
               </div>
             </form>

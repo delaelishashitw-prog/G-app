@@ -10,7 +10,7 @@ test('finance CSV preserves complete hash/quote/newline content and neutralizes 
   const csv=financeCsv([row('one','income',10.5,{reference_no:'REF#1',title:'=1+1',recipient_or_vendor:'Vendor "North", A\nBranch'}),row('two','transfer',20,{reference_no:'TRF-1',to_account_name:'Cash',_sync_status:'pending'})]);
   assert.ok(csv.startsWith('\uFEFF"Record ID"'));assert.ok(csv.includes('"Voucher / Ref #"'));
   assert.ok(csv.includes('"REF#1"'));assert.ok(csv.includes('"\'=1+1"'));assert.ok(csv.includes('"Vendor ""North"", A\nBranch"'));
-  assert.ok(csv.includes('"10.50"'));assert.ok(csv.includes('"Cash"'));assert.ok(csv.endsWith('"Awaiting confirmation"'));
+  assert.ok(csv.includes('"10.50"'));assert.ok(csv.includes('"Cash"'));assert.ok(csv.includes('"Awaiting confirmation"'));assert.ok(csv.includes('"Payment Recorded By"'));
 });
 test('finance totals use exact cents and exclude non-posting statuses and both transfer legs',()=>{
   const totals=financeTotals([row('a','income',0.1),row('b','grant',0.2),row('c','expense',0.12),row('d','disbursement',0.03),row('transfer','transfer',1000),...['pending','voided','cancelled','failed'].map((status,i)=>row(String(i),'income',999,{status}))]);

@@ -7,7 +7,7 @@ const root='11111111-1111-4111-8111-111111111111';
 const member='22222222-2222-4222-8222-222222222222';
 const other='33333333-3333-4333-8333-333333333333';
 
-export async function setupDatabase({beforeSecurityUpgrade,beforeFinanceControls,beforeCommunicationControls}={}) {
+export async function setupDatabase({beforeSecurityUpgrade,beforeFinanceControls,beforeCommunicationControls,beforeApprovalControls}={}) {
   const db=new PGlite();
   await db.exec(`CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role;
     CREATE SCHEMA auth;CREATE SCHEMA storage;
@@ -24,6 +24,7 @@ export async function setupDatabase({beforeSecurityUpgrade,beforeFinanceControls
     if(file.endsWith('_secure_operations_release.sql') && beforeSecurityUpgrade) await beforeSecurityUpgrade(db);
     if(file.endsWith('_finance_receipt_controls.sql') && beforeFinanceControls) await beforeFinanceControls(db);
     if(file.endsWith('_communication_draft_controls.sql') && beforeCommunicationControls) await beforeCommunicationControls(db);
+    if(file.endsWith('_financial_payment_approvals.sql') && beforeApprovalControls) await beforeApprovalControls(db);
     const sql=fs.readFileSync(`supabase/migrations/${file}`,'utf8').replace(/CREATE EXTENSION IF NOT EXISTS [^;]+;/g,'');
     try {await db.exec(sql);} catch(error) {await db.close();throw new Error(`${file}: ${error.message} ${error.where || ''}`);}
   }
@@ -411,22 +412,38 @@ test('committed migrations deny anonymous access and self-promotion, allow own g
   } finally {await db.close();}
 });
 
-test('money mutations preserve both transfer legs, reject overdrafts, are idempotent, and require current versions',async()=>{
+const financeRow=async(db,id)=>(await db.query('SELECT to_jsonb(f) AS row FROM public.church_finances f WHERE id=$1',[id])).rows[0].row;
+const approval=async(db,row,action,{operationId=operation(),reason='',reference='SYNTHETIC-PAYMENT-1'}={})=>(await db.query('SELECT public.gwcc_finance_approval_action($1,$2,$3,$4,$5,$6) AS result',[operationId,row.id,row.updated_at,action,reason,reference])).rows[0].result;
+const enableReviewer=async db=>db.exec(`UPDATE public.profiles SET role='finance_officer',authorization_reviewed_at=now(),first_name='Independent',last_name='Reviewer' WHERE id='${other}'`);
+const reviewAndPay=async(db,id)=>{
+  const row=await financeRow(db,id);
+  const approved=await asUser(db,other,()=>approval(db,row,'approve'));
+  return asUser(db,root,()=>approval(db,approved,'paid'));
+};
+
+test('payment requests preserve both transfer legs until independent approval and one idempotent payment, reject overdrafts, and require current versions',async()=>{
   const db=await setupDatabase();
-  try {await asUser(db,root,async()=>{
-    await apply(db,[upsert('church_accounts',{id:'A',name:'A',current_balance:100}),upsert('church_accounts',{id:'B',name:'B',current_balance:0})]);
-    const receipt={id:'transfer',transaction_type:'transfer',account_id:'A',to_account_id:'B',title:'Move funds',amount:20,status:'completed'};
-    const requestId=operation();await apply(db,[upsert('church_finances',receipt)],requestId);await apply(db,[upsert('church_finances',receipt)],requestId);
+  try{
+    await enableReviewer(db);
+    await asUser(db,root,async()=>{
+      await apply(db,[upsert('church_accounts',{id:'A',name:'A',current_balance:100}),upsert('church_accounts',{id:'B',name:'B',current_balance:0})]);
+      const receipt={id:'transfer',transaction_type:'transfer',account_id:'A',to_account_id:'B',title:'Move funds',amount:20,status:'completed'};
+      const requestId=operation();await apply(db,[upsert('church_finances',receipt)],requestId);await apply(db,[upsert('church_finances',receipt)],requestId);
+      assert.deepEqual((await db.query('SELECT id,current_balance::float AS balance FROM public.church_accounts ORDER BY id')).rows,[{id:'A',balance:100},{id:'B',balance:0}]);
+      await assert.rejects(approval(db,await financeRow(db,'transfer'),'approve'),/different finance/);
+      await assert.rejects(apply(db,[upsert('church_finances',{...receipt,amount:200})]),/version is required/);
+      await assert.rejects(db.query('UPDATE public.church_accounts SET current_balance=99999'),/permission denied/);
+    });
+    const paid=await reviewAndPay(db,'transfer');
     assert.deepEqual((await db.query('SELECT id,current_balance::float AS balance FROM public.church_accounts ORDER BY id')).rows,[{id:'A',balance:80},{id:'B',balance:20}]);
-    const current=(await db.query("SELECT * FROM public.church_finances WHERE id='transfer'")).rows[0];
-    await assert.rejects(apply(db,[upsert('church_finances',{...receipt,amount:200})]),/version is required/);
-    await apply(db,[upsert('church_finances',{...receipt,status:'voided',void_reason:'Corrected'},current.updated_at.toISOString())]);
+    await asUser(db,root,()=>approval(db,paid,'void',{reason:'Corrected transfer'}));
     assert.deepEqual((await db.query('SELECT id,current_balance::float AS balance FROM public.church_accounts ORDER BY id')).rows,[{id:'A',balance:100},{id:'B',balance:0}]);
-    await assert.rejects(apply(db,[upsert('church_finances',{...receipt,id:'overdraft',amount:200})]),/Insufficient balance/);
-    assert.equal((await db.query("SELECT count(*)::int AS n FROM public.church_finances WHERE id='overdraft'")).rows[0].n,0);
-    await assert.rejects(apply(db,[upsert('church_finances',{...receipt,status:'completed'},current.updated_at.toISOString())]),/another device/);
-    await assert.rejects(db.query("UPDATE public.church_accounts SET current_balance=99999"),/permission denied/);
-  });}finally{await db.close();}
+    await asUser(db,root,()=>apply(db,[upsert('church_finances',{id:'overdraft',transaction_type:'expense',account_id:'A',title:'Too much',amount:200,status:'completed'})]));
+    const approved=await asUser(db,other,async()=>approval(db,await financeRow(db,'overdraft'),'approve'));
+    await asUser(db,root,()=>assert.rejects(approval(db,approved,'paid'),/Insufficient balance/));
+    assert.equal((await financeRow(db,'overdraft')).approval_state,'approved');
+    assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='A'")).rows[0].current_balance,'100.00');
+  }finally{await db.close();}
 });
 
 test('member IDs are centrally allocated, custom tithe collisions are rejected, and failed batches roll back',async()=>{
@@ -442,7 +459,7 @@ test('member IDs are centrally allocated, custom tithe collisions are rejected, 
 
 test('welfare receipts reconcile atomically, disbursements require real ledger entries, and repair scripts stay closed',async()=>{
   const db=await setupDatabase();
-  try{await asUser(db,root,async()=>{
+  try{await enableReviewer(db);await asUser(db,root,async()=>{
     await apply(db,[upsert('church_accounts',{id:'cash',name:'Cash',current_balance:100}),upsert('welfare_events',{id:'appeal',title:'Aid',category:'other',member_id:'M',member_name:'Member',description:'Support',end_date:'2026-10-31',minimum_contribution:20,created_by:'Root'})]);
     const receipt={id:'welfare-receipt',title:'Aid receipt',account_id:'cash',transaction_type:'income',amount:20,status:'completed'};
     const contribution={id:'contribution',event_id:'appeal',member_id:'M',contributor_name:'Donor',amount:20,payment_status:'confirmed',recorded_by:'Root',finance_linked:true,finance_transaction_id:receipt.id};
@@ -456,10 +473,20 @@ test('welfare receipts reconcile atomically, disbursements require real ledger e
     assert.equal((await db.query("SELECT current_balance::float AS b FROM public.church_accounts WHERE id='cash'")).rows[0].b,100);
     const claim={id:'claim',claim_number:'BEN-TEST',member_id:'M',member_name:'Member',category:'emergency_relief',title:'Aid',description:'Request',amount_requested:50,amount_approved:50,amount_disbursed:50,status:'disbursed',disbursements:[{amount:50,finance_transaction_id:'payout'}]};
     await assert.rejects(apply(db,[upsert('welfare_claims',claim)]),/treasury receipt/);
-    await apply(db,[upsert('church_finances',{id:'payout',title:'Aid payout',account_id:'cash',transaction_type:'disbursement',amount:50,status:'completed'}),upsert('welfare_claims',claim)]);
-    assert.equal((await db.query("SELECT current_balance::float AS b FROM public.church_accounts WHERE id='cash'")).rows[0].b,50);
-    await assert.rejects(apply(db,[upsert('welfare_claims',{...claim,amount_disbursed:0})]),/total does not match/);
+    await assert.rejects(apply(db,[upsert('church_finances',{id:'payout',title:'Aid payout',account_id:'cash',transaction_type:'disbursement',amount:50,status:'completed'}),upsert('welfare_claims',claim)]),/treasury receipt|linked disbursement/);
+    await apply(db,[upsert('welfare_claims',{...claim,amount_disbursed:0,status:'approved',disbursements:[]})]);
+    await apply(db,[upsert('church_finances',{id:'payout',title:'Aid payout',account_id:'cash',transaction_type:'disbursement',amount:50,status:'completed',welfare_claim_id:'claim'})]);
+    await apply(db,[upsert('church_finances',{id:'second-payout',title:'Second request',account_id:'cash',transaction_type:'disbursement',amount:50,status:'pending',welfare_claim_id:'claim'})]);
+    assert.equal((await db.query("SELECT amount_disbursed FROM public.welfare_claims WHERE id='claim'")).rows[0].amount_disbursed,'0.00');
   });
+    const competing=await asUser(db,other,async()=>approval(db,await financeRow(db,'second-payout'),'approve'));
+    await reviewAndPay(db,'payout');
+    await asUser(db,root,()=>assert.rejects(approval(db,competing,'paid'),/remaining approved claim/));
+    assert.equal((await db.query("SELECT jsonb_array_length(disbursements) AS n FROM public.welfare_claims WHERE id='claim'")).rows[0].n,1);
+    const cancelledCompeting=await asUser(db,root,()=>approval(db,competing,'cancel',{reason:'Claim already fully paid'}));assert.equal(cancelledCompeting.status,'cancelled');
+    assert.equal((await db.query("SELECT current_balance::float AS b FROM public.church_accounts WHERE id='cash'")).rows[0].b,50);
+    assert.equal((await db.query("SELECT amount_disbursed FROM public.welfare_claims WHERE id='claim'")).rows[0].amount_disbursed,'50.00');
+    await asUser(db,root,()=>assert.rejects(apply(db,[upsert('welfare_claims',{id:'claim',amount_disbursed:0})]),/total does not match/));
     // A later use of the in-app repair SQL must not restore anonymous access or reset money.
     const {SQL_FIX_RLS_SCHEMA}=await import('../src/lib/supabaseSchema.ts');
     // WASM has no native pg_cron. Production scheduling is verified against the real database.
@@ -793,4 +820,100 @@ test('ordinary members retain password sign-in, unverified setups do not enable 
   await db.exec(`INSERT INTO auth.sessions VALUES('${member}','${member}','${member}','aal2',NULL)`);
   claims.aal='aal2';assert.equal((await state()).satisfied,true);
  }finally{await db.close();}
+});
+
+test('financial approval identities are server-owned; direct mutations, self-review and unpaid vouchers cannot bypass independent approval',async()=>{
+  const db=await setupDatabase();
+  try{
+    await enableReviewer(db);
+    const input={id:'protected-request',transaction_type:'expense',account_id:'approval-cash',account_name:'Cash',title:'Synthetic bill',recipient_or_vendor:'Vendor',amount:20,currency:'GHS',status:'completed',approved_by:'Fabricated Pastor',approved_by_id:other,approval_state:'paid',paid_by_id:root,approval_history:[{action:'paid'}]};
+    await asUser(db,root,async()=>{
+      await apply(db,[upsert('church_accounts',{id:'approval-cash',name:'Cash',current_balance:100})]);
+      await apply(db,[upsert('church_finances',input)]);
+      const row=await financeRow(db,input.id);
+      assert.equal(row.status,'pending');assert.equal(row.approval_state,'requested');assert.equal(row.requested_by_id,root);
+      assert.equal(row.approved_by_id,null);assert.equal(row.approved_by,null);assert.equal(row.paid_by_id,null);
+      assert.deepEqual(row.approval_history.map(event=>event.action),['requested']);assert.equal(row.approval_history[0].actor_id,root);
+      for(const patch of [{status:'completed'},{approval_state:'paid',paid_by_id:root},{amount:1},{transaction_type:'income'},{approval_history:[]},{requested_by_id:other}])
+        await assert.rejects(apply(db,[upsert('church_finances',{...row,...patch},row.updated_at)]),/cannot be edited/);
+      await assert.rejects(approval(db,row,'approve'),/different finance/);await assert.rejects(approval(db,row,'reject',{reason:'No'}),/different finance/);
+      await assert.rejects(approval(db,row,'paid'),/independent approval/);
+      await assert.rejects(db.query("UPDATE public.church_finances SET status='completed' WHERE id=$1",[input.id]),/permission denied/);
+      await assert.rejects(apply(db,[upsert('expenses',{id:'legacy-bypass',amount:1})]),/Legacy expense history is read-only/);
+    });
+    await asUser(db,member,async()=>{
+      await assert.rejects(approval(db,{id:input.id,updated_at:'2026-10-17T00:00:00Z'},'approve'),/two-factor/);
+      assert.equal((await db.query('SELECT count(*)::int AS n FROM public.church_finances')).rows[0].n,0);
+    });
+    const requested=await financeRow(db,input.id);
+    await asUser(db,other,()=>assert.rejects(approval(db,requested,'approve'),/two-factor/),{aal:'aal1',session_id:other,role:'authenticated'});
+    const approved=await asUser(db,other,()=>approval(db,requested,'approve'));
+    assert.equal(approved.approved_by_id,other);assert.equal(approved.status,'pending');
+    assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='approval-cash'")).rows[0].current_balance,'100.00');
+    await asUser(db,root,()=>assert.rejects(approval(db,requested,'paid'),/changed/));
+    const requestId=operation();
+    const paid=await asUser(db,root,()=>approval(db,approved,'paid',{operationId:requestId,reference:'SYNTHETIC-MOMO-42'}));
+    assert.equal(paid.paid_by_id,root);assert.equal(paid.payment_reference,'SYNTHETIC-MOMO-42');assert.equal(paid.status,'completed');
+    await asUser(db,root,async()=>{
+      assert.deepEqual(await approval(db,approved,'paid',{operationId:requestId,reference:'SYNTHETIC-MOMO-42'}),paid);
+      await assert.rejects(approval(db,approved,'paid',{operationId:requestId,reference:'DIFFERENT'}),/reused with different/);
+      await assert.rejects(approval(db,approved,'paid'),/changed/);await assert.rejects(approval(db,paid,'paid'),/independent approval/);
+      await assert.rejects(approval(db,paid,'cancel',{reason:'Too late'}),/unpaid open/);
+      await assert.rejects(apply(db,[upsert('church_finances',{...paid,amount:1},paid.updated_at)]),/cannot be edited/);
+    });
+    assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='approval-cash'")).rows[0].current_balance,'80.00');
+    assert.deepEqual((await financeRow(db,input.id)).approval_history.map(event=>event.action),['requested','approve','paid']);
+    await asUser(db,other,()=>assert.rejects(approval(db,paid,'void',{reason:'Denied reversal'}),/senior administrator/));
+    const voided=await asUser(db,root,()=>approval(db,paid,'void',{reason:'Synthetic correction'}));
+    assert.equal(voided.status,'voided');assert.equal(voided.paid_by_id,root);assert.equal(voided.approved_by_id,other);
+    assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='approval-cash'")).rows[0].current_balance,'100.00');
+  }finally{await db.close();}
+});
+test('rejection and cancellation preserve money, require reasons, reject stale decisions and cannot be reopened through sync',async()=>{
+  const db=await setupDatabase();
+  try{
+    await enableReviewer(db);
+    await asUser(db,root,()=>apply(db,[upsert('church_accounts',{id:'cash',name:'Cash',current_balance:100}),...['reject-me','cancel-me'].map(id=>upsert('church_finances',{id,title:id,account_id:'cash',transaction_type:'expense',amount:30,status:'completed'}))]));
+    const row=await financeRow(db,'reject-me');
+    await asUser(db,other,()=>assert.rejects(approval(db,row,'reject',{reason:''}),/reason/));
+    const rejected=await asUser(db,other,()=>approval(db,row,'reject',{reason:'Invoice amount needs correction'}));
+    await asUser(db,root,async()=>{
+      await assert.rejects(approval(db,row,'cancel',{reason:'Stale action'}),/changed/);
+      await assert.rejects(approval(db,rejected,'paid'),/independent approval/);
+      await assert.rejects(apply(db,[upsert('church_finances',{...rejected,status:'completed',approval_state:'approved'},rejected.updated_at)]),/cannot be edited/);
+    });
+    const pending=await financeRow(db,'cancel-me');
+    await asUser(db,other,()=>assert.rejects(approval(db,pending,'cancel',{reason:'Not my request'}),/Only the requester/));
+    const approved=await asUser(db,other,()=>approval(db,pending,'approve'));
+    const cancelled=await asUser(db,root,()=>approval(db,approved,'cancel',{reason:'Submit corrected invoice'}));
+    assert.equal(cancelled.approval_state,'cancelled');assert.equal(cancelled.status,'cancelled');
+    assert.deepEqual(cancelled.approval_history.map(event=>event.action),['requested','approve','cancel']);
+    assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='cash'")).rows[0].current_balance,'100.00');
+    await db.exec(`UPDATE public.profiles SET is_active=false WHERE id='${other}'`);
+    await asUser(db,other,()=>assert.rejects(approval(db,cancelled,'approve'),/two-factor/));
+  }finally{await db.close();}
+});
+
+test('approval rollout preserves historical expenses and balances; historical payment type changes cannot bypass controls and backups include approval history',async()=>{
+  let original;
+  const db=await setupDatabase({beforeApprovalControls:async db=>{
+    await db.exec("INSERT INTO public.church_accounts(id,name,current_balance,opening_balance) VALUES('history-cash','Historical Cash',100,100); INSERT INTO public.church_finances(id,transaction_type,account_id,title,amount,status,approved_by) VALUES('old-paid','expense','history-cash','Original payment',20,'completed','Previously entered name'); INSERT INTO public.expenses(id,amount,category,description,approved_by) VALUES('old-expense',10,'History','Historical expense','Entered approver');");
+    original=(await db.query("SELECT (SELECT row_to_json(e) FROM public.expenses e WHERE id='old-expense') AS legacy,(SELECT row_to_json(f) FROM public.church_finances f WHERE id='old-paid') AS receipt,(SELECT current_balance FROM public.church_accounts WHERE id='history-cash') AS balance")).rows[0];
+  }});
+  try{
+    const current=await financeRow(db,'old-paid');
+    for(const [key,value] of Object.entries(original.receipt))assert.deepEqual(current[key],value);
+    assert.equal(current.approval_state,null);assert.deepEqual(current.approval_history,[]);
+    assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='history-cash'")).rows[0].current_balance,original.balance);
+    await asUser(db,root,async()=>{
+      await assert.rejects(apply(db,[upsert('church_finances',{...current,transaction_type:'income'},current.updated_at)]),/Historical payments/);
+      await assert.rejects(apply(db,[upsert('expenses',{...original.legacy,approved_by:'New name'})]),/read-only/);
+      await assert.rejects(apply(db,[{table:'expenses',id:'old-expense',operation:'delete'}]),/read-only/);
+      await apply(db,[upsert('church_finances',{...current,status:'voided',void_reason:'Historical correction'},current.updated_at)]);
+      const backup=(await db.query("SELECT public.gwcc_backup_create() AS result")).rows[0].result;
+      const exported=(await db.query('SELECT public.gwcc_backup_export($1) AS result',[backup])).rows[0].result;
+      assert.ok(JSON.stringify(exported).includes('approval_history'));
+    });
+    assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='history-cash'")).rows[0].current_balance,'100.00');
+  }finally{await db.close();}
 });

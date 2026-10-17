@@ -3,6 +3,7 @@ import { Printer, Copy, Check, X, ShieldAlert } from 'lucide-react';
 import { ExpenseRecord, ChurchFinanceRecord, ChurchSettings } from '../../types/database.types';
 import { formatGHS, numberToCedisWords } from '../../lib/currencyUtils';
 import { useToast } from '../../contexts/ToastContext';
+import {verifiedApprover} from '../../lib/financeApprovals';
 import {financeReference} from '../../lib/financeViewUtils';
 
 interface PaymentVoucherModalProps {
@@ -19,7 +20,7 @@ export const PaymentVoucherModal: React.FC<PaymentVoucherModalProps> = ({
   const { success } = useToast();
   const [copied, setCopied] = React.useState(false);
   const pending=record._sync_status==='pending';
-  const canIssue=!pending&&!['pending','cancelled','failed'].includes(record.status);
+  const canIssue=!pending&&!['pending','cancelled','failed'].includes(record.status)&&(!record.approval_state||['paid','voided'].includes(record.approval_state));
 
   const isIncome = record.transaction_type === 'income' || record.transaction_type === 'grant';
   const voucherNumber = record.reference_no?financeReference(record):record.reference_number||'No reference recorded';
@@ -27,22 +28,7 @@ export const PaymentVoucherModal: React.FC<PaymentVoucherModalProps> = ({
   const accountName = record.account_name || record.account || '';
   const descriptionText = record.title || record.description || (isIncome ? 'Church Revenue / Income' : 'Church Expenditure');
 
-  // Ensure authorized approver displays Prophet Elisha K. Richard (Senior Pastor)
-  const getAuthorizedApprover = (): string => {
-    const raw = record.approved_by?.trim();
-    if (
-      !raw ||
-      raw === 'Rev. Emmanuel Appiah' ||
-      raw.includes('Agyemang-Prempeh') ||
-      raw.includes('Emmanuel Agyemang') ||
-      raw.includes('Emmanuel Appiah')
-    ) {
-      return settings.senior_pastor || 'Prophet Elisha K. Richard';
-    }
-    return raw;
-  };
-
-  const approverName = getAuthorizedApprover();
+  const approverName = isIncome ? record.approved_by || record.recorded_by || 'Not recorded' : verifiedApprover(record);
 
   const handlePrint = () => {
     if(!canIssue)return;
@@ -72,6 +58,9 @@ Description: ${descriptionText}
 Amount: ${formatGHS(record.amount)} (${numberToCedisWords(record.amount)})
 Payment Method: ${record.payment_method?.toUpperCase()} ${accountName ? `(${accountName})` : ''}
 Approved By: ${approverName}
+Requested By: ${record.requested_by || 'Historical entry'}
+Payment Recorded By: ${record.paid_by || 'Historical entry'}
+Payment Reference: ${record.payment_reference || 'Not recorded'}
 Notes: ${record.notes || 'None'}`;
 
     navigator.clipboard.writeText(record.status==='voided'?`VOIDED — retained for audit\n${text}`:text);
@@ -83,6 +72,7 @@ Notes: ${record.notes || 'None'}`;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto print:bg-transparent print:p-0 print:static print:overflow-visible">
       <div className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-4 print:shadow-none print:border-none print:m-0 print:max-w-none print:w-full">
+        {record.approval_state&&<div className="p-4 text-xs bg-slate-50 text-slate-700 break-words">Requested by {record.requested_by||'Awaiting cloud identity'} · Approved by {record.approved_by_id?record.approved_by:'Awaiting independent approval'}<br/>Payment recorded by {record.paid_by||'Awaiting payment'} · {record.payment_reference||'No payment reference'}</div>}
         {/* Top Control Bar (Hidden during print) */}
         <div className={`no-print px-5 py-3.5 ${isIncome ? 'bg-emerald-950' : 'bg-rose-950'} text-white flex items-center justify-between gap-3`}>
           <div className="flex items-center gap-2">

@@ -159,7 +159,7 @@ test('Church Finance: voiding an expense reverses account balance and marks stat
   assert.equal(finances[0].voided_by, 'Finance Officer');
 });
 
-test('Church Finance: internal transfer debits source and credits destination account accurately', async () => {
+test('Church Finance: internal transfers are requests and never move balances before approval and payment', async () => {
   const { transferBetweenAccounts } = await import('../features/finance/financeStore.ts');
 
   let finances = [];
@@ -217,7 +217,7 @@ test('Church Finance: internal transfer debits source and credits destination ac
     () => {},
     {finances,accounts,budgets:typeof budgets==='undefined'?[]:budgets}
   );
-  assert.equal(overdraftResult.success, false);
+  assert.equal(overdraftResult.success, true); // Funding is checked when payment is recorded.
 
   // 3. Valid transfer of 600
   const validResult = transferBetweenAccounts(
@@ -232,16 +232,16 @@ test('Church Finance: internal transfer debits source and credits destination ac
     {finances,accounts,budgets:typeof budgets==='undefined'?[]:budgets}
   );
   assert.equal(validResult.success, true);
-  assert.equal(accounts.find((a) => a.id === 'acc-src').current_balance, 1400);
-  assert.equal(accounts.find((a) => a.id === 'acc-dest').current_balance, 900);
-  assert.equal(finances.length, 1);
+  assert.equal(accounts.find((a) => a.id === 'acc-src').current_balance, 2000);
+  assert.equal(accounts.find((a) => a.id === 'acc-dest').current_balance, 300);
+  assert.equal(finances.length, 2);
   assert.equal(finances[0].transaction_type, 'transfer');
   assert.equal(finances[0].amount, 600);
   assert.equal(finances[0].account_id, 'acc-src');
   assert.equal(finances[0].to_account_id, 'acc-dest');
 });
 
-test('Church Finance: recordChurchFinance rounds decimal precision and updates department budget', async () => {
+test('Church Finance: recordChurchFinance rounds decimal precision and keeps requests outside account and budget spending', async () => {
   const { recordChurchFinance } = await import('../features/finance/financeStore.ts');
 
   let finances = [];
@@ -297,8 +297,8 @@ test('Church Finance: recordChurchFinance rounds decimal precision and updates d
   );
 
   assert.equal(rec.amount, 450.56, 'Amount should be rounded to two decimal places');
-  assert.equal(accounts[0].current_balance, 4549.44, 'Account balance should be 5000 - 450.56 = 4549.44');
-  assert.equal(budgets[0].spent_amount, 1450.56, 'Budget spent amount should be 1000 + 450.56 = 1450.56');
+  assert.equal(accounts[0].current_balance, 5000);assert.equal(rec.approval_state,'requested');assert.equal(rec.status,'pending');
+  assert.equal(budgets[0].spent_amount, 1000);
 });
 
 test('Church Settings: sanitizeRecordForSupabase correctly formats settings table record', () => {
