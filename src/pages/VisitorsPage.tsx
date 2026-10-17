@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import {useSearchParams} from 'react-router-dom';
+import React, { useEffect,useState, useMemo } from 'react';
 import {
   UserCheck,
   Search,
@@ -54,6 +55,10 @@ export const VisitorsPage: React.FC = () => {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [selectedVisitorForDossier, setSelectedVisitorForDossier] = useState<Visitor | null>(null);
+  const [searchParams,setSearchParams]=useSearchParams();const requestedVisitorId=searchParams.get('visitor');
+  const linkedVisitor=visitors.find(visitor=>visitor.id===requestedVisitorId);
+  useEffect(()=>{if(linkedVisitor)setSelectedVisitorForDossier(linkedVisitor);},[requestedVisitorId,Boolean(linkedVisitor)]);
+  const closeVisitorDossier=()=>{setSelectedVisitorForDossier(null);setSearchParams(params=>{params.delete('visitor');return params;},{replace:true});};
   const [selectedVisitorForEdit, setSelectedVisitorForEdit] = useState<Visitor | null>(null);
   const [selectedVisitorForLog, setSelectedVisitorForLog] = useState<Visitor | null>(null);
   const [convertingVisitor, setConvertingVisitor] = useState<Visitor | null>(null);
@@ -72,7 +77,7 @@ export const VisitorsPage: React.FC = () => {
     how_heard: 'Friend / Family',
     prayer_request: '',
     follow_up_status: 'new' as VisitorStatus,
-    assigned_to_name: settings.senior_pastor || 'Pastoral Care Team',
+    assigned_to_name: '',
     notes: '',
   });
 
@@ -212,6 +217,7 @@ export const VisitorsPage: React.FC = () => {
   };
 
   const handleStatusChange = (visitorId: string, newStatus: VisitorStatus) => {
+    if(newStatus==='converted_to_member'){const visitor=visitors.find(row=>row.id===visitorId);if(visitor&&visitor.follow_up_status!=='converted_to_member'){setConvertingVisitor(visitor);return;}}
     updateVisitor(visitorId, { follow_up_status: newStatus });
     success(`Updated status to "${newStatus.replace(/_/g, ' ')}"`);
   };
@@ -1080,7 +1086,7 @@ export const VisitorsPage: React.FC = () => {
       <VisitorDossierModal
         visitor={selectedVisitorForDossier}
         isOpen={Boolean(selectedVisitorForDossier)}
-        onClose={() => setSelectedVisitorForDossier(null)}
+        onClose={closeVisitorDossier}
         onEdit={(v) => {
           setSelectedVisitorForDossier(null);
           setSelectedVisitorForEdit(v);

@@ -26,6 +26,9 @@ import {
 } from 'lucide-react';
 import { ChangePasswordModal } from './ChangePasswordModal';
 import { useAuth } from '../contexts/AuthContext';
+import {useFollowUp} from '../contexts/FollowUpContext';
+import {openTask} from '../lib/followUp';
+import {ghanaToday} from '../lib/financeViewUtils';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
@@ -95,7 +98,9 @@ export const Header: React.FC<HeaderProps> = ({
     }
   };
 
-  const pendingCount =
+  const {tasks}=useFollowUp();
+  const dueTasks=tasks.filter(task=>openTask(task)&&task.due_date<=ghanaToday()).length;
+  const pendingCount = dueTasks +
     visitors.filter((v) => v.follow_up_status === 'new' || v.follow_up_status === 'follow_up_required').length +
     prayerRequests.filter((p) => p.status === 'new').length;
 

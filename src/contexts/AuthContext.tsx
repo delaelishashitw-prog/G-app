@@ -68,6 +68,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   super_admin: [
     'dashboard',
+    'tasks',
     'members',
     'visitors',
     'attendance',
@@ -89,6 +90,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   ],
   senior_pastor: [
     'dashboard',
+    'tasks',
     'members',
     'visitors',
     'attendance',
@@ -110,6 +112,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   ],
   administrator: [
     'dashboard',
+    'tasks',
     'members',
     'visitors',
     'attendance',
@@ -126,6 +129,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   ],
   finance_officer: [
     'dashboard',
+    'tasks',
     'members', // Read-only view for linking donors
     'finance',
     'welfare',
@@ -136,6 +140,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   ],
   pastor: [
     'dashboard',
+    'tasks',
     'members',
     'visitors',
     'attendance',
@@ -149,6 +154,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   ],
   ministry_leader: [
     'dashboard',
+    'tasks',
     'members',
     'attendance',
     'ministries',
@@ -157,6 +163,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   ],
   attendance_officer: [
     'dashboard',
+    'tasks',
     'attendance',
     'services',
     'members', // For check-in verification
@@ -164,6 +171,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   ],
   data_entry: [
     'dashboard',
+    'tasks',
     'members',
     'visitors',
     'attendance',

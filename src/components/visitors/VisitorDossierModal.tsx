@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect,useState } from 'react';
 import {
   X,
   Phone,
@@ -20,6 +20,7 @@ import {
   Share2,
 } from 'lucide-react';
 import { Visitor, VisitorStatus } from '../../types/database.types';
+import {followUpRpc} from '../../lib/followUp';
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { useToast } from '../../contexts/ToastContext';
 
@@ -40,10 +41,16 @@ export const VisitorDossierModal: React.FC<VisitorDossierModalProps> = ({
   onConvert,
   onLogInteraction,
 }) => {
-  const { updateVisitor } = useChurchData();
+  const {updateVisitor,settings}=useChurchData();
   const { success } = useToast();
   const [activeTab, setActiveTab] = useState<'profile' | 'messages' | 'notes'>('profile');
   const [selectedTemplate, setSelectedTemplate] = useState<'welcome' | 'sunday' | 'prayer' | 'midweek'>('welcome');
+  const [verifiedHistory,setVerifiedHistory]=useState<{id:string;actor_name:string;date:string;channel:string;summary:string}[]>([]);
+  const [historyError,setHistoryError]=useState('');
+  useEffect(()=>{let active=true;setVerifiedHistory([]);setHistoryError('');if(!isOpen||!visitor)return;
+    followUpRpc('gwcc_visitor_follow_up_history',{p_visitor_id:visitor.id}).then(rows=>{if(active&&Array.isArray(rows))setVerifiedHistory(rows);}).catch(()=>{if(active)setHistoryError('Verified interaction history could not be loaded. Reopen this record when connected.');});
+    return()=>{active=false;};
+  },[isOpen,visitor?.id]);
 
   if (!isOpen || !visitor) return null;
 
@@ -51,7 +58,7 @@ export const VisitorDossierModal: React.FC<VisitorDossierModalProps> = ({
   const isConverted = visitor.follow_up_status === 'converted_to_member';
 
   const messageTemplates = {
-    welcome: `Calvary greetings ${visitor.full_name}! Thank you for worshipping with us at Greater Works City Church (GWCC) in Joma for ${visitor.service_attended}. We pray that God's grace, favor, and peace abound in your life. You are always welcome in God's presence! - Pastor David Osei-Tutu`,
+    welcome: `Calvary greetings ${visitor.full_name}! Thank you for worshipping with us at Greater Works City Church (GWCC) in Joma for ${visitor.service_attended}. We pray that God's grace, favor, and peace abound in your life. You are always welcome in God's presence! - ${settings.senior_pastor || settings.church_name || 'GWCC Pastoral Team'}`,
     sunday: `Shalom ${visitor.full_name}! We warmly invite you to join us again this Sunday at Greater Works City Church, Joma. 1st Service: 7:30 AM | 2nd Service: 10:00 AM. Come expectant for another life-transforming encounter!`,
     prayer: `Peace be unto you ${visitor.full_name}. The Pastoral Intercessory Team at GWCC has been lifting up your prayer need (${visitor.prayer_request ? `regarding "${visitor.prayer_request}"` : 'before the throne of grace'}). May the Lord show Himself strong on your behalf!`,
     midweek: `Hello ${visitor.full_name}, join us this Wednesday at 6:30 PM for our Midweek Miracle & Teaching Service at GWCC Joma Sanctuary. A powerful word in season awaits you!`,
@@ -62,6 +69,7 @@ export const VisitorDossierModal: React.FC<VisitorDossierModalProps> = ({
   };
 
   const handleStatusChange = (newStatus: VisitorStatus) => {
+    if(newStatus==='converted_to_member'&&!isConverted){onConvert(visitor);return;}
     updateVisitor(visitor.id, { follow_up_status: newStatus });
     success(`Follow-up status updated to "${newStatus.replace(/_/g, ' ')}"`);
   };
@@ -360,6 +368,8 @@ export const VisitorDossierModal: React.FC<VisitorDossierModalProps> = ({
                 </button>
               </div>
 
+              {historyError&&<p role="alert" className="text-xs text-amber-800">{historyError}</p>}
+              {verifiedHistory.length>0&&<section className="space-y-2"><h4 className="font-semibold text-sm">Verified interaction history</h4>{[...verifiedHistory].reverse().map(entry=><div key={entry.id} className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs"><strong>{entry.date} · {entry.channel.replaceAll('_',' ')} · recorded by {entry.actor_name}</strong><p className="mt-1 whitespace-pre-wrap">{entry.summary}</p></div>)}</section>}
               {visitor.notes ? (
                 <div className="p-4 bg-white border border-slate-200 rounded-xl space-y-2">
                   <span className="text-[11px] font-semibold text-slate-400 uppercase">Recorded Notes & History</span>

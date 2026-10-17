@@ -26,6 +26,7 @@ export async function checkBackup(browser,{origin,settings}) {
       if(request.method()==='OPTIONS'){await route.fulfill({status:204,headers});return;}
       let result=[];
       if(url.pathname==='/rest/v1/rpc/gwcc_security_status')result={role:profile.role,required:profile.role!=="member",verified_factors:profile.role==="member"?0:1,satisfied:true};
+    else if(url.pathname==='/rest/v1/rpc/gwcc_follow_up_list')result=[];
     else if(url.pathname==='/auth/v1/user')result=user;
       else if(url.pathname==='/auth/v1/token')result=session;
       else if(url.pathname.includes('/storage/v1/object/')){

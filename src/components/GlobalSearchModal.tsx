@@ -179,6 +179,9 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
         keywords: ['attendance', 'checkin', 'headcount', 'present', 'service attendance'],
       },
       {
+        id:'page-tasks',title:'Follow-up Task Centre',path:'/tasks',module:'tasks',group:'Ministry Services',description:'Assigned tasks, due dates, overdue follow-ups and completion history',icon:CalendarCheck,keywords:['tasks','follow-up','due','overdue','assignments'],
+      },
+      {
         id: 'page-visitors',
         title: 'First-time Visitors & Guests',
         path: '/visitors',
