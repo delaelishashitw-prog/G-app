@@ -845,6 +845,7 @@ export interface RosterAssignment {
   notes?: string;
   announcement?: string;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface RosterConflict {

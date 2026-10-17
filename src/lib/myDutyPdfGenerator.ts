@@ -1,3 +1,4 @@
+import {selectDutyRoster} from './rosterUtils';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { ChurchSettings, Member, RosterAssignment } from '../types/database.types';
@@ -75,19 +76,7 @@ export function generateMyDutyRosterPdf(options: GenerateDutyPdfOptions): jsPDF 
   const textMuted: [number, number, number] = [100, 116, 139]; // #64748b
   const borderLight: [number, number, number] = [226, 232, 240]; // #e2e8f0
 
-  // Filter duties based on scope
-  let targetDuties: RosterAssignment[] = [];
-  const todayStr = new Date().toISOString().split('T')[0];
-
-  if (scope === 'single' && selectedAssignmentId) {
-    const single = assignments.find((a) => a.id === selectedAssignmentId);
-    targetDuties = single ? [single] : assignments.slice(0, 1);
-  } else if (scope === 'upcoming') {
-    const upcoming = assignments.filter((a) => a.date >= todayStr);
-    targetDuties = upcoming.length > 0 ? upcoming : assignments;
-  } else {
-    targetDuties = assignments;
-  }
+  let targetDuties = selectDutyRoster(assignments,scope,selectedAssignmentId);
 
   // Sort by date
   targetDuties = [...targetDuties].sort((a, b) => {

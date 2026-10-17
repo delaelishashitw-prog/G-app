@@ -1,3 +1,4 @@
+import {selectDutyRoster} from '../../lib/rosterUtils';
 import React, { useState } from 'react';
 import {
   X,
@@ -50,16 +51,8 @@ export const DownloadMyDutyModal: React.FC<DownloadMyDutyModalProps> = ({
 
   if (!isOpen) return null;
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  const upcomingDuties = assignments.filter((a) => a.date >= todayStr);
-  const targetCount =
-    scope === 'single'
-      ? 1
-      : scope === 'upcoming'
-      ? upcomingDuties.length || assignments.length
-      : assignments.length;
-
-  const selectedSingleAssignment = assignments.find((a) => a.id === selectedAssignmentId) || assignments[0];
+  const targetCount = selectDutyRoster(assignments,scope,selectedAssignmentId).length;
+  const selectedSingleAssignment = assignments.find(a=>a.id===selectedAssignmentId);
 
   const handleDownload = () => {
     try {
@@ -191,7 +184,7 @@ export const DownloadMyDutyModal: React.FC<DownloadMyDutyModalProps> = ({
                   {scope === 'upcoming' && <CheckCircle2 className="w-4 h-4 text-emerald-700" />}
                 </div>
                 <p className="text-[11px] text-slate-500">
-                  Future scheduled shifts ({upcomingDuties.length || assignments.length})
+                  Future scheduled shifts ({selectDutyRoster(assignments,'upcoming').length})
                 </p>
               </button>
 
@@ -340,7 +333,7 @@ export const DownloadMyDutyModal: React.FC<DownloadMyDutyModalProps> = ({
             <button
               type="button"
               onClick={handlePrint}
-              disabled={isGenerating || assignments.length === 0}
+              disabled={isGenerating || targetCount === 0}
               className="px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-white text-slate-700 text-xs font-bold transition flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
             >
               <Printer className="w-4 h-4 text-slate-500" />
@@ -350,7 +343,7 @@ export const DownloadMyDutyModal: React.FC<DownloadMyDutyModalProps> = ({
             <button
               type="button"
               onClick={handleDownload}
-              disabled={isGenerating || assignments.length === 0}
+              disabled={isGenerating || targetCount === 0}
               className="px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-black transition flex items-center gap-2 shadow-md hover:shadow-lg disabled:opacity-50 cursor-pointer"
             >
               <Download className="w-4 h-4" />
