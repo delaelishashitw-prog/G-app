@@ -431,7 +431,7 @@ interface ChurchDataContextType {
   supabaseError: string | null;
   lastSyncTime: string | null;
   supabaseConfig: { url: string; anonKey: string; source: 'env' | 'storage' | 'default' | 'none' };
-  connectSupabase: (url: string, key: string) => Promise<{ success: boolean; message: string }>;
+  connectSupabase: (url: string, key: string) => Promise<{ success: boolean; message: string; tablesStatus?: 'ready' | 'tables_missing' }>;
   disconnectSupabase: () => void;
   pushToSupabase: (onProgress?: (step: string, percent: number) => void) => Promise<{ success: boolean; summary: Record<string, number>; errors: string[] }>;
   pullFromSupabase: () => Promise<{ success: boolean; errors: string[] }>;
@@ -587,6 +587,10 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setIsRefreshing(true);
     try {
       if(typeof navigator!=='undefined' && !navigator.onLine) return {success:true,source:'local',message:'Offline. Your pending records remain on this device.'};
+      if(!isSupabaseConfigured()) {
+        setSupabaseStatus('disconnected');
+        return {success:true,source:'local',message:'Local mode active. Connect Supabase in Settings to sync across devices.'};
+      }
       await flushSyncOutbox();
       const result=await pullAllDataFromSupabase();
       applyData(result.data);
@@ -620,6 +624,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     applyData(local);setDataOwner(`${currentUser.id}:${currentUser.role}`);
     let alive=true;
     const hydrate=async()=>{
+      if(!isSupabaseConfigured()){setSupabaseStatus('disconnected');return;}
       setSupabaseStatus('syncing');await flushSyncOutbox();
       if(!alive)return;
       const result=await pullAllDataFromSupabase();if(!alive)return;

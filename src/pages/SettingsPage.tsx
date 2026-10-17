@@ -296,11 +296,17 @@ export const SettingsPage: React.FC = () => {
     let testUrl = supabaseUrlInput.trim();
     let testKey = supabaseKeyInput.trim();
 
-    if (testUrl.includes('noskcrmvnancdyhvzfin') && testKey !== DEFAULT_SUPABASE_ANON_KEY) {
-      testKey = DEFAULT_SUPABASE_ANON_KEY;
-      testUrl = DEFAULT_SUPABASE_URL;
-      setSupabaseUrlInput(DEFAULT_SUPABASE_URL);
-      setSupabaseKeyInput(DEFAULT_SUPABASE_ANON_KEY);
+    if (!testUrl || !testKey) {
+      setTestResult({
+        success: false,
+        message: 'Please enter both your Supabase Project URL and Anon Public Key.',
+      });
+      return;
+    }
+
+    if (!testUrl.startsWith('http://') && !testUrl.startsWith('https://')) {
+      testUrl = 'https://' + testUrl;
+      setSupabaseUrlInput(testUrl);
     }
 
     setIsTesting(true);
@@ -328,22 +334,22 @@ export const SettingsPage: React.FC = () => {
     let saveUrl = supabaseUrlInput.trim();
     let saveKey = supabaseKeyInput.trim();
 
-    if (saveUrl.includes('noskcrmvnancdyhvzfin') && saveKey !== DEFAULT_SUPABASE_ANON_KEY) {
-      saveKey = DEFAULT_SUPABASE_ANON_KEY;
-      saveUrl = DEFAULT_SUPABASE_URL;
-      setSupabaseUrlInput(DEFAULT_SUPABASE_URL);
-      setSupabaseKeyInput(DEFAULT_SUPABASE_ANON_KEY);
-    }
-
     if (!saveUrl || !saveKey) {
       toastError('Missing Credentials', 'Please provide both your Supabase Project URL and Anon Key.');
       return;
     }
+
+    if (!saveUrl.startsWith('http://') && !saveUrl.startsWith('https://')) {
+      saveUrl = 'https://' + saveUrl;
+      setSupabaseUrlInput(saveUrl);
+    }
+
     const res = await connectSupabase(saveUrl, saveKey);
     if (res.success) {
       setTestResult({
         success: true,
-        message: 'Connected and credentials saved successfully!',
+        message: res.message || 'Connected and credentials saved successfully!',
+        tablesStatus: res.tablesStatus,
       });
       toastSuccess('Supabase Connected', 'Database credentials saved and verified.');
     } else {
@@ -356,12 +362,30 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handleCheckTables = async () => {
+    let checkUrl = supabaseUrlInput.trim() || supabaseConfig.url;
+    let checkKey = supabaseKeyInput.trim() || supabaseConfig.anonKey;
+
+    if (!checkUrl || !checkKey) {
+      toastError('Credentials Needed', 'Please enter your Supabase Project URL and Anon Public Key first.');
+      return;
+    }
+
+    if (!checkUrl.startsWith('http://') && !checkUrl.startsWith('https://')) {
+      checkUrl = 'https://' + checkUrl;
+      setSupabaseUrlInput(checkUrl);
+    }
+
     setIsCheckingTables(true);
     try {
-      const status = await checkSupabaseTables();
+      const status = await checkSupabaseTables(checkUrl, checkKey);
       setTableStatus(status);
+      if (status.ready) {
+        toastSuccess('Schema Verified', `All ${status.existing.length} database tables are configured and ready.`);
+      } else {
+        toastInfo('Schema Incomplete', `${status.missing.length} table(s) or upgrades require running the SQL migration.`);
+      }
     } catch {
-      // Ignore
+      toastError('Inspection Error', 'Could not inspect remote PostgreSQL tables.');
     } finally {
       setIsCheckingTables(false);
     }
@@ -426,16 +450,14 @@ export const SettingsPage: React.FC = () => {
     let activeUrl = supabaseUrlInput.trim() || supabaseConfig.url;
     let activeKey = supabaseKeyInput.trim() || supabaseConfig.anonKey;
 
-    if (activeUrl.includes('noskcrmvnancdyhvzfin') && activeKey !== DEFAULT_SUPABASE_ANON_KEY) {
-      activeKey = DEFAULT_SUPABASE_ANON_KEY;
-      activeUrl = DEFAULT_SUPABASE_URL;
-      setSupabaseUrlInput(DEFAULT_SUPABASE_URL);
-      setSupabaseKeyInput(DEFAULT_SUPABASE_ANON_KEY);
-    }
-
     if (!activeUrl || !activeKey) {
       toastError('Configuration Missing', 'Please enter your Supabase Project URL and Anon Key first.');
       return;
+    }
+
+    if (!activeUrl.startsWith('http://') && !activeUrl.startsWith('https://')) {
+      activeUrl = 'https://' + activeUrl;
+      setSupabaseUrlInput(activeUrl);
     }
 
     if (activeUrl !== supabaseConfig.url || activeKey !== supabaseConfig.anonKey || supabaseStatus === 'disconnected') {
@@ -1515,8 +1537,16 @@ export const SettingsPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Status Badge */}
-              <div className="flex items-center gap-2">
+              {/* Status Badge & Source Indicators */}
+              <div className="flex flex-wrap items-center gap-2">
+                {projectRef && (
+                  <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                    Project: <span className="font-bold text-slate-900">{projectRef}</span>
+                  </span>
+                )}
+                <span className="px-2.5 py-1 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                  {supabaseConfig.source === 'env' ? 'Source: Environment (.env)' : supabaseConfig.source === 'storage' ? 'Source: Browser Storage' : 'Source: Unlinked'}
+                </span>
                 {isConnected ? (
                   <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-2xs">
                     <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
@@ -1685,16 +1715,29 @@ export const SettingsPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={async () => {
-                    setSupabaseUrlInput(DEFAULT_SUPABASE_URL);
-                    setSupabaseKeyInput(DEFAULT_SUPABASE_ANON_KEY);
+                    const envUrl = String(import.meta.env?.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL || '').trim();
+                    const envKey = String(import.meta.env?.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY || '').trim();
+                    if (!envUrl || !envKey) {
+                      toastInfo('No Preconfigured Keys', 'No default church keys were detected in environment variables. Enter your Project URL and Anon Public Key from your Supabase dashboard.');
+                      return;
+                    }
+                    setSupabaseUrlInput(envUrl);
+                    setSupabaseKeyInput(envKey);
                     toastInfo('Restoring GWCC Credentials', 'Applying official church project credentials...');
-                    const res = await connectSupabase(DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY);
+                    const res = await connectSupabase(envUrl, envKey);
                     if (res.success) {
                       setTestResult({
                         success: true,
                         message: 'Connected to Greater Works City Church live Supabase cluster!',
+                        tablesStatus: res.tablesStatus,
                       });
                       toastSuccess('Connected', 'Official Greater Works City Church live database connected!');
+                    } else {
+                      setTestResult({
+                        success: false,
+                        message: res.message,
+                      });
+                      toastError('Connection Failed', res.message);
                     }
                   }}
                   className="px-3.5 py-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-950 font-bold rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer"

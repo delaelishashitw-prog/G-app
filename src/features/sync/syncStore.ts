@@ -22,32 +22,32 @@ export async function connectSupabase(
   setSupabaseStatus: Dispatch<SetStateAction<SupabaseStatus>>,
   setSupabaseError: Dispatch<SetStateAction<string | null>>,
   setSupabaseConfig: Dispatch<SetStateAction<{ url: string; anonKey: string; source: 'env' | 'storage' | 'default' | 'none' }>>
-): Promise<{ success: boolean; message: string }> {
+): Promise<{ success: boolean; message: string; tablesStatus?: 'ready' | 'tables_missing' }> {
   setSupabaseStatus('syncing');
   const test = await testSupabaseConnection(url, key);
   if (!test.success) {
     setSupabaseStatus('error');
     setSupabaseError(test.message);
-    return { success: false, message: test.message };
+    return { success: false, message: test.message, tablesStatus: test.tablesStatus };
   }
 
   const saveRes = saveSupabaseCredentials(url, key);
   if (!saveRes.success) {
     setSupabaseStatus('error');
     setSupabaseError(saveRes.message);
-    return saveRes;
+    return { success: false, message: saveRes.message };
   }
 
   setSupabaseConfig(getStoredSupabaseConfig());
   if (test.tablesStatus === 'tables_missing') {
     setSupabaseStatus('tables_missing');
     setSupabaseError(null);
-    return { success: true, message: test.message };
+    return { success: true, message: test.message, tablesStatus: 'tables_missing' };
   }
 
   setSupabaseStatus('connected');
   setSupabaseError(null);
-  return { success: true, message: test.message };
+  return { success: true, message: test.message, tablesStatus: 'ready' };
 }
 
 export function disconnectSupabase(

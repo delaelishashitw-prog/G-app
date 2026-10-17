@@ -112,13 +112,17 @@ export const supabase = getSupabaseClient();
 // Save Supabase credentials to LocalStorage
 export function saveSupabaseCredentials(url: string, anonKey: string): { success: boolean; message: string } {
   try {
-    const cleanUrl = url.trim().replace(/\/+$/, '');
+    let cleanUrl = url.trim().replace(/\/+$/, '');
     let cleanKey = anonKey.trim();
 
-    let serverSecret=cleanKey.startsWith('sb_secret_');
-    try {serverSecret ||= JSON.parse(atob(cleanKey.split('.')[1]||'')).role==='service_role';}catch{}
-    if(serverSecret)return {success:false,message:'Use the public publishable/anon key. Server authentication keys must never be stored in the browser.'};
-    if (!cleanUrl.startsWith('https://')) {
+    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+      cleanUrl = 'https://' + cleanUrl;
+    }
+
+    let serverSecret = cleanKey.startsWith('sb_secret_');
+    try { serverSecret ||= JSON.parse(atob(cleanKey.split('.')[1] || '')).role === 'service_role'; } catch {}
+    if (serverSecret) return { success: false, message: 'Use the public publishable/anon key. Server service_role keys must never be stored in the browser.' };
+    if (!cleanUrl.startsWith('https://') && !cleanUrl.startsWith('http://')) {
       return { success: false, message: 'Supabase URL must start with https://' };
     }
 
@@ -204,7 +208,11 @@ export function isPermissionDeniedError(error: any): boolean {
 // Extract project ref from https://<ref>.supabase.co
 export function getSupabaseProjectRef(url: string): string | null {
   try {
-    const clean = url.trim().replace(/\/+$/, '');
+    let clean = url.trim().replace(/\/+$/, '');
+    if (!clean) return null;
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = 'https://' + clean;
+    }
     const parsed = new URL(clean);
     const parts = parsed.hostname.split('.');
     if (parts.length >= 3 && parts[1] === 'supabase' && parts[2] === 'co') {
@@ -223,14 +231,28 @@ export async function testSupabaseConnection(
 ): Promise<{ success: boolean; latencyMs: number; message: string; tablesStatus?: 'ready' | 'tables_missing' }> {
   const startTime = Date.now();
   const storedConfig = getStoredSupabaseConfig();
-  const url = (customUrl || storedConfig.url).trim().replace(/\/+$/, '');
-  const key = (customKey || storedConfig.anonKey).trim();
+  let url = (customUrl || storedConfig.url).trim().replace(/\/+$/, '');
+  let key = (customKey || storedConfig.anonKey).trim();
 
   if (!url || !key) {
     return {
       success: false,
       latencyMs: 0,
       message: 'Supabase URL and Anon Key are required.',
+    };
+  }
+
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = 'https://' + url;
+  }
+
+  let serverSecret = key.startsWith('sb_secret_');
+  try { serverSecret ||= JSON.parse(atob(key.split('.')[1] || '')).role === 'service_role'; } catch {}
+  if (serverSecret) {
+    return {
+      success: false,
+      latencyMs: 0,
+      message: 'A service_role key was provided. For browser security, use the public anon/publishable key from Project Settings → API → Project API Keys → anon public.',
     };
   }
 
@@ -274,7 +296,14 @@ export async function testSupabaseConnection(
         };
       }
 
-      if(isPermissionDeniedError(settingsError))return {success:true,latencyMs,message:'The project is reachable. Private data requires a verified, reviewed account; permissions have not been relaxed.'};
+      if (isPermissionDeniedError(settingsError)) {
+        return {
+          success: true,
+          latencyMs,
+          message: `Successfully connected to Supabase in ${latencyMs}ms! (Database is online; private tables are protected by Row-Level Security).`,
+          tablesStatus: 'ready',
+        };
+      }
 
       // If invalid API key / JWT
       if (
@@ -313,12 +342,42 @@ export async function testSupabaseConnection(
 }
 
 // Table inspection helper
-export async function checkSupabaseTables(): Promise<{
+export async function checkSupabaseTables(
+  customUrl?: string,
+  customKey?: string
+): Promise<{
   ready: boolean;
   existing: string[];
   missing: string[];
 }> {
-  const client = getSupabaseClient();
+  const storedConfig = getStoredSupabaseConfig();
+  let url = (customUrl || storedConfig.url).trim().replace(/\/+$/, '');
+  let key = (customKey || storedConfig.anonKey).trim();
+
+  if (!url || !key) return { ready: false, existing: [], missing: [] };
+
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = 'https://' + url;
+  }
+
+  let client: SupabaseClient | null = null;
+  if ((!customUrl && !customKey) || (url === storedConfig.url && key === storedConfig.anonKey)) {
+    client = getSupabaseClient();
+  }
+  if (!client) {
+    try {
+      client = createClient(url, key, {
+        auth: {
+          storageKey: `gwcc-supabase-check-${Date.now()}`,
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      });
+    } catch {
+      return { ready: false, existing: [], missing: [] };
+    }
+  }
   if (!client) return { ready: false, existing: [], missing: [] };
 
   const tablesToCheck = [
@@ -368,8 +427,15 @@ export async function checkSupabaseTables(): Promise<{
     }
   }
 
-  const release=await client.rpc('gwcc_release_status');
-  if(release.error || release.data?.migration!=='20261015000001')missing.push('security upgrade 20261015000001');
+  try {
+    const release = await client.rpc('gwcc_release_status');
+    if (release.error || release.data?.migration !== '20261015000001') {
+      missing.push('security upgrade 20261015000001');
+    }
+  } catch {
+    missing.push('security upgrade 20261015000001');
+  }
+
   return {
     ready: missing.length === 0,
     existing,
