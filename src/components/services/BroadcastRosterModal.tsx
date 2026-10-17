@@ -22,6 +22,7 @@ interface BroadcastRosterModalProps {
   assignments: RosterAssignment[];
   settings: ChurchSettings;
   targetDate?: string;
+  blockedAssignmentIds?:string[];
   onUpdateStatus?: (assignmentId: string, status: RosterAssignmentStatus) => void;
   onBatchConfirm?: (assignmentIds: string[]) => void;
 }
@@ -32,6 +33,7 @@ export const BroadcastRosterModal: React.FC<BroadcastRosterModalProps> = ({
   assignments,
   settings,
   targetDate,
+  blockedAssignmentIds=[],
   onUpdateStatus,
   onBatchConfirm,
 }) => {
@@ -50,7 +52,7 @@ export const BroadcastRosterModal: React.FC<BroadcastRosterModalProps> = ({
     return assignments.filter((a) => a.date === selectedDate);
   }, [assignments, selectedDate]);
 
-  const pendingCount = dateAssignments.filter((a) => a.status === 'pending').length;
+  const pendingCount = dateAssignments.filter((a) => a.status === 'pending'&&!blockedAssignmentIds.includes(a.id)).length;
   const confirmedCount = dateAssignments.filter((a) => a.status === 'confirmed').length;
 
   // Generate complete group broadcast message
@@ -111,7 +113,7 @@ export const BroadcastRosterModal: React.FC<BroadcastRosterModalProps> = ({
 
   const handleConfirmAllPending = () => {
     if (!onBatchConfirm && !onUpdateStatus) return;
-    const pendingIds = dateAssignments.filter((a) => a.status === 'pending').map((a) => a.id);
+    const pendingIds = dateAssignments.filter((a) => a.status === 'pending'&&!blockedAssignmentIds.includes(a.id)).map((a) => a.id);
     if (pendingIds.length === 0) {
       info('No Pending Stewards', 'All assignments for this date are already confirmed.');
       return;

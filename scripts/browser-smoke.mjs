@@ -12,6 +12,7 @@ import {checkChurchFinance} from './finance-browser-checks.mjs';
 import {checkCommunication} from './communication-browser-checks.mjs';
 import {checkMfa} from './mfa-browser-checks.mjs';
 import {checkTasks} from './tasks-browser-checks.mjs';
+import {checkDutyRoster} from './duty-roster-browser-checks.mjs';
 import {checkMemberPortal} from './member-portal-browser-checks.mjs';
 import {checkBackup} from './backup-browser-checks.mjs';
 
@@ -30,7 +31,9 @@ try{
   const unauthenticated=await fetch(`${origin}/api/ai/assistant`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:'Test'})});assert.equal(unauthenticated.status,401);
   const invalidJson=await fetch(`${origin}/api/staff`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{bad'});assert.equal(invalidJson.status,400);
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{channel:'chromium'}),args:['--no-sandbox']});
-  if(process.env.TEST_SCOPE==='portal'){
+  if(process.env.TEST_SCOPE==='duty'){
+    await checkDutyRoster(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  }else if(process.env.TEST_SCOPE==='portal'){
     await checkMemberPortal(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   }else if(process.env.TEST_SCOPE==='tasks'){
     await checkTasks(browser,{origin,settings:initialSettings});
@@ -197,6 +200,7 @@ try{
   await checkMemberAccess(page,{origin,data,profile});
   await checkMemberPasswordSetup(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkMemberPortal(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  await checkDutyRoster(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await page.goto(`${origin}/communication`);
   await page.getByLabel('Title',{exact:true}).fill('QA saved draft');
   await page.getByLabel('Message',{exact:true}).fill('This is a draft. Nothing was sent.');

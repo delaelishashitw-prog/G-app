@@ -1,3 +1,4 @@
+import {getSupabaseClient} from '../lib/supabase';
 import { isActiveTransaction } from '../lib/ledgerUtils';
 import React, { useState, useMemo, useEffect } from 'react';
 import {
@@ -61,6 +62,7 @@ import { upcomingService, isArchivedServiceReference, serviceScheduleLabel } fro
 import { ServiceFormModal } from '../components/services/ServiceFormModal';
 import { ServiceBulletinModal } from '../components/services/ServiceBulletinModal';
 import { OrderOfServiceEditorModal } from '../components/services/OrderOfServiceEditorModal';
+import {RosterRequestPanel} from '../components/services/RosterRequestPanel';
 import { DutyRosterModal } from '../components/services/DutyRosterModal';
 import { AssignRosterModal } from '../components/services/AssignRosterModal';
 import { PrintRosterModal } from '../components/services/PrintRosterModal';
@@ -82,9 +84,10 @@ export const ServicesPage: React.FC = () => {
     updateService,
     deleteService,
     rosterAssignments,
+    refreshData,
     addRosterAssignment,
-    updateRosterAssignment,
-    deleteRosterAssignment,
+    updateRosterAssignment: updateRosterRecord,
+    deleteRosterAssignment: deleteRosterRecord,
     batchAddOrUpdateRosterAssignments,
     rosterConflicts,
   } = useChurchData();
@@ -96,6 +99,18 @@ export const ServicesPage: React.FC = () => {
 
   // Role check: Only authorized staff can create/edit/delete services
   const canManageServices = hasRole(['super_admin', 'senior_pastor', 'administrator', 'pastor', 'ministry_leader']);
+  const [pendingRosterIds,setPendingRosterIds]=useState<string[]|null>(null);
+  useEffect(()=>{
+    if(!canManageServices){setPendingRosterIds(null);return;}
+    let active=true;
+    const load=async()=>{const client=getSupabaseClient();if(!client)return;const {data,error}=await client.rpc('gwcc_roster_requests');if(active&&!error&&Array.isArray(data))setPendingRosterIds(data.filter(r=>r.status==='pending').map(r=>r.assignment_id));};
+    void load();const timer=setInterval(()=>void load(),30000);return()=>{active=false;clearInterval(timer);};
+  },[canManageServices]);
+  const updateRosterAssignment=(id:string,updates:Partial<RosterAssignment>)=>{
+    if(('status' in updates||'member_id' in updates||'date' in updates||'service_id' in updates)&&(pendingRosterIds===null||pendingRosterIds.includes(id))){warning('Review required','Review substitute requests before changing this duty.');return;}
+    updateRosterRecord(id,updates);
+  };
+  const deleteRosterAssignment=(id:string)=>{if(pendingRosterIds===null||pendingRosterIds.includes(id)){warning('Review required','Review substitute requests before deleting this duty.');return;}deleteRosterRecord(id);};
   const canViewGiving = canAccess('giving');
   const canTakeAttendance = canAccess('attendance');
   const [clockNow, setClockNow] = useState(() => new Date());
@@ -316,7 +331,8 @@ export const ServicesPage: React.FC = () => {
     updates: Partial<ChurchService>,
     newAssignments?: Omit<RosterAssignment, 'id' | 'created_at'>[]
   ) => {
-    if (!canManageServices) return;
+    if (!canManageServices) return false;
+    if(newAssignments?.length&&(pendingRosterIds===null||rosterAssignments.some(a=>pendingRosterIds.includes(a.id)&&a.service_id===serviceId&&newAssignments.some(n=>n.date===a.date)))){warning('Review required','Review substitute requests for this date before editing its duty assignments.');return false;}
     updateService(serviceId, updates);
     if (newAssignments && newAssignments.length > 0) {
       batchAddOrUpdateRosterAssignments(newAssignments);
@@ -1197,6 +1213,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
             </div>
           )}
 
+          {canManageServices&&<RosterRequestPanel onPendingChange={setPendingRosterIds} members={members} assignments={rosterAssignments} refreshData={refreshData}/>}
           {/* Roster Summary KPI Chips */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="p-3 bg-white dark:bg-[#0e1726] rounded-xl border border-slate-200 dark:border-slate-800 text-center">
@@ -1374,7 +1391,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                 }
 
                 return Array.from(groups.entries()).map(([groupKey, groupItems]) => {
-                  const pendingInGroup = groupItems.filter((i) => i.status === 'pending');
+                  const pendingInGroup = groupItems.filter((i) => i.status === 'pending'&&pendingRosterIds!==null&&!pendingRosterIds.includes(i.id));
                   const groupAnnouncement =
                     groupItems.find((i) => i.announcement)?.announcement ||
                     services.find(
@@ -1493,6 +1510,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
                                   </td>
                                   <td className="py-3 px-4">
                                     <select
+                                      disabled={!canManageServices||pendingRosterIds===null||pendingRosterIds.includes(assignment.id)}
                                       value={assignment.status}
                                       onChange={(e) =>
                                         updateRosterAssignment(assignment.id, {
@@ -1610,6 +1628,7 @@ Come and experience extraordinary worship, prophetic encounters, signs and wonde
         <BroadcastRosterModal
           isOpen={isBroadcastRosterOpen}
           onClose={() => setIsBroadcastRosterOpen(false)}
+          blockedAssignmentIds={pendingRosterIds||rosterAssignments.map(a=>a.id)}
           assignments={rosterAssignments.filter(row => rosterServiceFilter === 'ALL' || row.service_id === rosterServiceFilter)}
           settings={settings}
           targetDate={rosterDateFilter !== 'ALL' ? rosterDateFilter : undefined}

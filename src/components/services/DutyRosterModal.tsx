@@ -14,7 +14,7 @@ interface DutyRosterModalProps {
     serviceId: string,
     updates: Partial<ChurchService>,
     newAssignments?: Omit<RosterAssignment, 'id' | 'created_at'>[]
-  ) => void;
+  ) => boolean | void;
   onClose: () => void;
 }
 
@@ -178,7 +178,7 @@ export const DutyRosterModal: React.FC<DutyRosterModalProps> = ({
       });
     }
 
-    onSave(service.id, serviceUpdates, newAssignments);
+    if(onSave(service.id, serviceUpdates, newAssignments)===false)return;
     success(
       'Duty Roster Saved',
       syncToMemberPortal ? `${newAssignments.length} assignments saved for ${targetDate}; new assignments await confirmation.` : 'Service roles saved without creating portal assignments.'

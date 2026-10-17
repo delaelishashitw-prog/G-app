@@ -1,3 +1,4 @@
+import {rosterDate,rosterToday,isUpcomingDuty,type RosterSubstituteRequest} from '../lib/rosterUtils';
 import { isActiveTransaction } from '../lib/ledgerUtils';
 import React, { useState, useMemo } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
@@ -131,31 +132,7 @@ const FOUNDATION_CURRICULUM = [
   },
 ];
 
-function normalizeToISODate(dateStr: string): string {
-  if (!dateStr) return '';
-  const trimmed = dateStr.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
-  if (trimmed.includes('T')) return trimmed.split('T')[0];
-
-  const dmyMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-  if (dmyMatch) {
-    const day = dmyMatch[1].padStart(2, '0');
-    const month = dmyMatch[2].padStart(2, '0');
-    const year = dmyMatch[3];
-    return `${year}-${month}-${day}`;
-  }
-
-  try {
-    const d = new Date(trimmed);
-    if (!isNaN(d.getTime())) {
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    }
-  } catch {}
-  return trimmed;
-}
+const normalizeToISODate=rosterDate;
 
 function parseReportTime(timeStr: string): { hours: number; minutes: number } {
   if (!timeStr) return { hours: 8, minutes: 0 };
@@ -175,11 +152,12 @@ function parseReportTime(timeStr: string): { hours: number; minutes: number } {
 function getReportTimeCountdown(dateStr: string, timeStr: string) {
   try {
     const isoDate = normalizeToISODate(dateStr);
+    if(!isoDate)return {isPast:false,text:'Report time unavailable'};
     const { hours, minutes } = parseReportTime(timeStr);
-    const targetDate = new Date(`${isoDate}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`);
+    const targetDate = new Date(`${isoDate}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00Z`);
     const diffMs = targetDate.getTime() - Date.now();
     if (diffMs < 0) {
-      return { isPast: true, text: 'Service Concluded' };
+      return { isPast: true, text: 'Report time reached' };
     }
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
     const diffDays = Math.floor(diffHours / 24);
@@ -342,6 +320,11 @@ export const MemberPortalPage: React.FC = () => {
     return null;
   }, [currentMember, previewMemberId, members]);
 
+  const [rosterRequests,setRosterRequests]=useState<RosterSubstituteRequest[]>([]);
+  const [respondingDuty,setRespondingDuty]=useState<string|null>(null);
+  const responseBusy=React.useRef(false);
+  const [rosterNow,setRosterNow]=useState(()=>rosterToday());
+  React.useEffect(()=>{const timer=setInterval(()=>setRosterNow(rosterToday()),30000);return()=>clearInterval(timer);},[]);
   const [cloudRosterAssignments, setCloudRosterAssignments] = useState<RosterAssignment[] | null>(null);
   const usesPrivateCloudRoster =
     requiresCloudMemberAuth && currentUser.role === 'member';
@@ -351,7 +334,7 @@ export const MemberPortalPage: React.FC = () => {
 
   React.useEffect(() => {
     if (!usesPrivateCloudRoster || !activeMember) {
-      setCloudRosterAssignments(null);
+      setCloudRosterAssignments(null);setRosterRequests([]);
       return;
     }
 
@@ -379,7 +362,9 @@ export const MemberPortalPage: React.FC = () => {
         .in('member_id', memberIds)
         .order('date', { ascending: true });
       if (error) throw error;
-      if (isCurrent) setCloudRosterAssignments((data || []) as RosterAssignment[]);
+      const {data:requests,error:requestError}=await client.rpc('gwcc_roster_requests');
+      if(requestError)throw requestError;
+      if (isCurrent){setCloudRosterAssignments((data || []) as RosterAssignment[]);setRosterRequests(requests||[]);}
     };
 
     void loadMemberRoster().catch((error: unknown) => {
@@ -407,8 +392,10 @@ export const MemberPortalPage: React.FC = () => {
       )
       .subscribe();
 
+    const interval=setInterval(()=>void loadMemberRoster().catch(()=>{}),30000);
+    const reload=()=>void loadMemberRoster().catch(()=>{});window.addEventListener('focus',reload);
     return () => {
-      isCurrent = false;
+      isCurrent = false;clearInterval(interval);window.removeEventListener('focus',reload);
       void client.removeChannel(channel);
     };
   }, [activeMember, toastError, usesPrivateCloudRoster]);
@@ -775,21 +762,9 @@ export const MemberPortalPage: React.FC = () => {
     });
   }, [activeMember, memberRosterSource, services, usesPrivateCloudRoster]);
 
-  const upcomingRosterDuties = useMemo(() => {
-    const today = new Date();
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    return memberRosterAssignments.filter((r) => normalizeToISODate(r.date) >= todayStr);
-  }, [memberRosterAssignments]);
-
-  const pastRosterDuties = useMemo(() => {
-    const today = new Date();
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    return memberRosterAssignments.filter((r) => normalizeToISODate(r.date) < todayStr);
-  }, [memberRosterAssignments]);
-
-  const nextUpcomingDuty = useMemo(() => {
-    return upcomingRosterDuties[0] || memberRosterAssignments[0] || null;
-  }, [upcomingRosterDuties, memberRosterAssignments]);
+  const upcomingRosterDuties=useMemo(()=>memberRosterAssignments.filter(r=>isUpcomingDuty(r,rosterNow)),[memberRosterAssignments,rosterNow]);
+  const pastRosterDuties=useMemo(()=>memberRosterAssignments.filter(r=>rosterDate(r.date)&&rosterDate(r.date)<rosterNow),[memberRosterAssignments,rosterNow]);
+  const nextUpcomingDuty=upcomingRosterDuties[0]||null;
 
   // Discipleship & Roster Modals & States
   const [isCertificateModalOpen, setIsCertificateModalOpen] = useState(false);
@@ -825,7 +800,7 @@ export const MemberPortalPage: React.FC = () => {
   // Displayed Duties based on selected filter (ensures duties are immediately visible)
   const displayedDuties = useMemo(() => {
     if (rosterViewFilter === 'upcoming') {
-      return upcomingRosterDuties.length > 0 ? upcomingRosterDuties : memberRosterAssignments;
+      return upcomingRosterDuties;
     }
     if (rosterViewFilter === 'past') {
       return pastRosterDuties;
@@ -833,24 +808,23 @@ export const MemberPortalPage: React.FC = () => {
     return memberRosterAssignments;
   }, [rosterViewFilter, upcomingRosterDuties, pastRosterDuties, memberRosterAssignments]);
 
-  // If member has past duties but none upcoming, default filter to all so duty is immediately visible
-  React.useEffect(() => {
-    if (upcomingRosterDuties.length === 0 && memberRosterAssignments.length > 0 && rosterViewFilter === 'upcoming') {
-      setRosterViewFilter('all');
-    }
-  }, [upcomingRosterDuties.length, memberRosterAssignments.length]);
-
-  const respondToDuty = async (assignmentId:string,status:'confirmed'|'substituted',notes?:string) => {
-    try {
+  const respondToDuty=async(assignmentId:string,status:'confirmed'|'substitute_requested',details:Record<string,unknown>={})=>{
+    if(currentRole!=='member')throw new Error('Sign in as the assigned member to respond.');
+    if(responseBusy.current)throw new Error('A duty response is already being saved.');
+    responseBusy.current=true;setRespondingDuty(assignmentId);
+    try{
+      const row=memberRosterAssignments.find(a=>a.id===assignmentId);
+      if(!row||!isUpcomingDuty(row,rosterNow))throw new Error('This duty is read-only. Contact your coordinator.');
       const client=getSupabaseClient();if(!client)throw new Error('Secure member sign-in is unavailable.');
-      const {data,error}=await client.rpc('gwcc_member_action',{p_action:'roster',p_id:assignmentId,p_data:{status,notes}});
+      const {data,error}=await client.rpc('gwcc_member_action',{p_action:'roster',p_id:assignmentId,p_data:{status,expected_updated_at:row.updated_at,...details}});
       if(error)throw error;
-      setCloudRosterAssignments(prev=>(prev||[]).map(row=>row.id===assignmentId?data:row));
-      toastSuccess(status==='confirmed'?'Attendance Confirmed':'Substitute Requested','Your response has been saved.');
-    }catch(error){toastError('Response not saved',(error as Error).message);}
+      if(status==='confirmed')setCloudRosterAssignments(prev=>(prev||[]).map(a=>a.id===assignmentId?data:a));
+      else {setRosterRequests(prev=>[data,...prev.filter(r=>r.assignment_id!==assignmentId)]);if(data.status==='approved')setCloudRosterAssignments(prev=>(prev||[]).map(a=>a.id===assignmentId?{...a,status:'substituted'}:a));}
+      toastSuccess(status==='confirmed'?'Duty Confirmed':'Request Saved',status==='confirmed'?'Your duty confirmation has been saved.':`Substitute request status: ${data.status}. Check the roster for the coordinator’s decision.`);
+    }finally{responseBusy.current=false;setRespondingDuty(null);}
   };
-  const handleConfirmRosterAttendance = (id:string,_fallback?:RosterAssignment) => {void respondToDuty(id,'confirmed');};
-  const handleConfirmSubstitute = (id:string,reason:string,note:string) => {void respondToDuty(id,'substituted',`${reason}: ${note}`);};
+  const handleConfirmRosterAttendance=(id:string,_fallback?:RosterAssignment)=>{void respondToDuty(id,'confirmed').catch(error=>toastError('Response not saved',(error as Error).message));};
+  const handleConfirmSubstitute=(id:string,reason:string,notes:string,suggestion:string,requestId:string)=>respondToDuty(id,'substitute_requested',{reason,notes,suggestion,request_id:requestId});
 
   const handleOpenSubstituteModal = (assignment: RosterAssignment) => {
     setSelectedSubstituteAssignment(assignment);
@@ -1709,6 +1683,7 @@ export const MemberPortalPage: React.FC = () => {
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
+                        disabled={currentRole!=='member'||respondingDuty!==null||rosterRequests.some(r=>r.assignment_id===nextUpcomingDuty.id&&r.status==='pending')}
                         onClick={() => handleConfirmRosterAttendance(nextUpcomingDuty.id, nextUpcomingDuty)}
                         className="px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
                       >
@@ -1717,6 +1692,7 @@ export const MemberPortalPage: React.FC = () => {
                       </button>
                       <button
                         type="button"
+                        disabled={currentRole!=='member'||respondingDuty!==null||rosterRequests.some(r=>r.assignment_id===nextUpcomingDuty.id)}
                         onClick={() => setSelectedSubstituteAssignment(nextUpcomingDuty)}
                         className="px-3 py-1.5 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold transition cursor-pointer"
                       >
@@ -2323,7 +2299,7 @@ export const MemberPortalPage: React.FC = () => {
               {nextUpcomingDuty && (
                 <div className="pt-3 border-t border-teal-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs bg-black/25 p-4 rounded-2xl border border-white/10">
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase bg-amber-400 text-slate-950">
                         {getReportTimeCountdown(nextUpcomingDuty.date, nextUpcomingDuty.report_time).text}
                       </span>
@@ -2334,10 +2310,11 @@ export const MemberPortalPage: React.FC = () => {
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {nextUpcomingDuty.status !== 'confirmed' && (
                       <button
                         type="button"
+                        disabled={currentRole!=='member'||respondingDuty!==null||rosterRequests.some(r=>r.assignment_id===nextUpcomingDuty.id&&r.status==='pending')}
                         onClick={() => handleConfirmRosterAttendance(nextUpcomingDuty.id, nextUpcomingDuty)}
                         className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition shadow-xs cursor-pointer"
                       >
@@ -2347,7 +2324,8 @@ export const MemberPortalPage: React.FC = () => {
                     )}
                     <button
                       type="button"
-                      onClick={() => setSelectedSubstituteAssignment(nextUpcomingDuty)}
+                      disabled={currentRole!=='member'||respondingDuty!==null||rosterRequests.some(r=>r.assignment_id===nextUpcomingDuty.id)}
+                        onClick={() => setSelectedSubstituteAssignment(nextUpcomingDuty)}
                       className="px-3.5 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-semibold border border-white/20 transition cursor-pointer"
                     >
                       Request Substitute
@@ -2367,8 +2345,8 @@ export const MemberPortalPage: React.FC = () => {
             </div>
 
             {/* Filter Navigation Pills */}
-            <div className="flex items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-1.5 bg-slate-200/80 p-1 rounded-2xl border border-slate-300">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex flex-wrap items-center gap-1.5 bg-slate-200/80 p-1 rounded-2xl border border-slate-300">
                 <button
                   type="button"
                   onClick={() => setRosterViewFilter('upcoming')}
@@ -2404,7 +2382,7 @@ export const MemberPortalPage: React.FC = () => {
                 </button>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {memberRosterAssignments.length > 0 && (
                   <button
                     type="button"
@@ -2427,7 +2405,7 @@ export const MemberPortalPage: React.FC = () => {
               <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-amber-900 text-xs flex items-center justify-between gap-2">
                 <span className="flex items-center gap-1.5">
                   <Clock className="w-4 h-4 text-amber-700 shrink-0" />
-                  <span>Showing all your scheduled church duties ({memberRosterAssignments.length} record{memberRosterAssignments.length > 1 ? 's' : ''}).</span>
+                  <span>No upcoming duties. Use All Duties or Past History to view your other records.</span>
                 </span>
                 <button
                   type="button"
@@ -2442,6 +2420,7 @@ export const MemberPortalPage: React.FC = () => {
             {/* Duty Assignments Cards Grid */}
             <div className="space-y-3">
               {displayedDuties.map((assignment) => {
+                const request=rosterRequests.find(r=>r.assignment_id===assignment.id);
                 const deptBadge = getRosterDeptBadge(assignment.department);
                 const countdown = getReportTimeCountdown(assignment.date, assignment.report_time);
 
@@ -2476,7 +2455,7 @@ export const MemberPortalPage: React.FC = () => {
                         </p>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span
                           className={`px-2.5 py-1 rounded-xl text-xs font-bold capitalize ${
                             assignment.status === 'confirmed'
@@ -2497,6 +2476,8 @@ export const MemberPortalPage: React.FC = () => {
                       </div>
                     </div>
 
+                    {request&&<div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs space-y-1"><p className="font-bold">{request.status==='pending'?'Substitute requested — awaiting coordinator review':request.status==='approved'?`Replacement assigned: ${request.replacement_member_name}`:'Substitute request rejected'}</p><p>{request.reason}{request.notes?`: ${request.notes}`:''}</p>{request.review_reason&&<p>Coordinator: {request.review_reason}</p>}</div>}
+                    {!isUpcomingDuty(assignment,rosterNow)&&<p className="text-xs text-slate-500">{rosterDate(assignment.date)<rosterNow?'Historical duty — read-only':'This duty no longer requires a response.'}</p>}
                     {/* Role & Specific Notes */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                       <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-0.5">
@@ -2529,7 +2510,7 @@ export const MemberPortalPage: React.FC = () => {
                         Roster ID: <span className="font-mono">{assignment.id}</span>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
                           onClick={() => handleOpenDownloadDutyModal(assignment.id)}
@@ -2543,6 +2524,7 @@ export const MemberPortalPage: React.FC = () => {
                         {assignment.status !== 'confirmed' && (
                           <button
                             type="button"
+                            disabled={currentRole!=='member'||respondingDuty!==null||!isUpcomingDuty(assignment,rosterNow)||rosterRequests.some(r=>r.assignment_id===assignment.id&&r.status==='pending')}
                             onClick={() => handleConfirmRosterAttendance(assignment.id, assignment)}
                             className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl transition flex items-center gap-1 shadow-2xs cursor-pointer text-xs"
                           >
@@ -2554,6 +2536,7 @@ export const MemberPortalPage: React.FC = () => {
                         {assignment.status !== 'substituted' && (
                           <button
                             type="button"
+                            disabled={currentRole!=='member'||respondingDuty!==null||!isUpcomingDuty(assignment,rosterNow)||rosterRequests.some(r=>r.assignment_id===assignment.id)}
                             onClick={() => handleOpenSubstituteModal(assignment)}
                             className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold rounded-xl transition cursor-pointer text-xs"
                           >
@@ -2573,7 +2556,7 @@ export const MemberPortalPage: React.FC = () => {
                   </div>
                   <div className="space-y-1">
                     <p className="font-bold text-slate-800 text-sm">
-                      {rosterViewFilter === 'past' ? 'No Past Service Duties' : 'No Duty Assignments Found'}
+                      {rosterViewFilter === 'past' ? 'No Past Service Duties' : rosterViewFilter === 'upcoming' ? 'No Upcoming Duties' : 'No Duty Assignments Found'}
                     </p>
                     <p className="text-xs text-slate-500 max-w-sm mx-auto">
                       {rosterViewFilter === 'past'

@@ -515,7 +515,8 @@ test('roster notifications persist under ownership rules and child pickup tokens
     await asUser(db,member,async()=>{
       assert.deepEqual((await db.query('SELECT DISTINCT member_id FROM public.roster_notifications')).rows,[{member_id:'own'}]);
       await assert.rejects(db.query("SELECT public.gwcc_member_action('roster','other-duty','{\"status\":\"confirmed\"}')"),/not your duty/);
-      await db.query("SELECT public.gwcc_member_action('roster','own-duty','{\"status\":\"confirmed\"}')");
+      const dutyVersion=(await db.query("SELECT updated_at FROM public.roster_assignments WHERE id='own-duty'")).rows[0].updated_at;
+      await db.query("SELECT public.gwcc_member_action('roster','own-duty',$1)",[JSON.stringify({status:'confirmed',expected_updated_at:dutyVersion})]);
       assert.equal((await db.query("SELECT status FROM public.roster_assignments WHERE id='own-duty'")).rows[0].status,'confirmed');
       await db.query("SELECT public.gwcc_member_action('notification_read','all','{}')");
       assert.equal((await db.query('SELECT count(*)::int AS n FROM public.roster_notifications WHERE read_at IS NULL')).rows[0].n,0);
@@ -1155,4 +1156,80 @@ test('member RSVP rejects closed events and missing, unverified or archived memb
     await asUser(db,member,async()=>await assert.rejects(db.query("SELECT public.gwcc_member_rsvp('closed')"),/member sign-in/));
     assert.equal((await db.query('SELECT sum(registration_count)::int n FROM public.events')).rows[0].n,0);
   }finally{await db.close();}
+});
+
+
+const rosterFixture=async(db)=>db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,phone,auth_user_id) VALUES('duty-own','GWCC-DUTY-OWN','Own','Member','0240000001','${member}'),('duty-other','GWCC-DUTY-OTHER','Other','Member','0240000002','${other}');
+ INSERT INTO public.services(id,name,type,day_of_week,start_time,end_time) VALUES('duty-service','Synthetic service','sunday','Sunday','08:00','10:30');
+ INSERT INTO public.roster_assignments(id,service_id,service_name,member_id,member_name,date,department,role_title,report_time,status,notes)
+ VALUES('future-duty','duty-service','Synthetic service','duty-own','Own Member',current_date+7,'ushers_protocol','Usher','07:30','pending','Original coordinator instructions'),('past-duty','duty-service','Synthetic service','duty-own','Own Member',current_date-7,'ushers_protocol','Usher','07:30','pending','Historical instructions');`);
+const dutyRow=async(db,id='future-duty')=>(await db.query('SELECT to_jsonb(a) doc FROM public.roster_assignments a WHERE id=$1',[id])).rows[0].doc;
+const dutyRequest=async(db,overrides={})=>db.query("SELECT public.gwcc_member_action('roster','future-duty',$1) doc",[JSON.stringify({status:'substitute_requested',reason:'Work commitment',notes:'Synthetic personal note',suggestion:'Ask another volunteer',request_id:'aaaaaaaa-aaaa-4aaa-8aaa-111111111111',expected_updated_at:(await dutyRow(db)).updated_at,...overrides})]);
+const reviewDuty=(db,req,assignment,action='approve',replacement='duty-other',reason='')=>db.query('SELECT public.gwcc_review_roster_request($1,$2,$3,$4,$5,$6) doc',[req.id,req.updated_at,assignment.updated_at,action,replacement,reason]);
+
+test('member roster requests preserve instructions and assignment status, protect past duties and reject stale or altered retries',async()=>{
+ const db=await setupDatabase();try{
+  await rosterFixture(db);const before=await dutyRow(db);
+  await asUser(db,member,async()=>{
+   await assert.rejects(db.query("SELECT public.gwcc_member_action('roster','past-duty',$1)",[JSON.stringify({status:'confirmed',expected_updated_at:(await dutyRow(db,'past-duty')).updated_at})]),/Past duties are read-only/);
+   await assert.rejects(dutyRequest(db,{expected_updated_at:'2000-01-01T00:00:00Z'}),/duty changed/);
+   const saved=(await dutyRequest(db)).rows[0].doc;assert.equal(saved.status,'pending');
+   assert.equal(saved.created_by,member);assert.equal(saved.reason,'Work commitment');
+   assert.deepEqual((await dutyRequest(db)).rows[0].doc,saved);
+   await assert.rejects(dutyRequest(db,{notes:'Changed after submission'}),/reused with different data/);
+   await assert.rejects(db.query("SELECT public.gwcc_member_action('roster','future-duty',$1)",[JSON.stringify({status:'confirmed',expected_updated_at:before.updated_at})]),/awaiting coordinator/);
+   const visible=(await db.query('SELECT public.gwcc_roster_requests() doc')).rows[0].doc;assert.equal(visible.length,1);
+   assert.deepEqual(await dutyRow(db),before);
+   await assert.rejects(reviewDuty(db,saved,before),/coordinator authorization/);
+   assert.deepEqual((await db.query("SELECT data FROM public.gwcc_documents WHERE namespace='roster_substitute_requests'")).rows,[]);
+  });
+  assert.equal((await db.query("SELECT count(*)::int n FROM public.gwcc_documents WHERE namespace='roster_substitute_requests'")).rows[0].n,1);
+  await asUser(db,other,async()=>assert.deepEqual((await db.query('SELECT public.gwcc_roster_requests() doc')).rows[0].doc,[]));
+ }finally{await db.close();}
+});
+
+test('coordinator replacement approval is atomic, identity-specific and retryable while preserving old instructions and requiring new member confirmation',async()=>{
+ const db=await setupDatabase();try{
+  await rosterFixture(db);let req;await asUser(db,member,async()=>{req=(await dutyRequest(db)).rows[0].doc;});
+  const original=await dutyRow(db);
+  await db.exec("UPDATE public.members SET status='inactive' WHERE id='duty-other'");
+  await asUser(db,root,async()=>await assert.rejects(reviewDuty(db,req,original),/different active member/));
+  await db.exec("UPDATE public.members SET status='active' WHERE id='duty-other'");
+  await asUser(db,root,async()=>{
+   await assert.rejects(apply(db,[upsert('roster_assignments',{...original,status:'substituted'},original.updated_at)]),/pending substitute request/);
+   await assert.rejects(reviewDuty(db,{...req,updated_at:'2000-01-01'},original),/request changed/);
+   await assert.rejects(reviewDuty(db,req,original,'approve','duty-own'),/different active member/);
+   await assert.rejects(reviewDuty(db,req,{...original,updated_at:'2000-01-01'}),/assignment changed/);
+   const saved=(await reviewDuty(db,req,original)).rows[0].doc;
+   assert.equal(saved.status,'approved');assert.equal(saved.reviewed_by,root);assert.equal(saved.history.length,2);
+   assert.deepEqual((await reviewDuty(db,req,original)).rows[0].doc,saved);
+   const replacement=await dutyRow(db,saved.replacement_assignment_id);
+   assert.equal(replacement.member_id,'duty-other');assert.equal(replacement.status,'pending');assert.equal(replacement.notes,original.notes);
+  });
+  const after=await dutyRow(db);assert.equal(after.status,'substituted');assert.equal(after.notes,original.notes);assert.equal(after.member_id,'duty-own');
+  assert.equal((await db.query("SELECT count(*)::int n FROM public.roster_assignments WHERE id LIKE 'replacement-%'")).rows[0].n,1);
+  await asUser(db,member,async()=>await assert.rejects(db.query("SELECT public.gwcc_member_action('roster','future-duty',$1)",[JSON.stringify({status:'confirmed',expected_updated_at:after.updated_at})]),/no longer awaiting/));
+ }finally{await db.close();}
+});
+
+test('coordinator rejection requires a reason and does not alter the duty, and reviewed historical linking preserves an exact original snapshot',async()=>{
+ const db=await setupDatabase();try{
+  await rosterFixture(db);let req;await asUser(db,member,async()=>{req=(await dutyRequest(db)).rows[0].doc;});const before=await dutyRow(db);
+  await asUser(db,root,async()=>{
+   await assert.rejects(reviewDuty(db,req,before,'reject',null,''),/review reason/);
+   const rejected=(await reviewDuty(db,req,before,'reject',null,'Please discuss this with your coordinator')).rows[0].doc;
+   assert.equal(rejected.status,'rejected');assert.deepEqual(await dutyRow(db),before);
+  });
+  await db.exec("UPDATE public.roster_assignments SET member_id='ext-legacy',member_name='Original misspelled name' WHERE id='past-duty'");
+  const old=await dutyRow(db,'past-duty');
+  await asUser(db,member,async()=>await assert.rejects(db.query('SELECT public.gwcc_link_historical_roster($1,$2,$3)',[old.id,old.updated_at,'duty-own']),/coordinator authorization/));
+  await asUser(db,root,async()=>{
+   await assert.rejects(db.query('SELECT public.gwcc_link_historical_roster($1,$2,$3)',[old.id,'2000-01-01','duty-own']),/assignment changed/);
+   const linked=(await db.query('SELECT public.gwcc_link_historical_roster($1,$2,$3) doc',[old.id,old.updated_at,'duty-own'])).rows[0].doc;
+   assert.equal(linked.member_id,'duty-own');assert.equal(linked.date,old.date);assert.equal(linked.notes,old.notes);
+   const snapshot=(await db.query("SELECT data->'previous' doc FROM public.gwcc_documents WHERE namespace='roster_link_reviews' AND id='past-duty'")).rows[0].doc;
+   assert.deepEqual(snapshot,old);
+  });
+  await db.exec('SET ROLE anon');await assert.rejects(db.query('SELECT public.gwcc_roster_requests()'),/permission denied/);await db.exec('RESET ROLE');
+ }finally{await db.close();}
 });
