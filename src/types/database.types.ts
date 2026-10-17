@@ -530,7 +530,7 @@ export interface CommunicationRecord {
   id: string;
   title: string;
   channel: 'sms' | 'whatsapp' | 'announcement';
-  recipient_type: 'all_members' | 'visitors' | 'ministry' | 'leaders' | 'small_group' | 'custom';
+  recipient_type: 'all_members' | 'visitors' | 'ministry' | 'leaders' | 'small_group' | 'individual_member' | 'individual_visitor' | 'custom';
   recipient_count: number;
   message: string;
   sender_id: string;

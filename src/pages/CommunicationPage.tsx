@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useToast } from '../contexts/ToastContext';
-import { communicationPhone, communicationRecipients, RECIPIENT_TYPES, type RecipientType } from '../lib/communicationUtils';
+import { communicationPhone, communicationRecipients, RECIPIENT_TYPES, welcomeVideoUrl, visitorWelcomeMessage, type RecipientType } from '../lib/communicationUtils';
 import { SmsConnectionPanel } from '../components/communication/SmsConnectionPanel';
 import { BlessingGeneratorModal } from '../components/communication/BlessingGeneratorModal';
 import { FirstTimerWelcomeModal } from '../components/communication/FirstTimerWelcomeModal';
@@ -85,7 +85,7 @@ const PASTORAL_TEMPLATES: PastoralTemplate[] = [
     channel: 'sms',
     recipientType: 'visitors',
     message: 'Shalom! Thank you for worshipping with Greater Works City Church (GWCC), Joma this Sunday. Prophet Elisha K. Richard and our entire church family were truly honored to host you. We pray for open doors and divine favor in your life!',
-    description: 'Warm appreciation message sent to first-time worshippers within 2 hours.',
+    description: 'Welcome draft to review with a first-time worshipper.',
   },
   {
     id: 'all-night-vigil',
@@ -237,6 +237,8 @@ const audienceNames: Record<string, string> = {
   leaders: 'Active leaders',
   ministry: 'Ministry',
   small_group: 'Small group',
+  individual_member: 'One member',
+  individual_visitor: 'One visitor',
   custom: 'Unrecorded audience',
 };
 
@@ -256,7 +258,7 @@ export const CommunicationPage: React.FC = () => {
   const [selectedVisitor, setSelectedVisitor] = useState<Visitor | null>(null);
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [videoLink, setVideoLink] = useState(() => {
-    return localStorage.getItem('gwcc_pastor_video_url') || 'https://youtube.com/watch?v=gwcc-welcome-elisha';
+    try{return welcomeVideoUrl(localStorage.getItem('gwcc_pastor_video_url') || '');}catch{return '';}
   });
 
   const [smsDraftId, setSmsDraftId] = useState<string | null>(null);
@@ -279,7 +281,13 @@ export const CommunicationPage: React.FC = () => {
   const [celebrantFilter, setCelebrantFilter] = useState<'all' | 'week' | 'month'>('all');
 
   const audience = useMemo(() => communicationRecipients(form.type, form.groupId, members, visitors), [form.type, form.groupId, members, visitors]);
-  const groups = form.type === 'ministry' ? ministries : smallGroups;
+  const individualAudience = ['individual_member','individual_visitor'].includes(form.type);
+  const targetedAudience = individualAudience || ['ministry','small_group'].includes(form.type);
+  const groups = form.type === 'individual_member'
+    ? members.filter(row=>!row.is_archived&&['active','leader','new_member','new_convert'].includes(row.status)).map(row=>({id:row.id,name:`${row.first_name} ${row.last_name}`}))
+    : form.type === 'individual_visitor'
+      ? visitors.filter(row=>!['closed','converted_to_member'].includes(row.follow_up_status)).map(row=>({id:row.id,name:row.full_name}))
+      : form.type === 'ministry' ? ministries : smallGroups;
   const groupName = groups.find(row => row.id === form.groupId)?.name;
   const savedEditor = communications.find(row => row.id === editingId);
   const recipientChanges = savedEditor?.recipient_ids && JSON.stringify([...savedEditor.recipient_ids].sort()) !== JSON.stringify(audience.selected.map(row => row.id).sort());
@@ -316,6 +324,7 @@ export const CommunicationPage: React.FC = () => {
     setForm(blankForm());
     setLegacy(false);
     setPhone('');
+    setSmsDraftId(null);
     setActiveTab('studio');
   };
 
@@ -331,18 +340,20 @@ export const CommunicationPage: React.FC = () => {
       channel: row.channel,
     });
     setLegacy(!row.recipient_ids);
+    setSmsDraftId(null);
     setActiveTab('studio');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const applyTemplate = (t: PastoralTemplate) => {
-    setForm(prev => ({
-      ...prev,
+    newDraft();
+    setForm({
+      ...blankForm(),
       title: t.title,
       channel: t.channel,
       type: t.recipientType,
       message: t.message,
-    }));
+    });
     setActiveTab('studio');
     success('Template loaded', `Applied "${t.title}" into the message editor.`);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -358,8 +369,8 @@ export const CommunicationPage: React.FC = () => {
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     if (busy.current) return;
-    if (['ministry', 'small_group'].includes(form.type) && !groupName) {
-      toastError('Choose recipients', 'Choose an available ministry or small group.');
+    if (targetedAudience && !groupName) {
+      toastError('Choose recipients', individualAudience?'Choose a current member or visitor.':'Choose an available ministry or small group.');
       return;
     }
     busy.current = true;
@@ -370,8 +381,8 @@ export const CommunicationPage: React.FC = () => {
         title: form.title,
         channel: form.channel,
         recipient_type: form.type as RecipientType,
-        recipient_group_id: ['ministry', 'small_group'].includes(form.type) ? form.groupId : null,
-        recipient_group_name: ['ministry', 'small_group'].includes(form.type) ? groupName : null,
+        recipient_group_id: targetedAudience ? form.groupId : null,
+        recipient_group_name: targetedAudience ? groupName : null,
         recipient_ids: audience.selected.map(row => row.id),
         recipient_count: audience.selected.length,
         message: form.message,
@@ -433,35 +444,21 @@ export const CommunicationPage: React.FC = () => {
     window.open(`https://wa.me/${digits}?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
   };
 
-  const handleSendCelebrantSms = (c: CelebrantItem, customText: string) => {
-    setForm({
-      title: `${c.type === 'birthday' ? 'Birthday Blessing' : 'Anniversary Blessing'}: ${c.member.first_name} ${c.member.last_name}`,
-      message: customText,
-      sender: 'GWCC',
-      type: 'all_members',
-      groupId: '',
-      channel: 'sms',
-    });
-    setActiveTab('studio');
-    success('Blessing loaded into editor', 'Review the recipient selection and click Save Draft or Review SMS.');
+  const preparePersonalDraft=(kind:'individual_member'|'individual_visitor',id:string,title:string,message:string,targetPhone:string)=>{
+    const digits=communicationPhone(targetPhone);
+    if(!digits||!/^233[25]\d{8}$/.test(digits)){toastError('Ghana mobile required','Choose a contact with a complete Ghana mobile number.');return;}
+    newDraft();
+    setForm({title,message,sender:'GWCC',type:kind,groupId:id,channel:'sms'});
+    setPhone(targetPhone);
+    success('Personal SMS draft prepared','One contact selected. Save, wait for cloud confirmation, then review the SMS before sending.');
   };
-
-  const handleSendVisitorSms = (v: Visitor, customText: string) => {
-    setForm({
-      title: `First-Timer Welcome: ${v.full_name}`,
-      message: customText,
-      sender: 'GWCC',
-      type: 'visitors',
-      groupId: '',
-      channel: 'sms',
-    });
-    setActiveTab('studio');
-    success('Visitor welcome loaded', 'Review the recipient and click Save Draft or Review SMS.');
-  };
-
-  const handleUpdateVideoLink = (newLink: string) => {
-    setVideoLink(newLink);
-    localStorage.setItem('gwcc_pastor_video_url', newLink);
+  const handlePrepareCelebrantSms=(c:CelebrantItem,message:string)=>preparePersonalDraft('individual_member',c.member.id,`${c.type==='birthday'?'Birthday Blessing':'Anniversary Blessing'}: ${c.member.first_name} ${c.member.last_name}`,message,c.member.phone||'');
+  const handlePrepareVisitorSms=(v:Visitor,message:string)=>preparePersonalDraft('individual_visitor',v.id,`First-Timer Welcome: ${v.full_name}`,message,v.phone||'');
+  const handleUpdateVideoLink=(value:string)=>{
+    const link=welcomeVideoUrl(value);
+    if(value.trim()&&!link){toastError('Valid video link required','Use the published HTTPS address of your welcome video.');return false;}
+    try{if(link)localStorage.setItem('gwcc_pastor_video_url',link);else localStorage.removeItem('gwcc_pastor_video_url');setVideoLink(link);return true;}
+    catch{toastError('Video link not saved','Device storage could not preserve this preference.');return false;}
   };
 
   return (
@@ -505,7 +502,7 @@ export const CommunicationPage: React.FC = () => {
         <div className="bg-white border border-slate-200 rounded-xl p-3.5">
           <p className="text-xs text-slate-500 font-medium">First-Timers</p>
           <p className="text-xl font-bold font-mono tabular-nums text-slate-900 mt-0.5">{visitors.length}</p>
-          <span className="text-[11px] text-slate-500 mt-0.5 block">2-hour welcome follow-ups</span>
+          <span className="text-[11px] text-slate-500 mt-0.5 block">Manual welcome follow-ups</span>
         </div>
       </div>
 
@@ -656,10 +653,10 @@ export const CommunicationPage: React.FC = () => {
               </select>
             </div>
 
-            {['ministry', 'small_group'].includes(form.type) && (
+            {targetedAudience && (
               <div>
                 <label htmlFor="communication-group" className="block text-sm font-medium text-slate-700">
-                  Choose group
+                  {individualAudience?'Choose contact':'Choose group'}
                 </label>
                 <select
                   id="communication-group"
@@ -670,7 +667,7 @@ export const CommunicationPage: React.FC = () => {
                 >
                   <option value="">Choose…</option>
                   {form.groupId && !groupName && (
-                    <option value={form.groupId}>Group no longer available — choose another</option>
+                    <option value={form.groupId}>{individualAudience?'Contact unavailable — choose another':'Group no longer available — choose another'}</option>
                   )}
                   {groups.map(row => (
                     <option key={row.id} value={row.id}>
@@ -722,10 +719,12 @@ export const CommunicationPage: React.FC = () => {
                 <div className="flex flex-wrap gap-1.5">
                   <button
                     type="button"
-                    onClick={() => insertVariable('[First Name]')}
+                    disabled={audience.selected.length!==1}
+                    title={audience.selected.length===1?'Insert the selected contact’s first name':'Choose one contact to insert their first name'}
+                    onClick={() => insertVariable(audience.selected[0]?.name.trim().split(/\s+/)[0]||'')}
                     className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px]"
                   >
-                    + [First Name]
+                    + Recipient first name
                   </button>
                   <button
                     type="button"
@@ -1206,7 +1205,7 @@ export const CommunicationPage: React.FC = () => {
             <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-2">
               <Sparkles className="w-8 h-8 text-slate-400 mx-auto" />
               <p className="font-semibold text-slate-800 text-sm">No recorded first-time visitors</p>
-              <p className="text-xs text-slate-500">Record new Sunday worshippers in the Visitors module to activate 2-hour welcome follow-ups.</p>
+              <p className="text-xs text-slate-500">Record new Sunday worshippers in the Visitors module to activate Manual welcome follow-ups.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1242,7 +1241,7 @@ export const CommunicationPage: React.FC = () => {
                     <button
                       type="button"
                       disabled={!v.phone}
-                      onClick={() => handleLaunchWhatsAppDirect(v.phone, `Shalom ${v.full_name.split(' ')[0]}! Thank you for worshipping with Greater Works City Church, Joma. Watch Prophet Elisha's welcome video here: ${videoLink}`)}
+                      onClick={() => handleLaunchWhatsAppDirect(v.phone, visitorWelcomeMessage(v,videoLink))}
                       className="p-2 border border-slate-200 hover:bg-slate-50 rounded-lg text-emerald-800 disabled:opacity-40 transition"
                       title="Launch WhatsApp directly"
                     >
@@ -1268,9 +1267,8 @@ export const CommunicationPage: React.FC = () => {
         isOpen={Boolean(selectedCelebrant)}
         onClose={() => setSelectedCelebrant(null)}
         celebrant={selectedCelebrant}
-        onSendSms={handleSendCelebrantSms}
+        onPrepareSms={handlePrepareCelebrantSms}
         onLaunchWhatsApp={handleLaunchWhatsAppDirect}
-        smsCredits={100}
       />
 
       {/* First-Timer Welcome Studio Modal */}
@@ -1279,10 +1277,9 @@ export const CommunicationPage: React.FC = () => {
         onClose={() => setSelectedVisitor(null)}
         visitor={selectedVisitor}
         videoLink={videoLink}
-        onSendSms={handleSendVisitorSms}
+        onPrepareSms={handlePrepareVisitorSms}
         onLaunchWhatsApp={handleLaunchWhatsAppDirect}
         onOpenVideoPreview={() => setIsVideoModalOpen(true)}
-        smsCredits={100}
       />
 
       {/* Pastor Welcome Video Modal */}
@@ -1290,7 +1287,7 @@ export const CommunicationPage: React.FC = () => {
         isOpen={isVideoModalOpen}
         onClose={() => setIsVideoModalOpen(false)}
         videoLink={videoLink}
-        onUpdateVideoLink={handleUpdateVideoLink}
+        onUpdateVideoLink={canSendSms?handleUpdateVideoLink:undefined}
       />
     </div>
   );

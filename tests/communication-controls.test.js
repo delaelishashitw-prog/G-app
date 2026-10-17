@@ -38,3 +38,29 @@ test('failed device persistence does not report a saved draft or discard the mem
   assert.equal(rows.length,1);assert.equal(rows[0].message,draft.message);assert.equal(logged,false);
   await assert.rejects(saveCommunicationDraft({...draft,title:'x'.repeat(201)},rows,()=>assert.fail('Invalid draft changed state'),()=>{},async()=>assert.fail('Invalid draft queued')),/1–200/);
 });
+
+test('individual audiences retain the chosen contact even when another contact shares the phone and never widen to a broadcast',()=>{
+ const members=[member('a'),member('b',{phone:'+233240000001'}),member('inactive',{status:'inactive'}),member('archived',{is_archived:true})];
+ assert.deepEqual(communicationRecipients('individual_member','b',members,[]).selected.map(row=>row.id),['b']);
+ for(const target of ['', 'missing','inactive','archived'])assert.equal(communicationRecipients('individual_member',target,members,[]).selected.length,0);
+ const visitors=[{id:'v1',full_name:'Visitor One',phone:'0240000002',follow_up_status:'new'},{id:'v2',full_name:'Visitor Two',phone:'0240000003',follow_up_status:'contacted'},{id:'closed',full_name:'Closed Visitor',phone:'0240000004',follow_up_status:'closed'}];
+ assert.deepEqual(communicationRecipients('individual_visitor','v2',members,visitors).selected.map(row=>row.id),['v2']);
+ assert.equal(communicationRecipients('individual_visitor','closed',members,visitors).selected.length,0);
+});
+test('personal drafts require exactly the selected ID and reject unresolved personalization placeholders',()=>{
+ const personal={...draft,recipient_type:'individual_member',recipient_group_id:'a'};
+ assert.doesNotThrow(()=>validateCommunicationDraft(personal));
+ for(const changes of [{recipient_group_id:null},{recipient_ids:[],recipient_count:0},{recipient_ids:['b']},{recipient_ids:['a','b'],recipient_count:2},{message:'Hello [First Name]'}])assert.throws(()=>validateCommunicationDraft({...personal,...changes}));
+});
+test('welcome videos require a real HTTPS URL and never reuse the old example or unsafe protocols',async()=>{
+ const {welcomeVideoUrl}=await import('../src/lib/communicationUtils.ts');
+ for(const value of ['', 'https://youtube.com/watch?v=gwcc-welcome-elisha','http://example.test/video','javascript:alert(1)','https://user:secret@example.test/video','https://example.test/\nvideo'])assert.equal(welcomeVideoUrl(value),'');
+ assert.equal(welcomeVideoUrl(' https://example.test/welcome '),'https://example.test/welcome');
+});
+test('visitor welcomes omit a missing or placeholder video and include only a configured published link',async()=>{
+ const {visitorWelcomeMessage}=await import('../src/lib/communicationUtils.ts');const visitor={full_name:'Synthetic Visitor',prayer_request:'Private prayer'};
+ assert.ok(!visitorWelcomeMessage(visitor).includes('http'));
+ assert.ok(!visitorWelcomeMessage(visitor,'https://youtube.com/watch?v=gwcc-welcome-elisha').includes('video:'));
+ assert.match(visitorWelcomeMessage(visitor,'https://example.test/welcome'),/Watch our welcome video: https:\/\/example.test\/welcome/);
+ assert.ok(!visitorWelcomeMessage(visitor).includes('Private prayer'));
+});

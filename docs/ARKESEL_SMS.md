@@ -46,3 +46,13 @@ Official references:
 - https://arkesel.com/bulk-sms-api-developers-ghana/
 - https://arkesel.com/sms-length-and-unicode/
 - https://supabase.com/docs/guides/functions/secrets
+
+## Personal outreach and welcome videos
+
+Birthday/anniversary blessings and first-timer welcomes use **Prepare SMS draft**. Each starts a fresh draft with **One member** or **One visitor** and the chosen contact selected. It does not overwrite the announcement previously being edited. Save and wait for cloud confirmation, then review the message, exact number, sender and charges in the SMS panel before confirming a send.
+
+The draft trigger and SMS preview resolve that contact independently on the server. Forged extra recipient IDs cannot turn the personal draft into a broadcast. Missing, archived/inactive or closed/converted contacts are rejected; a changed number invalidates the previous SMS review. Selecting a different audience in the editor is an explicit change.
+
+Personal message studios show Unicode-aware segment estimates. The live provider credit balance is available through **Check connection** in the SMS panel; there is no fixed/example credit balance in the studios. The first-name insertion button uses the selected contact's actual name and is unavailable for broadcasts. Unresolved `[First Name]` tags cannot pass SMS review.
+
+**Pastor’s welcome video** accepts a published HTTPS link and opens the actual video website. Until configured, welcome messages omit the video section. No example URL, simulated playback, invented duration or automatic two-hour delivery is shown. The link is saved as a preference on the current device and can be cleared; an administrator configures it. Message preparation and link setup do not send outreach.

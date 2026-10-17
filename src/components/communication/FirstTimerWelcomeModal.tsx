@@ -15,16 +15,18 @@ import {
 } from 'lucide-react';
 import { Visitor } from '../../types/database.types';
 import { useToast } from '../../contexts/ToastContext';
+import {communicationPhone,visitorWelcomeMessage} from '../../lib/communicationUtils';
+import {smsSegments} from '../../lib/smsSegments.js';
+import {useModalFocus} from '../../hooks/useModalFocus';
 
 interface FirstTimerWelcomeModalProps {
   isOpen: boolean;
   onClose: () => void;
   visitor: Visitor | null;
   videoLink: string;
-  onSendSms: (v: Visitor, customText: string) => void;
+  onPrepareSms: (v: Visitor, customText: string) => void;
   onLaunchWhatsApp: (phone: string, text: string) => void;
   onOpenVideoPreview: () => void;
-  smsCredits: number;
 }
 
 export const FirstTimerWelcomeModal: React.FC<FirstTimerWelcomeModalProps> = ({
@@ -32,24 +34,18 @@ export const FirstTimerWelcomeModal: React.FC<FirstTimerWelcomeModalProps> = ({
   onClose,
   visitor,
   videoLink,
-  onSendSms,
+  onPrepareSms,
   onLaunchWhatsApp,
   onOpenVideoPreview,
-  smsCredits,
 }) => {
   const { success: toastSuccess } = useToast();
+  const focusPanel=useModalFocus(isOpen,onClose);
   const [customText, setCustomText] = useState('');
   const [isCopied, setIsCopied] = useState(false);
 
   useEffect(() => {
     if (!visitor) return;
-    const firstName = visitor.full_name.split(' ')[0];
-    const prayerPart = visitor.prayer_request
-      ? ` concerning your prayer request: "${visitor.prayer_request}"`
-      : '';
-    setCustomText(
-      `Shalom ${firstName}! 🕊️✨ Thank you for worshipping with Greater Works City Church (GWCC), Joma this Sunday! Prophet Elisha K. Richard and our entire church family were truly honored by your fellowship.\n\nPlease watch Prophet Elisha's personal welcome message and sanctuary orientation video for you here:\n👉 ${videoLink}\n\nOur pastoral intercessors are praying in faith with you${prayerPart}. You are warmly welcome to our Midweek Miracle Service this Wednesday at 6:30 PM!\n\nPastoral Care Secretariat • Greater Works City Church, Joma New Site, Accra`
-    );
+    setCustomText(visitorWelcomeMessage(visitor,videoLink));
   }, [visitor, videoLink]);
 
   if (!isOpen || !visitor) return null;
@@ -66,12 +62,12 @@ export const FirstTimerWelcomeModal: React.FC<FirstTimerWelcomeModalProps> = ({
   };
 
   const charLength = customText.length;
-  const smsPages = charLength <= 160 ? 1 : Math.ceil(charLength / 153);
+  const smsPages = smsSegments(customText).segments;
   const phone = visitor.phone || '';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden max-h-[90vh] flex flex-col">
+    <div role="dialog" aria-modal="true" aria-label="Personal welcome studio" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+      <div ref={focusPanel} className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-5 bg-gradient-to-r from-emerald-950 via-[#064e3b] to-emerald-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -84,7 +80,7 @@ export const FirstTimerWelcomeModal: React.FC<FirstTimerWelcomeModalProps> = ({
                   Post-Service First-Timer Welcome Studio
                 </h3>
                 <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-500 text-slate-950">
-                  2-Hour Window
+                  Manual follow-up
                 </span>
               </div>
               <p className="text-xs text-emerald-200/90 mt-0.5">
@@ -93,7 +89,7 @@ export const FirstTimerWelcomeModal: React.FC<FirstTimerWelcomeModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            aria-label="Close personal welcome" onClick={onClose}
             className="p-1.5 text-white/70 hover:text-white rounded-xl hover:bg-white/10 transition"
           >
             <X className="w-5 h-5" />
@@ -121,7 +117,7 @@ export const FirstTimerWelcomeModal: React.FC<FirstTimerWelcomeModalProps> = ({
                 className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
               >
                 <Video className="w-3.5 h-3.5 text-emerald-700" />
-                <span>Watch Pastor's Video</span>
+                <span>{videoLink?'Open welcome video':'Set up welcome video'}</span>
               </button>
             </div>
           </div>
@@ -130,7 +126,7 @@ export const FirstTimerWelcomeModal: React.FC<FirstTimerWelcomeModalProps> = ({
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="font-bold text-slate-800 text-xs">
-                Welcome Message Copy (with Prophet Elisha's Video Link)
+                Welcome message
               </label>
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-mono text-slate-500">
@@ -147,6 +143,7 @@ export const FirstTimerWelcomeModal: React.FC<FirstTimerWelcomeModalProps> = ({
               </div>
             </div>
             <textarea
+              aria-label="Personal welcome message" maxLength={5000}
               rows={8}
               value={customText}
               onChange={(e) => setCustomText(e.target.value)}
@@ -173,7 +170,7 @@ export const FirstTimerWelcomeModal: React.FC<FirstTimerWelcomeModalProps> = ({
         {/* Footer Actions */}
         <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="text-[11px] text-slate-500">
-            Gateway Units: <strong className="font-mono text-slate-700">{smsCredits} units</strong>
+            Check the live balance in the SMS connection panel before sending.
           </div>
 
           <div className="flex items-center gap-2">
@@ -201,15 +198,15 @@ export const FirstTimerWelcomeModal: React.FC<FirstTimerWelcomeModalProps> = ({
 
             <button
               type="button"
-              disabled={!phone || smsCredits < 1}
+              disabled={!/^233[25]\d{8}$/.test(communicationPhone(phone)||'')||!customText.trim()||customText.length>5000}
               onClick={() => {
-                onSendSms(visitor, customText);
+                onPrepareSms(visitor, customText);
                 onClose();
               }}
               className="px-4 py-2 bg-[#064e3b] hover:bg-[#047857] disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>Send Ghana SMS</span>
+              <span>Prepare SMS draft</span>
             </button>
           </div>
         </div>
