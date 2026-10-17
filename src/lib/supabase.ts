@@ -920,7 +920,8 @@ export async function setSyncIdentity(id: string | null,role:string|null=null) {
   if(outbox!==active)return;
   emit('gwcc-sync-status',getSyncStatus());
 }
-export function clearPrivateCache() {
+export function clearPrivateCache(ownerId?:string) {
+  if(ownerId)setCacheOwner(ownerId);
   clearScopedCache(); setSyncIdentity(null); emit('gwcc-cache-cleared',{});
 }
 export const getSyncStatus = (): SyncResult => outbox?.status || {success:true,pending:0};

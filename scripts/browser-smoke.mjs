@@ -10,6 +10,7 @@ import {checkStorageQuota} from './storage-quota-browser-checks.mjs';
 import {checkOperationRecovery} from './operation-recovery-browser-checks.mjs';
 import {checkChurchFinance} from './finance-browser-checks.mjs';
 import {checkCommunication} from './communication-browser-checks.mjs';
+import {checkMfa} from './mfa-browser-checks.mjs';
 import {checkBackup} from './backup-browser-checks.mjs';
 
 const port=Number(process.env.TEST_PORT||3401),origin=`http://127.0.0.1:${port}`;
@@ -27,7 +28,9 @@ try{
   const unauthenticated=await fetch(`${origin}/api/ai/assistant`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:'Test'})});assert.equal(unauthenticated.status,401);
   const invalidJson=await fetch(`${origin}/api/staff`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{bad'});assert.equal(invalidJson.status,400);
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{channel:'chromium'}),args:['--no-sandbox']});
-  if(process.env.TEST_SCOPE==='backup'){
+  if(process.env.TEST_SCOPE==='mfa'){
+    await checkMfa(browser,{origin,settings:initialSettings});
+  }else if(process.env.TEST_SCOPE==='backup'){
     await checkBackup(browser,{origin,settings:initialSettings});
   }else if(process.env.TEST_SCOPE==='communication'){
     await checkCommunication(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
@@ -76,7 +79,8 @@ try{
     const headers={'access-control-allow-origin':'*','access-control-allow-headers':'*','content-type':'application/json'};
     if(request.method()==='OPTIONS'){await route.fulfill({status:204,headers});return;}
     let result=[];
-    if(url.pathname==='/auth/v1/user')result=user;
+    if(url.pathname==='/rest/v1/rpc/gwcc_security_status')result={role:profile.role,required:profile.role!=="member",verified_factors:profile.role==="member"?0:1,satisfied:true};
+    else if(url.pathname==='/auth/v1/user')result=user;
     else if(url.pathname==='/auth/v1/token')result=session;
     else if(url.pathname==='/auth/v1/logout'){await route.fulfill({status:204,headers});return;}
     else if(url.pathname==='/rest/v1/rpc/gwcc_apply_mutations'){
@@ -206,6 +210,7 @@ try{
   await checkChurchFinance(browser,{origin,settings:initialSettings});
   await checkCommunication(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkBackup(browser,{origin,settings:initialSettings});
+  await checkMfa(browser,{origin,settings:initialSettings});
   console.info(`Browser smoke passed: mobile authorization, ${pages.length} signed-in pages, member invitation/linking/suspension guards/password help/password setup/portal, welfare arrears/defaulter filters/CSV/partial claim approval/member portal, durable draft retry, and logout cache clearing.`);
   }
 }finally{

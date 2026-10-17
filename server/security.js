@@ -28,6 +28,11 @@ export async function authorizeRequest(req, { roles, bucket = 'ai', allowedOrigi
     throw new HttpError(403, 'This account is not authorized.');
   }
   if (roles && !roles.includes(profile.role)) throw new HttpError(403, 'Your role cannot perform this action.');
+  const { data: security, error: securityError } = await client.rpc('gwcc_security_status');
+  if (securityError || !security || security.role !== profile.role || typeof security.satisfied !== 'boolean') {
+    throw new HttpError(503, 'Account security could not be checked. Please try again.');
+  }
+  if (!security.satisfied) throw new HttpError(403, 'Complete two-factor verification before using this action.');
   const origin = req.headers?.origin;
   if (origin) {
     const configured = [...(process.env.ALLOWED_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean),...allowedOrigins];

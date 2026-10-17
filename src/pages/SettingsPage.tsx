@@ -54,6 +54,7 @@ import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA, SQL_F
 import { useAuth } from '../contexts/AuthContext';
 import { PastorSignature } from '../components/common/PastorSignature';
 import { PendingBackupControls } from '../components/PendingBackupControls';
+import {TwoFactorPanel} from '../components/TwoFactorPanel';
 import { BackupRecoveryPanel } from '../components/BackupRecoveryPanel';
 
 export const SettingsPage: React.FC = () => {
@@ -2260,6 +2261,7 @@ export const SettingsPage: React.FC = () => {
       {activeTab === 'security' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
+            <TwoFactorPanel key={currentUser.id}/>
             {/* Default Password Card */}
             <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
               <div className="border-b border-slate-100 dark:border-slate-800 pb-3 flex items-center justify-between">

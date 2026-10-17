@@ -1,8 +1,10 @@
+import {createClient} from '@supabase/supabase-js';
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import type { Member, UserProfile, UserRole } from '../types/database.types';
-import { getSupabaseClient, clearPrivateCache, setSyncIdentity } from '../lib/supabase';
+import { getSupabaseClient, getStoredSupabaseConfig, clearPrivateCache, setSyncIdentity } from '../lib/supabase';
 import { readVerifiedProfile, GUEST_PROFILE, clearLegacyCredentials } from '../lib/authPolicy';
+import {readSecurityStatus, type SecurityStatus} from '../lib/mfa';
 import { apiRequest } from '../lib/apiClient';
 
 interface AuthContextType {
@@ -18,6 +20,8 @@ interface AuthContextType {
   canAccess: (module: string) => boolean;
   hasRole: (roles: UserRole[]) => boolean;
   isAuthenticated: boolean;
+  securityStatus: SecurityStatus | null;
+  refreshSecurity: () => Promise<void>;
   session: Session | null;
   isAuthLoading: boolean;
   currentMember: Member | null;
@@ -176,15 +180,17 @@ export const isElishaRichard = (user?: Partial<UserProfile> | null, _email?: str
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<UserProfile>(GUEST_PROFILE);
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
+  const [securityStatus,setSecurityStatus]=useState<SecurityStatus|null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [currentMember, setCurrentMember] = useState<Member | null>(null);
   const generation = useRef(0);
-  const isAuthenticated = Boolean(session && currentUser.id && currentUser.is_active);
+  const validatedToken=useRef<string|null>(null);
+  const isAuthenticated = Boolean(session && currentUser.id && currentUser.is_active && securityStatus?.satisfied);
 
   const resetIdentity = useCallback(() => {
-    generation.current++;setIsAuthLoading(false);
-    setSession(null); setCurrentUser(GUEST_PROFILE); setCurrentMember(null); setUsersList([]);
+    generation.current++;validatedToken.current=null;setIsAuthLoading(false);
+    setSession(null); setSecurityStatus(null); setCurrentUser(GUEST_PROFILE); setCurrentMember(null); setUsersList([]);
     clearLegacyCredentials();
     clearPrivateCache();
   }, []);
@@ -198,14 +204,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { data: { user }, error } = await client.auth.getUser(nextSession.access_token);
       if (error || !user) throw new Error('Your session has expired. Please sign in again.');
       const profile = await readVerifiedProfile(client, user);
+      const security=await readSecurityStatus(client,profile.role);
       if (ticket !== generation.current) return;
       // A different identity must never inherit the previous user's cached records.
       const previousId = sessionStorage.getItem('gwcc_cache_owner');
       if (previousId && previousId !== profile.id) clearPrivateCache();
       sessionStorage.setItem('gwcc_cache_owner', profile.id);
-      await setSyncIdentity(profile.id,profile.role);
+      if(!security.satisfied)clearPrivateCache(profile.id);
+      await setSyncIdentity(security.satisfied?profile.id:null,security.satisfied?profile.role:null);
       if (ticket !== generation.current) return;
-      setSession(nextSession); setCurrentUser(profile);
+      validatedToken.current=nextSession.access_token;
+      setSession(nextSession); setCurrentUser(profile); setSecurityStatus(security);
+      if(!security.satisfied){setUsersList([profile]);setCurrentMember(null);return;}
       const directoryRoles: UserRole[] = ['super_admin', 'senior_pastor', 'administrator'];
       if (directoryRoles.includes(profile.role)) {
         const { data, error: directoryError } = await client.from('profiles').select('*').order('first_name');
@@ -232,6 +242,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (alive) hydrate(error ? null : data.session).catch(() => {});
     }).catch(() => { if (alive) { resetIdentity(); setIsAuthLoading(false); } });
     const { data: { subscription } } = client.auth.onAuthStateChange((_event, nextSession) => {
+      if(_event==='SIGNED_IN' && nextSession?.access_token!==validatedToken.current){
+        generation.current++;setSecurityStatus(null);setIsAuthLoading(true);void setSyncIdentity(null);
+      }
       // Supabase holds an auth lock while dispatching this callback. Do DB work afterwards.
       queueMicrotask(() => { if (alive) hydrate(nextSession).catch(() => {}); });
     });
@@ -263,9 +276,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (userError || !verified.user) throw new Error('Your session could not be verified. Please sign in again.');
         const profile = await readVerifiedProfile(client, verified.user);
         if (profile.role !== 'member') throw new Error('This is a staff account. Use Staff Login to access the church system.');
-        const { data: linked, error: linkError } = await client.from('members').select('id').eq('auth_user_id', verified.user.id).maybeSingle();
-        if (linkError) throw new Error('Your member account could not be checked. Please try again.');
-        if (!linked) throw new Error('Your login is not linked to a member record yet. Ask the church office to open your member profile and link Portal Access.');
+        const security=await readSecurityStatus(client,profile.role);
+        if(security.satisfied){
+          const { data: linked, error: linkError } = await client.from('members').select('id').eq('auth_user_id', verified.user.id).maybeSingle();
+          if (linkError) throw new Error('Your member account could not be checked. Please try again.');
+          if (!linked) throw new Error('Your login is not linked to a member record yet. Ask the church office to open your member profile and link Portal Access.');
+        }
       }
       await hydrate(data.session);
       return { success: true, message: 'Signed in securely.' };
@@ -290,6 +306,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (error) { resetIdentity(); return; }
     await hydrate(data.session).catch(() => {});
   }, [hydrate, resetIdentity]);
+
+  const refreshSecurity=useCallback(async()=>{
+    const client=getSupabaseClient();if(!client)throw new Error('Secure sign-in is unavailable.');
+    const {data,error}=await client.auth.getSession();
+    if(error || !data.session)throw new Error('Please sign in again.');
+    await hydrate(data.session);
+  },[hydrate]);
 
   const createUser: AuthContextType['createUser'] = async (input) => {
     try {
@@ -329,7 +352,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const client = getSupabaseClient();
     if (!client || !session) return { success: false, message: 'Please sign in again.' };
     if (password.length < 12) return { success: false, message: 'Use at least 12 characters.' };
-    if(oldPassword){const {error}=await client.auth.signInWithPassword({email:currentUser.email,password:oldPassword});if(error)return {success:false,message:'Your current password was not accepted.'};}
+    if(oldPassword){
+      // Verify without replacing the active, MFA-verified session with AAL1.
+      const config=getStoredSupabaseConfig();
+      const verifier=createClient(config.url,config.anonKey,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false,storageKey:`gwcc-password-check-${generation.current}`}});
+      const {error}=await verifier.auth.signInWithPassword({email:currentUser.email,password:oldPassword});
+      if(error)return {success:false,message:'Your current password was not accepted.'};
+      await verifier.auth.signOut({scope:'local'}).catch(()=>{});
+    }
     const { error } = await client.auth.updateUser({ password });
     return { success: !error, message: error?.message || 'Password updated securely.' };
   };
@@ -348,7 +378,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
   const contextValue: AuthContextType = {
     currentUser, currentRole: currentUser.role, availableUsers: usersList, isAuthenticated, session, isAuthLoading,
-    currentMember, isMemberPortalUser: currentUser.role === 'member', login, loginAsMember, register, createUser,
+    securityStatus,refreshSecurity, currentMember, isMemberPortalUser: currentUser.role === 'member', login, loginAsMember, register, createUser,
     updateUser, deleteUser, toggleUserStatus, resetPassword, setTemporaryPassword, changePassword, logout, refreshSession,
     setPortalMember, canAccess, hasRole,
     // Identity simulation is intentionally unavailable for a real authenticated session.

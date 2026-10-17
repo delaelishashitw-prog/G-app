@@ -494,6 +494,7 @@ export const Header: React.FC<HeaderProps> = ({
                       <span>Church & Account Settings</span>
                     </Link>
                   )}
+                  <Link to="/account/security" onClick={()=>setProfileOpen(false)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-100"><Shield className="w-4 h-4"/><span>Two-factor security</span></Link>
                   <button
                     onClick={() => {
                       setProfileOpen(false);

@@ -621,6 +621,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     let alive=true;
     const hydrate=async()=>{
       setSupabaseStatus('syncing');await flushSyncOutbox();
+      if(!alive)return;
       const result=await pullAllDataFromSupabase();if(!alive)return;
       applyData(result.data);setSupabaseStatus(result.success?'connected':'error');setSupabaseError(result.errors.join('; ')||null);
     };

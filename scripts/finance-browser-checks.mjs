@@ -37,7 +37,8 @@ export async function checkChurchFinance(browser,{origin,settings}){
       const request=route.request(),url=new URL(request.url()),headers={'access-control-allow-origin':'*','access-control-allow-headers':'*','content-type':'application/json'};
       if(request.method()==='OPTIONS'){await route.fulfill({status:204,headers});return;}
       let result=[];
-      if(url.pathname==='/auth/v1/user')result=user;
+      if(url.pathname==='/rest/v1/rpc/gwcc_security_status')result={role:profile.role,required:profile.role!=="member",verified_factors:profile.role==="member"?0:1,satisfied:true};
+    else if(url.pathname==='/auth/v1/user')result=user;
       else if(url.pathname==='/auth/v1/token')result=session;
       else if(url.pathname==='/rest/v1/rpc/gwcc_apply_mutations'){
         assert.equal(request.headers().authorization,`Bearer ${token}`);

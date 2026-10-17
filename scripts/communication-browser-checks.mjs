@@ -47,7 +47,8 @@ export async function checkCommunication(browser,{origin,settings,sampleMember})
       const request=route.request(),url=new URL(request.url()),headers={'access-control-allow-origin':'*','access-control-allow-headers':'*','content-type':'application/json'};
       if(request.method()==='OPTIONS'){await route.fulfill({status:204,headers});return;}
       let result=[];
-      if(url.pathname==='/auth/v1/user')result=user;
+      if(url.pathname==='/rest/v1/rpc/gwcc_security_status')result={role:data.profiles[0].role,required:data.profiles[0].role!=="member",verified_factors:data.profiles[0].role==="member"?0:1,satisfied:true};
+    else if(url.pathname==='/auth/v1/user')result=user;
       else if(url.pathname==='/auth/v1/token')result=session;
       else if(url.pathname==='/rest/v1/rpc/gwcc_apply_mutations'){
         assert.equal(request.headers().authorization,`Bearer ${token}`);const body=request.postDataJSON();requests.push(body);
