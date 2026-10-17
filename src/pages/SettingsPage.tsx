@@ -54,6 +54,7 @@ import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA, SQL_F
 import { useAuth } from '../contexts/AuthContext';
 import { PastorSignature } from '../components/common/PastorSignature';
 import { PendingBackupControls } from '../components/PendingBackupControls';
+import { BackupRecoveryPanel } from '../components/BackupRecoveryPanel';
 
 export const SettingsPage: React.FC = () => {
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
@@ -288,61 +289,6 @@ export const SettingsPage: React.FC = () => {
     localStorage.setItem('gwcc_allnight_time', allNightServiceTime);
     localStorage.setItem('gwcc_cell_time', cellMeetingTime);
     toastSuccess('Service Schedule Saved', 'Weekly worship services and prayer timetable updated.');
-  };
-
-  const handleExportFullJsonBackup = () => {
-    const backupData = {
-      version: '1.0',
-      exported_at: new Date().toISOString(),
-      church: settings.church_name,
-      settings,
-      financial_accounts: {
-        momo_number: momoNumber,
-        momo_name: momoAccountName,
-        telecel_number: telecelNumber,
-        bank_name: bankName,
-        bank_account: bankAccountNumber,
-        bank_branch: bankBranch,
-      },
-      schedule: {
-        sunday: sundayServiceTime,
-        midweek: midweekServiceTime,
-        all_night: allNightServiceTime,
-        cell: cellMeetingTime,
-      },
-      counts: {
-        members: members.length,
-        visitors: visitors.length,
-        attendance: attendance.length,
-        giving: giving.length,
-        expenses: expenses.length,
-        pledges: pledges.length,
-        ministries: ministries.length,
-        small_groups: smallGroups.length,
-      },
-      data: {
-        members,
-        visitors,
-        attendance,
-        giving,
-        expenses,
-        pledges,
-        ministries,
-        smallGroups,
-      },
-    };
-
-    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `GWCC_Database_Backup_${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-    toastSuccess('Backup Exported', 'Full church database JSON backup downloaded successfully.');
   };
 
   const handleTestConnection = async () => {
@@ -2308,59 +2254,7 @@ export const SettingsPage: React.FC = () => {
       )}
 
       {/* TAB 5: BACKUP & MAINTENANCE */}
-      {activeTab === 'backup' && (
-        <div className="space-y-6 max-w-4xl">
-          {/* JSON Full Database Backup */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-            <div className="border-b border-slate-100 pb-3">
-              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <FileJson className="w-5 h-5 text-emerald-700" />
-                Church Database Backup & Archival Export
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Download an unencrypted, complete snapshot of all church records, members, financial transactions, pledges, and attendance logs.
-              </p>
-            </div>
-
-            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3 text-xs">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
-                <div className="p-2.5 bg-white rounded-lg border border-slate-200">
-                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Members</span>
-                  <strong className="text-slate-800 text-sm">{members.length}</strong>
-                </div>
-                <div className="p-2.5 bg-white rounded-lg border border-slate-200">
-                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Visitors</span>
-                  <strong className="text-slate-800 text-sm">{visitors.length}</strong>
-                </div>
-                <div className="p-2.5 bg-white rounded-lg border border-slate-200">
-                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Giving Records</span>
-                  <strong className="text-emerald-800 text-sm">{giving.length}</strong>
-                </div>
-                <div className="p-2.5 bg-white rounded-lg border border-slate-200">
-                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Cell Fellowships</span>
-                  <strong className="text-slate-800 text-sm">{smallGroups.length}</strong>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-2">
-                <p className="text-slate-500 text-[11px]">
-                  Format: Standard JSON format with ISO timestamped envelope.
-                </p>
-                <button
-                  type="button"
-                  onClick={handleExportFullJsonBackup}
-                  className="px-4 py-2 bg-[#064e3b] hover:bg-[#047857] text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 transition"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Download Full JSON Backup</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 text-sm text-slate-600">Production records are preserved. Export a backup before a migration. Sample-data resets are disabled.</div>
-        </div>
-      )}
+      {activeTab === 'backup' && <BackupRecoveryPanel/>}
 
       {/* TAB 7: SECURITY & PASSWORD MANAGEMENT */}
       {activeTab === 'security' && (
