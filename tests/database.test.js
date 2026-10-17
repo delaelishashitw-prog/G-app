@@ -12,6 +12,8 @@ export async function setupDatabase({beforeSecurityUpgrade,beforeFinanceControls
   await db.exec(`CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role;
     CREATE SCHEMA auth;CREATE SCHEMA storage;
     CREATE TABLE auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,raw_user_meta_data jsonb DEFAULT '{}');
+    CREATE TABLE auth.mfa_factors(id uuid primary key,user_id uuid,factor_type text,status text);
+    CREATE TABLE auth.sessions(id uuid primary key,user_id uuid,factor_id uuid,aal text,not_after timestamptz);
     CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$SELECT NULLIF(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
     CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS $$SELECT COALESCE(current_setting('request.jwt.claims',true),'{}')::jsonb$$;
     GRANT USAGE ON SCHEMA auth TO authenticated,anon;GRANT EXECUTE ON FUNCTION auth.uid(),auth.jwt() TO authenticated,anon;
@@ -27,11 +29,14 @@ export async function setupDatabase({beforeSecurityUpgrade,beforeFinanceControls
   }
   await db.exec(`INSERT INTO auth.users(id,email,email_confirmed_at,raw_user_meta_data) VALUES
     ('${root}','root@example.test',now(),'{}'),('${member}','member@example.test',now(),'{"role":"super_admin"}'),('${other}','other@example.test',now(),'{}');
-    UPDATE public.profiles SET role='super_admin',authorization_reviewed_at=now() WHERE id='${root}';`);
+    UPDATE public.profiles SET role='super_admin',authorization_reviewed_at=now() WHERE id='${root}';
+    INSERT INTO auth.mfa_factors SELECT id,id,'totp','verified' FROM auth.users WHERE id<>'${member}';
+    INSERT INTO auth.sessions SELECT id,id,id,'aal2',NULL FROM auth.users WHERE id<>'${member}';`);
   return db;
 }
-async function asUser(db,id,fn) {
+async function asUser(db,id,fn,claims={aal:'aal2',session_id:id,role:'authenticated'}) {
   await db.exec(`SET ROLE authenticated;SELECT set_config('request.jwt.claim.sub','${id}',false)`);
+  await db.query("SELECT set_config('request.jwt.claims',$1,false)",[JSON.stringify(claims)]);
   try{return await fn();}finally{await db.exec('RESET ROLE');}
 }
 let op=0;
@@ -319,6 +324,7 @@ test('release snapshot preserves original rows privately and a retry cannot over
   try {
     const original=(await db.query("SELECT content,checksum FROM gwcc_release_backup_20261015.snapshots WHERE name='public.church_accounts'")).rows[0];
     assert.equal(original.content[0].current_balance,123.45);
+    await db.query("SELECT set_config('request.jwt.claims',$1,false)",[JSON.stringify({role:'authenticated',aal:'aal2',session_id:root})]);
     await db.exec(`SELECT set_config('gwcc.release_administrator','${root}',false);`+fs.readFileSync('supabase/release-validate.sql','utf8'));
     await db.exec("UPDATE public.church_accounts SET name='Changed after snapshot'");
     await db.exec(snapshot);
@@ -643,7 +649,11 @@ test('communication draft RLS matches page permissions while ordinary members an
 });
 
 const smsPreview=(db,draft)=>db.query('SELECT public.gwcc_sms_preview($1,$2) AS result',[draft.id,draft.updated_at]).then(r=>r.rows[0].result);
-async function smsService(db,fn){await db.exec('SET ROLE service_role');try{return await fn();}finally{await db.exec('RESET ROLE');}}
+async function smsService(db,fn){
+ const previous=(await db.query("SELECT current_setting('request.jwt.claim.sub',true) sub,current_setting('request.jwt.claims',true) claims")).rows[0];
+ await db.exec(`SET ROLE service_role;SELECT set_config('request.jwt.claim.sub','',false);SELECT set_config('request.jwt.claims','{"role":"service_role"}',false)`);
+ try{return await fn();}finally{await db.exec('RESET ROLE');await db.query("SELECT set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",[previous.sub||'',previous.claims||'{}']);}
+}
 const smsClaim=(db,draft,preview,changes={})=>{
  const input={actor:root,id:operation(),draft:draft?.id||null,version:draft?.updated_at||null,digest:preview?.digest||null,sender:'GWCC',phone:null,segments:1,...changes};
  return db.query('SELECT public.gwcc_sms_claim($1,$2,$3,$4,$5,$6,$7,$8) AS result',[input.actor,input.id,input.draft,input.version,input.digest,input.sender,input.phone,input.segments]).then(r=>r.rows[0].result);
@@ -679,6 +689,7 @@ test('SMS audience claims recheck protected roles, current contacts, draft versi
   await smsService(db,async()=>await assert.rejects(smsClaim(db,draft,preview),/phone numbers changed|audience changed/));
   const histories=await asUser(db,root,async()=>(await db.query('SELECT public.gwcc_sms_history() AS result')).rows[0].result);
   assert.equal(histories.length,1);assert.equal(histories[0].request_hash,undefined);
+  await db.exec(`INSERT INTO auth.mfa_factors VALUES('${member}','${member}','totp','verified');INSERT INTO auth.sessions VALUES('${member}','${member}','${member}','aal2',NULL)`);
   for(const role of ['administrator','senior_pastor','pastor','ministry_leader','attendance_officer','finance_officer','data_entry','member']){
    await db.query('UPDATE public.profiles SET role=$1,authorization_reviewed_at=now() WHERE id=$2',[role,member]);
    await asUser(db,member,async()=>{
@@ -720,5 +731,66 @@ test('SMS claims enforce test consent destinations and per-submission, daily and
   await db.query("INSERT INTO gwcc_private.sms_dispatches(id,actor_id,request_hash,snapshot,estimated_units,created_at) VALUES($1,$2,'daily',$3,500,now()-interval '2 hours'),($4,$2,'daily2',$3,500,now()-interval '1 hour')",[operation(),root,snapshot,operation()]);
   await smsService(db,async()=>await assert.rejects(smsClaim(db,null,null,{phone:'0240000002'}),/1,000-segment daily/));
   assert.equal((await db.query('SELECT count(*)::int AS n FROM public.church_finances')).rows[0].n,0);
+ }finally{await db.close();}
+});
+
+test('required staff roles cannot open records, mutate, manage profiles, export backups, read media or preview SMS before enrolling and verifying MFA',async()=>{
+ const db=await setupDatabase();
+ try{
+  await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,phone) VALUES('mfa-private','MFA-1','Private','Record','0240000001');
+   INSERT INTO public.church_accounts(id,name,current_balance,opening_balance) VALUES('mfa-cash','Cash',100,100);
+   INSERT INTO storage.objects(id,bucket_id,name) VALUES('mfa-file','gwcc-media','private.jpg');GRANT USAGE ON SCHEMA storage TO authenticated;GRANT SELECT ON storage.objects TO authenticated;
+   DELETE FROM auth.mfa_factors WHERE user_id='${other}';`);
+  for(const role of ['super_admin','senior_pastor','administrator','finance_officer']){
+   await db.query('UPDATE public.profiles SET role=$1,authorization_reviewed_at=now() WHERE id=$2',[role,other]);
+   await asUser(db,other,async()=>{
+    const state=(await db.query('SELECT public.gwcc_security_status() s')).rows[0].s;
+    assert.deepEqual(state,{role,required:true,verified_factors:0,satisfied:false});
+    assert.equal((await db.query('SELECT public.current_user_role() r')).rows[0].r,'disabled');
+    for(const table of ['members','church_accounts','church_finances','communications','audit_logs'])assert.equal((await db.query(`SELECT * FROM public.${table}`)).rows.length,0,role+':'+table);
+    assert.deepEqual((await db.query('SELECT id FROM public.profiles')).rows,[{id:other}]);
+    assert.equal((await db.query('SELECT * FROM storage.objects')).rows.length,0);
+    await assert.rejects(apply(db,[upsert('members',{id:'mfa-attack',first_name:'No',last_name:'Access'})]),/Staff authorization/);
+    await assert.rejects(db.query("SELECT public.gwcc_manage_profile($1,'{}')",[other]),/super administrator/);
+    await assert.rejects(db.query("SELECT public.gwcc_link_member_login('mfa-private',$1,'member@example.test')",[member]),/super administrator/);
+    await assert.rejects(db.query('SELECT public.gwcc_backup_status()'),/reviewed super administrator/);
+    await assert.rejects(db.query("SELECT public.gwcc_sms_preview('missing','2026-10-17')"),/role cannot/);
+    await assert.rejects(db.query('SELECT public.gwcc_sms_history()'),/role cannot/);
+    assert.equal((await db.query("SELECT public.gwcc_consume_api_limit('staff') allowed")).rows[0].allowed,false);
+    await assert.rejects(db.query('SELECT * FROM auth.mfa_factors'),/permission denied/);
+   },{role:'authenticated',aal:'aal1',session_id:other,user_metadata:{role:'super_admin',aal:'aal2'}});
+  }
+  assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='mfa-cash'")).rows[0].current_balance,'100.00');
+  assert.equal((await db.query("SELECT count(*)::int n FROM public.members WHERE id='mfa-attack'")).rows[0].n,0);
+  await db.exec('SET ROLE anon');await assert.rejects(db.query('SELECT public.gwcc_security_status()'),/permission denied/);
+ }finally{await db.close();}
+});
+
+test('MFA rejects password-only, stale, revoked, wrong-owner and expired sessions; an AAL2 claim cannot outlive its verified factor',async()=>{
+ const db=await setupDatabase();
+ const allowed=claims=>asUser(db,root,async()=>(await db.query('SELECT public.gwcc_security_status() s')).rows[0].s.satisfied,claims);
+ const claims={role:'authenticated',aal:'aal2',session_id:root};
+ try{
+  assert.equal(await allowed({...claims,aal:'aal1'}),false);assert.equal(await allowed({role:'authenticated',session_id:root}),false);
+  assert.equal(await allowed({...claims,session_id:other}),false);assert.equal(await allowed({...claims,session_id:'malformed'}),false);
+  assert.equal(await allowed(claims),true);
+  await db.exec(`UPDATE auth.sessions SET aal='aal1' WHERE id='${root}'`);assert.equal(await allowed(claims),false);
+  await db.exec(`UPDATE auth.sessions SET aal='aal2',not_after=now()-interval '1 minute' WHERE id='${root}'`);assert.equal(await allowed(claims),false);
+  await db.exec(`UPDATE auth.sessions SET not_after=NULL,factor_id='${other}' WHERE id='${root}'`);assert.equal(await allowed(claims),false);
+  await db.exec(`UPDATE auth.sessions SET factor_id='${root}' WHERE id='${root}';UPDATE auth.mfa_factors SET status='unverified' WHERE user_id='${root}'`);assert.equal(await allowed(claims),false);
+  await db.exec(`UPDATE auth.mfa_factors SET status='verified' WHERE user_id='${root}'`);assert.equal(await allowed(claims),true);
+  await db.exec(`DELETE FROM auth.sessions WHERE id='${root}'`);assert.equal(await allowed(claims),false);
+ }finally{await db.close();}
+});
+
+test('ordinary members retain password sign-in, unverified setups do not enable MFA, and a verified optional factor protects their own portal records',async()=>{
+ const db=await setupDatabase();const claims={role:'authenticated',aal:'aal1',session_id:member};
+ const state=()=>asUser(db,member,async()=>(await db.query('SELECT public.gwcc_security_status() s')).rows[0].s,claims);
+ try{
+  assert.deepEqual(await state(),{role:'member',required:false,verified_factors:0,satisfied:true});
+  await db.exec(`INSERT INTO auth.mfa_factors VALUES('${member}','${member}','totp','unverified')`);assert.equal((await state()).required,false);
+  await db.exec(`UPDATE auth.mfa_factors SET status='verified' WHERE user_id='${member}'`);assert.equal((await state()).required,true);assert.equal((await state()).satisfied,false);
+  await db.exec(`INSERT INTO auth.sessions VALUES('${member}','${member}','${member}','aal2',NULL)`);
+  claims.aal='aal2';assert.equal((await state()).satisfied,true);
  }finally{await db.close();}
 });

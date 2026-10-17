@@ -53,6 +53,7 @@ test('member login rejects unlinked accounts and staff credentials, and clears t
       signInWithPassword:async()=>({data:{session:{access_token:'verified-test-token',user}}}),
       getUser:async()=>({data:{user}}),signOut:async()=>{signouts++;return {error:null};},
     });
+    client.rpc=async()=>({data:{role:record.role,required:record.role!=='member',verified_factors:record.role==='member'?0:1,satisfied:true}});
     client.from=table=>({select(){return this;},eq(){return this;},single:async()=>({data:record}),maybeSingle:async()=>({data:kind==='linked'?{id:'own-member',auth_user_id:user.id}:null})});
     client.channel=()=>({on(){return this;},subscribe(){return this;}});client.removeChannel=()=>{};
     const auth=await mountAuth(client);
@@ -79,7 +80,7 @@ test('both AI deployments share a guard that rejects missing tokens, wrong roles
   process.env.SUPABASE_URL='https://server-test.supabase.co';process.env.SUPABASE_ANON_KEY='test-public-key';
   assert.equal(serverlessAi,aiHandler);
   const req={headers:{authorization:'Bearer test-token',host:'app.example.test',origin:'https://app.example.test'}};
-  function deps({record=profile,authUser=user,allowed=true,error=null}={}){return {createClient:()=>({auth:{getUser:async()=>({data:{user:authUser}})},from:()=>({select:()=>({eq:()=>({single:async()=>({data:record})})})}),rpc:async()=>({data:allowed,error})})};}
+  function deps({record=profile,authUser=user,allowed=true,error=null}={}){return {createClient:()=>({auth:{getUser:async()=>({data:{user:authUser}})},from:()=>({select:()=>({eq:()=>({single:async()=>({data:record})})})}),rpc:async name=>name==='gwcc_security_status'?{data:{role:record.role,satisfied:true}}:{data:allowed,error}})};}
   const staff={...profile,role:'administrator',authorization_reviewed_at:'2026-10-15'};
   await assert.rejects(authorizeRequest({headers:{}},{roles:['administrator']},deps()),error=>error.status===401);
   await assert.rejects(authorizeRequest(req,{roles:['administrator']},deps()),error=>error.status===403);
@@ -146,4 +147,71 @@ test('the edge adapter rejects non-POST methods, malformed bodies and oversized 
   assert.equal(malformed.status,400);
   const large=await staffWebHandler(new Request('https://edge.example.test',{method:'POST',body:JSON.stringify({name:'🙂'.repeat(6000)})}),dependencies);
   assert.equal(large.status,413);assert.equal(invoked,0);assert.equal(large.headers.get('Cache-Control'),'no-store');
+});
+
+test('partial staff sign-in is kept only for MFA and cannot read the staff directory or enable modules until security verification succeeds',async()=>{
+ const record={...profile,role:'super_admin',authorization_reviewed_at:'2026-10-17'},session={access_token:'synthetic-aal1-token',user};
+ let satisfied=false,directoryReads=0;
+ const client=mockClient({getSession:async()=>({data:{session}}),getUser:async()=>({data:{user}})});
+ client.rpc=async name=>{assert.equal(name,'gwcc_security_status');return {data:{role:record.role,required:true,verified_factors:satisfied?1:0,satisfied}};};
+ client.from=table=>{assert.equal(table,'profiles');return {select(){return this;},eq(){return this;},single:async()=>({data:record}),order:async()=>{directoryReads++;return {data:[record]};}};};
+ client.channel=()=>({on(){return this;},subscribe(){return this;}});client.removeChannel=()=>{};
+ const auth=await mountAuth(client);
+ try{
+  assert.equal(auth.value.currentUser.id,user.id);assert.equal(auth.value.session.access_token,session.access_token);
+  assert.equal(auth.value.isAuthenticated,false);assert.equal(auth.value.canAccess('finance'),false);assert.equal(auth.value.hasRole(['super_admin']),false);assert.equal(directoryReads,0);
+  satisfied=true;await act(async()=>{await auth.value.refreshSecurity();});assert.equal(auth.value.isAuthenticated,true);assert.equal(auth.value.canAccess('finance'),true);assert.equal(directoryReads,1);
+ }finally{await auth.unmount();}
+});
+
+test('API MFA authorization fails closed before quotas and applies even to forwarding handlers that do not consume a quota',async()=>{
+ process.env.SUPABASE_URL='https://server-test.supabase.co';process.env.SUPABASE_ANON_KEY='test-public-key';
+ const record={...profile,role:'super_admin',authorization_reviewed_at:'2026-10-17'},req={headers:{authorization:'Bearer signed-test-token'}};
+ for(const state of [null,{role:'super_admin',satisfied:false},{role:'administrator',satisfied:true},true]){
+  const calls=[],client={auth:{getUser:async()=>({data:{user}})},from:()=>({select(){return this;},eq(){return this;},single:async()=>({data:record})}),rpc:async name=>{calls.push(name);return {data:state};}};
+  await assert.rejects(authorizeRequest(req,{roles:['super_admin'],bucket:null},{createClient:()=>client}),e=>e.status===403||e.status===503);
+  assert.deepEqual(calls,['gwcc_security_status']);
+ }
+});
+
+test('checking the current password for a password change does not downgrade or replace the MFA-verified app session',async()=>{
+ const originalFetch=globalThis.fetch,requests=[],updates=[],record={...profile,role:'super_admin',authorization_reviewed_at:'2026-10-17'};
+ const session={access_token:'original-mfa-verified-session',user};
+ const client=mockClient({getSession:async()=>({data:{session}}),getUser:async()=>({data:{user}}),signInWithPassword:async()=>{throw new Error('Must not replace the active MFA session');},updateUser:async patch=>{updates.push(patch);return {error:null};}});
+ client.rpc=async()=>({data:{role:record.role,required:true,verified_factors:1,satisfied:true}});
+ client.from=()=>({select(){return this;},eq(){return this;},single:async()=>({data:record}),order:async()=>({data:[record]})});
+ client.channel=()=>({on(){return this;},subscribe(){return this;}});client.removeChannel=()=>{};
+ const auth=await mountAuth(client);
+ globalThis.fetch=async(input,init)=>{
+  const url=String(input);requests.push(url);
+  if(url.includes('/token')){
+   const body=JSON.parse(init.body);if(body.password==='incorrect')return Response.json({error:'invalid_grant',error_description:'Invalid login credentials'},{status:400});
+   return Response.json({access_token:'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzeW50aGV0aWMifQ.signature',refresh_token:'isolated-refresh',expires_in:3600,token_type:'bearer',user});
+  }
+  if(url.includes('/logout'))return new Response(null,{status:204});
+  throw new Error('Unexpected password verification request');
+ };
+ try{
+  let result;await act(async()=>{result=await auth.value.changePassword('a-new-long-synthetic-password','incorrect');});assert.equal(result.success,false);assert.equal(updates.length,0);
+  await act(async()=>{result=await auth.value.changePassword('a-new-long-synthetic-password','a-current-synthetic-password');});assert.equal(result.success,true);assert.deepEqual(updates,[{password:'a-new-long-synthetic-password'}]);
+  assert.equal(auth.value.session.access_token,session.access_token);assert.equal(auth.value.isAuthenticated,true);assert.equal(requests.filter(url=>url.includes('/logout')).length,1);
+ }finally{globalThis.fetch=originalFetch;await auth.unmount();}
+});
+
+test('a new password sign-in immediately suspends the old verified session while the MFA check is pending, and late results cannot restore a signed-out identity',async()=>{
+ const record={...profile,role:'super_admin',authorization_reviewed_at:'2026-10-17'};
+ const initial={access_token:'synthetic-aal2-token',user},next={access_token:'synthetic-aal1-token',user};
+ let listener,release,hold=false;
+ const client=mockClient({getSession:async()=>({data:{session:initial}}),getUser:async()=>({data:{user}}),onAuthStateChange:callback=>{listener=callback;return {data:{subscription:{unsubscribe:noop}}};}});
+ client.rpc=async()=>{if(hold)await new Promise(resolve=>release=resolve);return {data:{role:record.role,required:true,verified_factors:1,satisfied:!hold}};};
+ client.from=()=>({select(){return this;},eq(){return this;},single:async()=>({data:record}),order:async()=>({data:[record]})});
+ client.channel=()=>({on(){return this;},subscribe(){return this;}});client.removeChannel=()=>{};
+ const auth=await mountAuth(client);
+ try{
+  assert.equal(auth.value.isAuthenticated,true);hold=true;
+  await act(async()=>{listener('SIGNED_IN',next);});
+  assert.equal(auth.value.isAuthenticated,false);assert.equal(auth.value.canAccess('finance'),false);assert.equal(auth.value.isAuthLoading,true);
+  await act(async()=>{await auth.value.logout();});assert.equal(auth.value.currentUser.id,'');
+  await act(async()=>{release();});assert.equal(auth.value.currentUser.id,'');assert.equal(auth.value.isAuthenticated,false);
+ }finally{await auth.unmount();}
 });

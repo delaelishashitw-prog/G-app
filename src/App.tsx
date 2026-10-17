@@ -1,6 +1,6 @@
 import React, { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './contexts/AuthContext';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ChurchDataProvider } from './contexts/ChurchDataContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { ThemeProvider } from './contexts/ThemeContext';
@@ -31,6 +31,7 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ defa
 const WelfarePage = lazy(() => import('./pages/WelfarePage').then(m => ({ default: m.WelfarePage })));
 const InventoryPage = lazy(() => import('./pages/InventoryPage').then(m => ({ default: m.InventoryPage })));
 const AiAssistantPage = lazy(() => import('./pages/AiAssistantPage').then(m => ({ default: m.AiAssistantPage })));
+const AccountSecurityPage=lazy(()=>import('./pages/AccountSecurityPage').then(m=>({default:m.AccountSecurityPage})));
 const PasswordSetupPage=lazy(()=>import('./pages/PasswordSetupPage').then(m=>({default:m.PasswordSetupPage})));
 const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
 const MemberPortalPage = lazy(() => import('./pages/MemberPortalPage').then(m => ({ default: m.MemberPortalPage })));
@@ -45,7 +46,8 @@ export default function App() {
               <ToastProvider>
                 <OfflineConnectivityBanner />
                 <Suspense fallback={<LoadingFallback />}>
-                  <Routes>
+                  <SecurityBoundary><Routes>
+                    <Route path="/account/security" element={<AccountSecurityPage/>}/>
                     <Route path="/auth/password" element={<PasswordSetupPage/>}/>
                     <Route path="/login" element={<LoginPage />} />
                     <Route path="/portal" element={<MemberPortalPage />} />
@@ -75,7 +77,7 @@ export default function App() {
                     <Route path="assistant" element={<AiAssistantPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Route>
-                </Routes>
+                </Routes></SecurityBoundary>
               </Suspense>
             </ToastProvider>
           </ChurchDataProvider>
@@ -84,4 +86,14 @@ export default function App() {
     </ThemeProvider>
   </ErrorBoundary>
   );
+}
+
+function SecurityBoundary({children}:{children:React.ReactNode}){
+  const {session,currentUser,securityStatus,isAuthLoading}=useAuth();
+  const location=useLocation();
+  if(session&&!securityStatus&&isAuthLoading)return <main className="p-8 text-center">Verifying your account…</main>;
+  // A newly invited user may choose their first password before enrolling.
+  const initialPassword=(location.pathname==='/auth/password'||(location.pathname==='/login'&&new URLSearchParams(location.search).get('recovery')==='1'))&&securityStatus?.verified_factors===0;
+  if(session&&currentUser.id&&securityStatus&&!securityStatus.satisfied&&!initialPassword)return <AccountSecurityPage key={currentUser.id}/>;
+  return children;
 }

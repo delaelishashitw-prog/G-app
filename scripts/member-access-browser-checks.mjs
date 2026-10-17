@@ -118,7 +118,8 @@ export async function checkMemberPasswordSetup(browser, { origin, settings, samp
     const headers = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'content-type': 'application/json' };
     if (request.method() === 'OPTIONS') { await route.fulfill({ status: 204, headers }); return; }
     let result = [];
-    if (url.pathname === '/auth/v1/user') {
+    if(url.pathname==='/rest/v1/rpc/gwcc_security_status')result={role:profile.role,required:false,verified_factors:0,satisfied:true};
+    else if (url.pathname === '/auth/v1/user') {
       if (request.method() === 'PUT') { assert.equal(request.postDataJSON().password.length >= 12, true); passwordUpdates++; }
       result = user;
     } else if (url.pathname === '/auth/v1/token') result = session;
