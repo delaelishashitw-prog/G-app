@@ -1,5 +1,6 @@
 import type { ChurchAccount, ChurchFinanceRecord, DepartmentBudget } from '../types/database.types';
 import { accountEffect, isActiveTransaction, money } from './ledgerUtils';
+import {financeApprovalLabel,verifiedApprover,isOutbound} from './financeApprovals';
 import { budgetPeriodRange, recordMatchesBudget } from './budgetPeriod';
 
 export const CASH_DENOMINATIONS=[200,100,50,20,10,5,2,1,0.5,0.2,0.1];
@@ -57,8 +58,8 @@ export function financeReconciliation(accounts:ChurchAccount[],rows:ChurchFinanc
   return {accountChecks,unresolved,missingAccounts,duplicateReferences,paymentsToReview,pending:rows.some(row=>row._sync_status==='pending')};
 }
 export function financeCsv(rows:ChurchFinanceRecord[]):string {
-  const headers=['Record ID','Date','Transaction Type','Voucher / Ref #','Title / Description','Vendor / Recipient','Holding Account','Destination Account','Category','Department','Amount (GHS)','Payment Method','Approved By','Status','Cloud Confirmation'];
-  const records=rows.map(row=>[row.id,row.date,row.transaction_type,financeReference(row),row.title,row.recipient_or_vendor||'',row.account_name,row.to_account_name||'',row.category,row.department||'',money(row.amount).toFixed(2),row.payment_method,row.approved_by||'',row.status,row._sync_status==='pending'?'Awaiting confirmation':'Confirmed']);
+  const headers=['Record ID','Date','Transaction Type','Voucher / Ref #','Title / Description','Vendor / Recipient','Holding Account','Destination Account','Category','Department','Amount (GHS)','Payment Method','Approved By','Status','Cloud Confirmation','Requested By','Requested At','Approved At','Payment Recorded By','Payment Recorded At','Payment Reference'];
+  const records=rows.map(row=>[row.id,row.date,row.transaction_type,financeReference(row),row.title,row.recipient_or_vendor||'',row.account_name,row.to_account_name||'',row.category,row.department||'',money(row.amount).toFixed(2),row.payment_method,isOutbound(row)?verifiedApprover(row):row.approved_by||'',row.approval_state?financeApprovalLabel(row):row.status,row._sync_status==='pending'?'Awaiting confirmation':'Confirmed',row.requested_by||'',row.requested_at||'',row.approved_at||'',row.paid_by||'',row.paid_at||'',row.payment_reference||'']);
   return buildCsv([headers,...records]);
 }
 export function buildCsv(rows:(string|number)[][]):string {

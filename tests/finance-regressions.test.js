@@ -12,7 +12,7 @@ import {createPickupToken,findPickup} from '../src/lib/childSafety.ts';
 const noop=()=>{};
 const account=(id,balance)=>({id,name:id,current_balance:balance,currency:'GHS',is_active:true});
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
-test('a transfer scheduled alongside a React state update posts its receipt and reverses both balances once',async()=>{
+test('a transfer request scheduled alongside a React state update preserves balances and cannot bypass cloud approval',async()=>{
   let run,reverse,state,tree;const synced=[];
   function Screen(){
     const [accounts,sa]=React.useState([account('A',100),account('B',0)]),[finances,sf]=React.useState([]);
@@ -24,9 +24,9 @@ test('a transfer scheduled alongside a React state update posts its receipt and 
   await act(async()=>{tree=create(React.createElement(Screen));});
   try{
     let result;await act(async()=>{result=run();});assert.equal(result.success,true);assert.equal(state.finances.length,1);
-    assert.deepEqual(state.accounts.map(row=>row.current_balance),[80,20]);
-    await act(async()=>reverse());assert.deepEqual(state.accounts.map(row=>row.current_balance),[100,0]);
-    await act(async()=>reverse());assert.deepEqual(state.accounts.map(row=>row.current_balance),[100,0]);assert.equal(synced.length,2);
+    assert.deepEqual(state.accounts.map(row=>row.current_balance),[100,0]);
+    assert.equal(state.finances[0].status,'pending');assert.equal(state.finances[0].approval_state,'requested');
+    assert.throws(()=>reverse(),/Approvals & Payments/);assert.equal(synced.length,1);
   }finally{await act(async()=>tree.unmount());}
 });
 test('pledge payments create the requested giving receipt before deferred React setters execute',()=>{

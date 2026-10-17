@@ -21,6 +21,7 @@ export async function checkChurchFinance(browser,{origin,settings}){
     {id:'qa-bank',name:'Synthetic Bank',account_type:'bank',bank_or_provider:'Synthetic Bank',currency:'GHS',current_balance:1000.25,opening_balance:1000.25,is_active:true,updated_at:base.updated_at},
     {id:'qa-cash',name:'Synthetic Cash',account_type:'cash_petty',bank_or_provider:'Cash on Hand',currency:'GHS',current_balance:0,opening_balance:0,is_active:true,updated_at:base.updated_at}
   ],church_finances:[
+    {...base,id:'other-request',title:'Independent request',recipient_or_vendor:'Synthetic Vendor',amount:20,department:'Treasury',transaction_type:'expense',status:'pending',reference_no:'VCH-REVIEW',approval_state:'requested',requested_by_id:'34343434-3434-4434-8434-343434343434',requested_by:'Independent Requester',requested_at:base.updated_at,approval_history:[{action:'requested',actor_id:'34343434-3434-4434-8434-343434343434',actor_name:'Independent Requester',at:base.updated_at}]},
     {...base,id:'active-expense',title:'=1+1',recipient_or_vendor:'Vendor "North", A',amount:100.25,transaction_type:'expense',status:'completed',reference_no:'REF#1'},
     {...base,id:'void-expense',title:'Voided expense',amount:900,transaction_type:'expense',status:'voided',reference_no:'REF-VOID'},
     {...base,id:'pending-income',title:'Pending income',amount:500,transaction_type:'income',status:'pending',reference_no:'REF-PENDING'},
@@ -32,7 +33,7 @@ export async function checkChurchFinance(browser,{origin,settings}){
     const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
     await context.addInitScript(watchSyncStatus);
     await context.addInitScript(({session})=>{localStorage.setItem('gwcc_supabase_url','https://gwcc-e2e.supabase.co');localStorage.setItem('gwcc_supabase_anon_key','test-public-key');localStorage.setItem('gwcc-church-auth-token',JSON.stringify(session));},{session});
-    let rejectWrites=true,number=0;const requests=[];
+    let rejectWrites=true,number=0,interruptPayment=true;const requests=[],actions=[],actionResults=new Map();
     await context.route('https://gwcc-e2e.supabase.co/**',async route=>{
       const request=route.request(),url=new URL(request.url()),headers={'access-control-allow-origin':'*','access-control-allow-headers':'*','content-type':'application/json'};
       if(request.method()==='OPTIONS'){await route.fulfill({status:204,headers});return;}
@@ -46,15 +47,30 @@ export async function checkChurchFinance(browser,{origin,settings}){
         if(rejectWrites){await route.fulfill({status:503,headers,body:JSON.stringify({message:'Synthetic finance cloud unavailable'})});return;}
         result=body.p_changes.filter(change=>change.table!=='audit_logs').map(change=>{
           if(change.operation==='delete')return {table:change.table,id:change.id,deleted:true};
-          const record={...change.record,updated_at:new Date().toISOString()};
+          const record={...change.record,updated_at:new Date().toISOString()};delete record._sync_status;
           if(change.table==='church_finances'){
-            if(record.reference_no.startsWith('PENDING-'))record.reference_no=`INC-${year}-${String(++number).padStart(6,'0')}`;
+            if(record.reference_no.startsWith('PENDING-'))record.reference_no=`${['expense','disbursement','transfer'].includes(record.transaction_type)?'VCH':'INC'}-${year}-${String(++number).padStart(6,'0')}`;
+            if(['expense','disbursement','transfer'].includes(record.transaction_type)){Object.assign(record,{status:'pending',approval_state:'requested',requested_by_id:owner,requested_by:'Synthetic Treasurer',requested_at:record.updated_at,approved_by:null,approved_by_id:null,approval_history:[{action:'requested',actor_id:owner,actor_name:'Synthetic Treasurer',at:record.updated_at}]});}
             const before=data.church_finances.find(row=>row.id===record.id);
             data.church_accounts=data.church_accounts.map(account=>({...account,current_balance:account.current_balance+(accountEffect(record,account.id)-accountEffect(before,account.id))/100}));
           }
           return {table:change.table,record};
         });
         for(const item of result){data[item.table]??=[];data[item.table]=item.deleted?data[item.table].filter(row=>row.id!==item.id):[item.record,...data[item.table].filter(row=>row.id!==item.record.id)];}
+      }else if(url.pathname==='/rest/v1/rpc/gwcc_finance_approval_action'){
+        const body=request.postDataJSON();actions.push(body);
+        if(actionResults.has(body.p_operation_id)){result=actionResults.get(body.p_operation_id);}
+        else{
+          const before=data.church_finances.find(row=>row.id===body.p_finance_id);assert.equal(before.updated_at,body.p_expected_updated_at);
+          const record={...before,updated_at:new Date().toISOString()};
+          if(body.p_action==='approve'){assert.notEqual(before.requested_by_id,owner);Object.assign(record,{approval_state:'approved',approved_by_id:owner,approved_by:'Synthetic Treasurer',approved_at:record.updated_at});}
+          else if(body.p_action==='paid'){assert.equal(before.approval_state,'approved');assert.ok(body.p_payment_reference);Object.assign(record,{approval_state:'paid',status:'completed',paid_by_id:owner,paid_by:'Synthetic Treasurer',paid_at:record.updated_at,payment_reference:body.p_payment_reference});}
+          else if(body.p_action==='cancel'||body.p_action==='reject'){Object.assign(record,{approval_state:body.p_action==='cancel'?'cancelled':'rejected',status:'cancelled'});}
+          record.approval_history=[...before.approval_history,{action:body.p_action,actor_id:owner,actor_name:'Synthetic Treasurer',at:record.updated_at,payment_reference:body.p_payment_reference,reason:body.p_reason}];
+          data.church_finances=data.church_finances.map(row=>row.id===record.id?record:row);data.church_accounts=data.church_accounts.map(account=>({...account,current_balance:account.current_balance+(accountEffect(record,account.id)-accountEffect(before,account.id))/100}));
+          actionResults.set(body.p_operation_id,record);result=record;
+          if(body.p_action==='paid'&&interruptPayment){interruptPayment=false;await route.fulfill({status:503,headers,body:JSON.stringify({message:'Synthetic interrupted payment confirmation'})});return;}
+        }
       }else if(url.pathname.startsWith('/rest/v1/')){
         const rows=data[url.pathname.split('/').at(-1)]||[],offset=Number(url.searchParams.get('offset')||0),limit=Number(url.searchParams.get('limit')||500);
         result=rows.slice(offset,offset+limit);if(request.headers().accept?.includes('vnd.pgrst.object'))result=result[0]||null;
@@ -63,7 +79,7 @@ export async function checkChurchFinance(browser,{origin,settings}){
     });
     const page=await context.newPage(),errors=[];page.setDefaultTimeout(12000);page.on('pageerror',error=>errors.push(error.message));
     await page.goto(origin+'/church-finance');await page.getByText('Synthetic Bank',{exact:true}).first().waitFor();
-    return {context,page,data,requests,errors,setReject:value=>{rejectWrites=value;}};
+    return {context,page,data,requests,actions,errors,setReject:value=>{rejectWrites=value;}};
   }
   const noCash=await setup(false);
   try{
@@ -75,7 +91,7 @@ export async function checkChurchFinance(browser,{origin,settings}){
     assert.equal(await noCash.page.getByLabel('Account Type',{exact:true}).inputValue(),'cash_petty');
     assert.equal(noCash.requests.length,0,'Opening the account form must not create money or an account.');
   }finally{await noCash.context.close();}
-  const {context,page,data,requests,errors,setReject}=await setup();
+  const {context,page,data,requests,actions,errors,setReject}=await setup();
   try{
     assert.equal(await page.getByRole('button',{name:/Start Afresh|Delete Transaction/}).count(),0);
     await page.getByText('Church Income',{exact:true}).locator('..').locator('..').getByText(/3\.00/).waitFor();
@@ -86,10 +102,26 @@ export async function checkChurchFinance(browser,{origin,settings}){
     await page.getByRole('button',{name:/^Income \(/}).click();
     const incomeCsv=(await download(page,'Export CSV')).toString('utf8');assert.match(incomeCsv,/pending-income/);assert.ok(!incomeCsv.includes('active-expense'));
     const pdf=await download(page,'Export PDF');assert.equal(pdf.subarray(0,5).toString(),'%PDF-');assert.ok(pdf.length>1500);
-    await page.getByRole('button',{name:'Record Expenditure',exact:true}).click();
-    const expense=modal(page,'Record Church Expenditure');await expense.getByLabel('Expense Purpose / Item Title *',{exact:true}).fill('Overdraft check');await expense.getByLabel('Amount (GH₵) *',{exact:true}).fill('2000');await expense.locator('button[type="submit"]').click();
-    await page.getByText('Insufficient balance in Synthetic Bank.',{exact:true}).waitFor();assert.deepEqual(errors,[]);assert.equal(requests.length,0);
-    await expense.getByRole('button',{name:'Cancel',exact:true}).click();
+    await page.getByRole('button',{name:'Request Expenditure',exact:true}).click();
+    const expense=modal(page,'Request Church Expenditure');await expense.getByLabel('Expense Purpose / Item Title *',{exact:true}).fill('Overdraft check');await expense.getByLabel('Amount (GH₵) *',{exact:true}).fill('2000');await expense.locator('button[type="submit"]').click();
+    await page.getByText('Payment request saved',{exact:true}).waitFor();await page.getByText('Synthetic finance cloud unavailable',{exact:true}).first().waitFor();
+    assert.equal(data.church_accounts[0].current_balance,1000.25);
+    setReject(false);await page.getByRole('button',{name:'Retry sync',exact:true}).click();await waitForSync(page);
+    const own=page.getByRole('article').filter({has:page.getByRole('heading',{name:'Overdraft check',exact:true})});
+    await own.getByText('You requested this payment. Another finance staff member must review it.',{exact:true}).waitFor();assert.equal(await own.getByRole('button',{name:'Approve request',exact:true}).count(),0);
+    const review=page.getByRole('article').filter({has:page.getByRole('heading',{name:'Independent request',exact:true})});
+    await review.getByRole('button',{name:'Approve request',exact:true}).click();
+    let dialog=page.getByRole('dialog');assert.equal(await dialog.getByRole('button',{name:'Approve request',exact:true}).isDisabled(),true);
+    await dialog.getByRole('checkbox').check();await dialog.getByRole('button',{name:'Approve request',exact:true}).click();await review.getByText('Approved · awaiting payment',{exact:true}).waitFor();
+    assert.equal(data.church_accounts[0].current_balance,1000.25);
+    await review.getByRole('button',{name:'Record payment as paid',exact:true}).click();dialog=page.getByRole('dialog');
+    await dialog.getByLabel('Bank, MoMo or signed cash payment reference',{exact:true}).fill('SYNTHETIC-BANK-20');await dialog.getByRole('checkbox').check();await dialog.getByRole('button',{name:'Record payment as paid',exact:true}).click();
+    await dialog.getByRole('alert').filter({hasText:'Synthetic interrupted payment confirmation'}).waitFor();assert.equal(data.church_accounts[0].current_balance,980.25);
+    await dialog.getByRole('button',{name:'Record payment as paid',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});
+    assert.equal(data.church_accounts[0].current_balance,980.25);assert.equal(actions.filter(action=>action.p_action==='paid').length,2);assert.deepEqual(actions.at(-1),actions.at(-2));
+    await page.getByLabel('Include paid, rejected, cancelled and voided requests',{exact:true}).check();await review.getByText('SYNTHETIC-BANK-20',{exact:true}).waitFor();
+    await review.getByRole('button',{name:'View payment voucher',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Copy receipt or voucher',exact:true}).isDisabled(),false);await page.getByRole('button',{name:'Close receipt or voucher',exact:true}).click();
+    setReject(true);
     await page.getByRole('button',{name:'Record Income',exact:true}).click();
     const income=modal(page,'Record Church Income');await income.getByLabel('Revenue Title / Purpose *',{exact:true}).fill('Pending browser receipt');await income.getByLabel('Amount (GH₵) *',{exact:true}).fill('12.34');await income.locator('button[type="submit"]').click();
     await page.getByText('Income awaiting confirmation',{exact:true}).waitFor();await page.getByText('Synthetic finance cloud unavailable',{exact:true}).first().waitFor();
@@ -97,6 +129,7 @@ export async function checkChurchFinance(browser,{origin,settings}){
     assert.equal(await page.getByRole('button',{name:'Copy receipt or voucher',exact:true}).isDisabled(),true);
     await page.getByRole('button',{name:'Close receipt or voucher',exact:true}).click();
     setReject(false);await page.getByRole('button',{name:'Retry sync',exact:true}).click();await waitForSync(page);
+    await page.getByRole('button',{name:/Income & Expense Ledger/}).click();
     await page.getByRole('row').filter({has:page.getByText('Pending browser receipt',{exact:true})}).getByRole('button',{name:'Print Official Church Income Receipt',exact:true}).click();
     await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent.includes('Print Receipt')&&!button.disabled));
     assert.match(data.church_finances.find(row=>row.title==='Pending browser receipt').reference_no,new RegExp(`^INC-${year}-`));
@@ -125,8 +158,15 @@ export async function checkChurchFinance(browser,{origin,settings}){
     const reconciliation=(await download(page,'Export reconciliation CSV')).toString('utf8');assert.match(reconciliation,/Expected recorded balance/);assert.match(reconciliation,/qa-bank/);assert.match(reconciliation,/Review needed/);
     assert.deepEqual(errors,[]);await page.setViewportSize({width:390,height:844});
     await page.waitForFunction(()=>parseFloat(getComputedStyle(document.querySelector('main').parentElement).paddingLeft)===0);
+    await page.getByRole('button',{name:'Approvals & Payments',exact:true}).click();
+    await page.getByLabel('Include paid, rejected, cancelled and voided requests',{exact:true}).check();
+    await own.getByRole('button',{name:'Cancel request',exact:true}).click();dialog=page.getByRole('dialog');await dialog.getByLabel('Reason',{exact:true}).fill('Synthetic request no longer needed');await dialog.getByRole('checkbox').check();await dialog.getByRole('button',{name:'Cancel request',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});await own.getByText('Cancelled',{exact:true}).waitFor();
+    assert.equal(data.church_accounts[0].current_balance,992.59);
     const overflow=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,elements:[...document.querySelectorAll('body *')].filter(element=>element.getBoundingClientRect().right>innerWidth+2&&!element.closest('.overflow-x-auto')).slice(0,15).map(element=>({tag:element.tagName,class:element.className,right:Math.round(element.getBoundingClientRect().right),width:Math.round(element.getBoundingClientRect().width),text:element.textContent.slice(0,90)}))}));
     assert.ok(overflow.scroll<=overflow.width+2,`Mobile finance page overflows: ${JSON.stringify(overflow)}`);
-    console.info('Church finance browser checks passed: CSV/PDF filters and escaping, exact cents, overdraft handling, pending receipt confirmation, explicit cash accounts and witnesses, duplicate counts, historical budget usage, reconciliation and mobile layout.');
+    for(const button of await page.getByRole('button',{name:'Dismiss toast',exact:true}).all())await button.click();
+    await page.evaluate(()=>window.scrollTo(0,0));
+    if(process.env.FINANCE_QA_SCREENSHOT_DIR){await page.screenshot({path:`${process.env.FINANCE_QA_SCREENSHOT_DIR}/finance-approvals-mobile.png`,fullPage:true});await page.setViewportSize({width:1440,height:1000});await page.waitForFunction(()=>parseFloat(getComputedStyle(document.querySelector('main').parentElement).paddingLeft)>0);await page.screenshot({path:`${process.env.FINANCE_QA_SCREENSHOT_DIR}/finance-approvals-desktop.png`,fullPage:true});}
+    console.info('Church finance browser checks passed: independent approval, own-request blocking, interrupted payment confirmation with immutable retry, exactly-once posting, authenticated history,  CSV/PDF filters and escaping, exact cents, unposted requests, pending receipt confirmation, explicit cash accounts and witnesses, duplicate counts, historical budget usage, reconciliation and mobile layout.');
   }finally{await context.close();}
 }

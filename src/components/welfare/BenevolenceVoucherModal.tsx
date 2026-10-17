@@ -71,6 +71,7 @@ export const BenevolenceVoucherModal: React.FC<BenevolenceVoucherModalProps> = (
 
     const selectedAcc = activeAccounts.find((a) => a.id === selectedAccountId);
 
+    try {
     disburseWelfareClaim(claim.id, {
       disbursement_method: paymentMethod,
       disbursement_channel: paymentChannel,
@@ -83,18 +84,13 @@ export const BenevolenceVoucherModal: React.FC<BenevolenceVoucherModalProps> = (
       sync_with_church_finance: syncFinance,
     });
 
-    const newRemaining = Math.max(0, (isNaN(numApp) ? claim.amount_requested : numApp) - (alreadyDisbursed + numPay));
-    if (newRemaining <= 0) {
-      setIsFinalized(true);
-    }
-
-    success(
-      'Benevolence Disbursement Recorded',
-      `Paid GH₵ ${numPay.toFixed(2)} to ${claim.member_name} (Voucher ${voucherNo})${newRemaining > 0 ? ` · GH₵ ${newRemaining.toFixed(2)} remaining` : ' · Fully Completed'}`
-    );
+    success('Payment request saved', 'Review this request in Church Finance → Approvals & Payments. The claim total changes only after approval and confirmed payment.');
+    onClose();
+    } catch(cause) {toastError('Payment request not saved',(cause as Error).message);}
   };
 
   const handlePrint = () => {
+    if(!claim?.amount_disbursed)return;
     window.print();
   };
 
@@ -109,7 +105,7 @@ export const BenevolenceVoucherModal: React.FC<BenevolenceVoucherModalProps> = (
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={handlePrint}
+              disabled={!claim?.amount_disbursed} onClick={handlePrint}
               className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5"
             >
               <Printer className="w-3.5 h-3.5" />
@@ -144,7 +140,7 @@ export const BenevolenceVoucherModal: React.FC<BenevolenceVoucherModalProps> = (
                 </div>
                 <div>
                   <label className="block text-slate-600 font-medium mb-1">
-                    Amount to Disburse (GH₵)
+                    Payment Request Amount (GH₵)
                   </label>
                   <input
                     type="number"
@@ -226,7 +222,7 @@ export const BenevolenceVoucherModal: React.FC<BenevolenceVoucherModalProps> = (
                   className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs rounded-xl transition flex items-center gap-1.5 shadow-xs"
                 >
                   <Check className="w-4 h-4" />
-                  Authorize & Finalize Payment
+                  Submit Payment Request
                 </button>
               </div>
             </div>

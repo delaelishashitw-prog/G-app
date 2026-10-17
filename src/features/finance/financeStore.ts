@@ -117,77 +117,15 @@ export function recordExpense(
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
   dbSyncUpsert: (table: string, record: unknown) => void
 ): ExpenseRecord {
-  let approver = data.approved_by?.trim();
-  if (
-    !approver ||
-    approver === 'Rev. Emmanuel Appiah' ||
-    approver.includes('Agyemang-Prempeh') ||
-    approver.includes('Emmanuel Agyemang') ||
-    approver.includes('Emmanuel Appiah')
-  ) {
-    approver = 'Prophet Elisha K. Richard';
-  }
-
-  const newRecord: ExpenseRecord = {
-    ...data,
-    approved_by: approver,
-    id: `exp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    created_at: new Date().toISOString(),
-  };
-  setExpenses((prev) => [newRecord, ...prev]);
-  logAction('RECORD_EXPENSE', 'Finance', `Disbursed GH₵ ${data.amount.toFixed(2)} for ${data.category} (${data.description || data.title})`, newRecord.id);
-  dbSyncUpsert('expenses', newRecord);
-  return newRecord;
+  throw new Error('Submit a payment request in Church Finance. Legacy expense history is read-only.');
 }
 
-export function updateExpense(
-  id: string,
-  updates: Partial<ExpenseRecord>,
-  setExpenses: Dispatch<SetStateAction<ExpenseRecord[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void
-) {
-  let sanitizedUpdates = { ...updates };
-  if (sanitizedUpdates.approved_by !== undefined) {
-    const raw = sanitizedUpdates.approved_by?.trim();
-    if (
-      !raw ||
-      raw === 'Rev. Emmanuel Appiah' ||
-      raw.includes('Agyemang-Prempeh') ||
-      raw.includes('Emmanuel Agyemang') ||
-      raw.includes('Emmanuel Appiah')
-    ) {
-      sanitizedUpdates.approved_by = 'Prophet Elisha K. Richard';
-    }
-  }
-
-  setExpenses((prev) =>
-    prev.map((e) => {
-      if (e.id === id) {
-        const updated = { ...e, ...sanitizedUpdates };
-        logAction(
-          'UPDATE_EXPENSE',
-          'Finance',
-          `Updated expense voucher: ${updated.title || updated.description} (GH₵ ${updated.amount.toFixed(2)})`,
-          id
-        );
-        dbSyncUpsert('expenses', updated);
-        return updated;
-      }
-      return e;
-    })
-  );
+export function updateExpense(..._args: unknown[]) {
+  throw new Error('Legacy expense history is read-only. Submit a payment request in Church Finance.');
 }
 
-export function deleteExpense(
-  id: string,
-  setExpenses: Dispatch<SetStateAction<ExpenseRecord[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncDelete: (table: string, id: string) => void
-) {
-  setExpenses((prev) => prev.filter((e) => e.id !== id));
-  logAction('DELETE_EXPENSE', 'Finance', `Deleted expense voucher ${id}`, id);
-  dbSyncDelete('expenses', id);
+export function deleteExpense(..._args: unknown[]) {
+  throw new Error('Legacy expense history is read-only. Submit a payment request in Church Finance.');
 }
 
 // -----------------------------------------------------------------------------
@@ -279,17 +217,20 @@ export function recordChurchFinance(data:Omit<ChurchFinanceRecord,'id'|'created_
   sf:Setter<ChurchFinanceRecord>,sa:Setter<ChurchAccount>,sb?:Setter<DepartmentBudget>,log?:Logger,sync?:Sync,state?:FinanceSnapshot):ChurchFinanceRecord {
   const now=new Date().toISOString();
   const id=crypto.randomUUID();
-  const record:ChurchFinanceRecord={...data,id,reference_no:data.reference_no?.trim()||`PENDING-${id}`,amount:money(data.amount),status:data.status||'completed',created_at:now,updated_at:now};
+  const outbound=['expense','disbursement','transfer'].includes(data.transaction_type);
+  const record:ChurchFinanceRecord={...data,id,reference_no:data.reference_no?.trim()||`PENDING-${id}`,amount:money(data.amount),status:outbound?'pending':data.status||'completed',...(outbound?{approval_state:'requested' as const,approved_by:undefined,approval_history:[]}:{}),created_at:now,updated_at:now};
   applyReceipt(undefined,record,state,sf,sa,sb,log,sync);return record;
 }
 export function updateChurchFinance(id:string,updates:Partial<ChurchFinanceRecord>,sf:Setter<ChurchFinanceRecord>,sa:Setter<ChurchAccount>,sb:Setter<DepartmentBudget>,log:Logger,sync:Sync,state?:FinanceSnapshot) {
   const existing=state?.finances.find(row=>row.id===id);if(!existing)throw new Error('Transaction not found. Refresh and try again.');
+  if(existing.approval_state || ['expense','disbursement','transfer'].includes(existing.transaction_type))throw new Error('Cancel and replace a request, or void a historical payment, to correct its details.');
   if(existing.status==='voided')throw new Error('A voided receipt cannot be edited.');
   const updated={...existing,...updates,id:existing.id,amount:money(updates.amount??existing.amount),updated_at:new Date().toISOString(),_expected_updated_at:existing.updated_at};
   applyReceipt(existing,updated,state,sf,sa,sb,log,sync);
 }
 export function voidChurchFinance(id:string,reason:string,actor:string,sf:Setter<ChurchFinanceRecord>,sa:Setter<ChurchAccount>,sb:Setter<DepartmentBudget>,log:Logger,sync:Sync,state?:FinanceSnapshot) {
   const existing=state?.finances.find(row=>row.id===id);if(!existing)throw new Error('Transaction not found.');
+  if(existing.approval_state)throw new Error('Use Approvals & Payments to cancel or void this request.');
   if(existing.status==='voided')return;
   if(!reason.trim())throw new Error('Enter a reason for voiding this receipt.');
   applyReceipt(existing,{...existing,status:'voided',void_reason:reason.trim(),voided_by:actor,updated_at:new Date().toISOString(),_expected_updated_at:existing.updated_at} as ChurchFinanceRecord,state,sf,sa,sb,log,sync);
@@ -305,8 +246,8 @@ export function transferBetweenAccounts(fromId:string,toId:string,amount:number,
     if(!from||!to)throw new Error('Select the source and destination accounts.');
     recordChurchFinance({transaction_type:'transfer',account_id:fromId,account_name:from.name,to_account_id:toId,to_account_name:to.name,
       category:'Internal Transfer',title:`Transfer to ${to.name}`,amount:money(amount),currency:'GHS',date:new Date().toISOString().slice(0,10),
-      payment_method:'internal_transfer',notes,status:'completed'},sf,sa,undefined,log,sync,state);
-    return {success:true,message:'Transfer recorded on this device. Cloud confirmation is shown in sync status.'};
+      payment_method:'internal_transfer',notes,status:'pending'},sf,sa,undefined,log,sync,state);
+    return {success:true,message:'Transfer request saved on this device. After cloud confirmation, a different finance staff member must approve it before the transfer is recorded as paid.'};
   } catch(error) {return {success:false,message:(error as Error).message};}
 }
 

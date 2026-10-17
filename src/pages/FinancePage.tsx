@@ -1,3 +1,4 @@
+import {useNavigate} from 'react-router-dom';
 import { isActiveTransaction } from '../lib/ledgerUtils';
 import React, { useState, useMemo } from 'react';
 import {
@@ -135,6 +136,7 @@ const createDefaultDenominations = (): DenominationRow[] => [
 ];
 
 export const FinancePage: React.FC = () => {
+  const navigate=useNavigate();
   const { currentUser } = useAuth();
   const {
     giving:allGiving,
@@ -1074,7 +1076,7 @@ export const FinancePage: React.FC = () => {
           </button>
 
           <button
-            onClick={() => setIsExpenseModalOpen(true)}
+            onClick={() => navigate('/church-finance')}
             className="px-3.5 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
           >
             <TrendingDown className="w-4 h-4 text-rose-600" />
@@ -1733,6 +1735,7 @@ export const FinancePage: React.FC = () => {
           transition={{ duration: 0.25 }}
           className="space-y-4"
         >
+          <p className="rounded-xl border border-slate-200 p-4 text-sm text-slate-600">Historical expense vouchers are read-only. Submit new payment requests in Church Finance for independent approval.</p>
           {/* Controls Bar */}
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 flex-1">
@@ -1835,7 +1838,7 @@ export const FinancePage: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setIsExpenseModalOpen(true)}
+                onClick={() => navigate('/church-finance')}
                 className="px-4 py-2 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-xs cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
@@ -1913,16 +1916,16 @@ export const FinancePage: React.FC = () => {
                               <Printer className="w-3.5 h-3.5" />
                             </button>
                             <button
-                              onClick={() => setEditingExpenseRecord(exp)}
+                              disabled onClick={() => navigate('/church-finance')}
                               className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:text-blue-700 hover:border-blue-300 hover:bg-blue-50 transition cursor-pointer"
-                              title="Edit Voucher"
+                              title="Historical voucher is read-only"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
                             </button>
                             <button
-                              onClick={() => setDeleteConfirm({ type: 'expense', id: exp.id, title: `${exp.title || exp.description} (${formatGHS(exp.amount)})` })}
+                              disabled
                               className="p-1.5 rounded-lg border border-slate-200 text-slate-400 hover:text-rose-700 hover:border-rose-300 hover:bg-rose-50 transition cursor-pointer"
-                              title="Delete Voucher"
+                              title="Historical voucher is read-only"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
