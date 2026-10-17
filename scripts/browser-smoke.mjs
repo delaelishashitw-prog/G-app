@@ -10,6 +10,7 @@ import {checkStorageQuota} from './storage-quota-browser-checks.mjs';
 import {checkOperationRecovery} from './operation-recovery-browser-checks.mjs';
 import {checkChurchFinance} from './finance-browser-checks.mjs';
 import {checkCommunication} from './communication-browser-checks.mjs';
+import {checkBackup} from './backup-browser-checks.mjs';
 
 const port=Number(process.env.TEST_PORT||3401),origin=`http://127.0.0.1:${port}`;
 const child=spawn(process.execPath,['--import','tsx','server.ts'],{cwd:process.cwd(),env:{...process.env,NODE_ENV:'production',PORT:String(port),SUPABASE_URL:'https://gwcc-e2e.supabase.co',SUPABASE_ANON_KEY:'test-public-key'},stdio:'pipe'});
@@ -26,7 +27,9 @@ try{
   const unauthenticated=await fetch(`${origin}/api/ai/assistant`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:'Test'})});assert.equal(unauthenticated.status,401);
   const invalidJson=await fetch(`${origin}/api/staff`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{bad'});assert.equal(invalidJson.status,400);
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{channel:'chromium'}),args:['--no-sandbox']});
-  if(process.env.TEST_SCOPE==='communication'){
+  if(process.env.TEST_SCOPE==='backup'){
+    await checkBackup(browser,{origin,settings:initialSettings});
+  }else if(process.env.TEST_SCOPE==='communication'){
     await checkCommunication(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   }else if(process.env.TEST_SCOPE==='finance'){
     await checkChurchFinance(browser,{origin,settings:initialSettings});
@@ -202,6 +205,7 @@ try{
   await checkOperationRecovery(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkChurchFinance(browser,{origin,settings:initialSettings});
   await checkCommunication(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  await checkBackup(browser,{origin,settings:initialSettings});
   console.info(`Browser smoke passed: mobile authorization, ${pages.length} signed-in pages, member invitation/linking/suspension guards/password help/password setup/portal, welfare arrears/defaulter filters/CSV/partial claim approval/member portal, durable draft retry, and logout cache clearing.`);
   }
 }finally{

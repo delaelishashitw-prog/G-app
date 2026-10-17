@@ -40,6 +40,80 @@ const apply=(db,changes,id=operation())=>db.query('SELECT public.gwcc_apply_muta
 const upsert=(table,record,expected)=>({table,id:record.id,operation:'upsert',record,expected_updated_at:expected});
 const reconcile=(db,original,recovery,changes)=>db.query('SELECT public.gwcc_reconcile_sync_operation($1,$2,$3) AS result',[original,recovery,JSON.stringify(changes)]);
 
+test('recovery points include all records and private safety ledgers, rehearse without touching live rows, and preserve daily/manual retention',async()=>{
+  const db=await setupDatabase();
+  try{
+    await db.exec(`INSERT INTO public.members(id,first_name,last_name,member_id,phone,profile_photo_url) VALUES('backup-member','Synthetic','Member','BACKUP-1','0240000001','data:image/png;base64,AA==');
+      INSERT INTO public.church_accounts(id,name,current_balance,opening_balance,currency) VALUES('backup-cash','Synthetic cash',10895.55,10895.55,'GHS');
+      INSERT INTO public.gwcc_documents(namespace,id,data) VALUES('foundation_students','backup-student','{"completed_modules":[1,2]}');
+      INSERT INTO gwcc_private.sms_dispatches(id,actor_id,request_hash,snapshot,estimated_units,state) VALUES('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','${root}','backup-hash','{"is_test":true}',1,'unknown');`);
+    const before=(await db.query('SELECT to_jsonb(a) doc FROM public.church_accounts a')).rows;
+    let id;
+    await asUser(db,root,async()=>{
+      id=(await db.query('SELECT public.gwcc_backup_create() id')).rows[0].id;
+      const status=(await db.query('SELECT public.gwcc_backup_status() doc')).rows[0].doc;
+      assert.equal(status.daily_enabled,false);assert.equal(status.points.length,1);assert.equal(status.points[0].counts['public.members'],1);
+      assert.ok(!('payload_text' in status.points[0]));
+      const exported=(await db.query('SELECT public.gwcc_backup_export($1) doc',[id])).rows[0].doc;
+      const doc=JSON.parse(exported.payload_text);
+      assert.equal(doc.tables['public.members'][0].profile_photo_url,'data:image/png;base64,AA==');
+      assert.equal(doc.tables['public.church_accounts'][0].current_balance,10895.55);
+      assert.equal(doc.tables['gwcc_private.sms_dispatches'][0].state,'unknown');assert.equal(doc.tables['public.gwcc_documents'][0].namespace,'foundation_students');
+      const result=(await db.query('SELECT public.gwcc_backup_rehearse($1) doc',[id])).rows[0].doc;
+      assert.equal(result.tables_checked,status.tables.length);
+      assert.equal((await db.query('SELECT public.gwcc_backup_media_check($1) ok',[id])).rows[0].ok,true);
+      await db.query('SELECT public.gwcc_backup_create()');
+      await assert.rejects(db.query('SELECT public.gwcc_backup_create()'),/Two recent manual/);
+    });
+    assert.deepEqual((await db.query('SELECT to_jsonb(a) doc FROM public.church_accounts a')).rows,before);
+    assert.equal((await db.query('SELECT state FROM gwcc_private.sms_dispatches')).rows[0].state,'unknown');
+    assert.equal((await db.query('SELECT count(*)::int n FROM gwcc_private.recovery_points')).rows[0].n,2);
+    await db.exec(`INSERT INTO storage.objects(id,bucket_id,name) VALUES('new-file','gwcc-media','new.jpg')`);
+    await asUser(db,root,()=>assert.rejects(db.query('SELECT public.gwcc_backup_media_check($1)',[id]),/Storage files changed/));
+    await db.exec(`UPDATE gwcc_private.recovery_points SET created_at=now()-interval '11 minutes';`);
+    await asUser(db,root,()=>db.query('SELECT public.gwcc_backup_create()'));
+    assert.equal((await db.query('SELECT count(*)::int n FROM gwcc_private.recovery_points')).rows[0].n,2);
+    await db.exec(`SELECT set_config('request.jwt.claim.sub','',false);
+      INSERT INTO gwcc_private.recovery_points(slot,kind,created_at,payload_text,digest,counts,byte_count,media_count)
+      SELECT 'older-daily-'||n,'daily',now()-make_interval(days=>n),payload_text,digest,counts,byte_count,media_count
+      FROM (SELECT * FROM gwcc_private.recovery_points LIMIT 1) p CROSS JOIN generate_series(1,8) n;`);
+    const daily=(await db.query("SELECT gwcc_private.backup_capture('daily') id")).rows[0].id;
+    assert.equal((await db.query("SELECT gwcc_private.backup_capture('daily') id")).rows[0].id,daily);
+    assert.equal((await db.query("SELECT count(*)::int n FROM gwcc_private.recovery_points WHERE kind='daily'")).rows[0].n,7);
+    await db.exec('CREATE TABLE public.future_uncovered_module(id text)');
+    await asUser(db,root,()=>assert.rejects(db.query('SELECT public.gwcc_backup_create()'),/new church table/));
+    await db.exec('DROP TABLE public.future_uncovered_module');
+    await db.exec(`UPDATE gwcc_private.recovery_points SET payload_text=payload_text||' ';`);
+    await asUser(db,root,()=>assert.rejects(db.query('SELECT public.gwcc_backup_export($1)',[daily]),/checksum/));
+  }finally{await db.close();}
+});
+
+test('recovery RPCs deny ordinary staff, unreviewed or disabled administrators, forged metadata and anonymous callers',async()=>{
+  const db=await setupDatabase();
+  try{
+    for(const id of [member,other])await asUser(db,id,async()=>{
+      for(const name of ['gwcc_backup_status','gwcc_backup_create'])await assert.rejects(db.query(`SELECT public.${name}()`),/reviewed super administrator/);
+      for(const name of ['gwcc_backup_export','gwcc_backup_rehearse','gwcc_backup_media_check'])await assert.rejects(db.query(`SELECT public.${name}($1)`,[root]),/reviewed super administrator/);
+      await assert.rejects(db.query('SELECT * FROM gwcc_private.recovery_points'),/permission denied/);
+      await assert.rejects(db.query("SELECT gwcc_private.backup_capture('daily')"),/permission denied/);
+    });
+    for(const role of ['senior_pastor','administrator','finance_officer','pastor']){
+      await db.query('UPDATE public.profiles SET role=$1,authorization_reviewed_at=now() WHERE id=$2',[role,other]);
+      await asUser(db,other,()=>assert.rejects(db.query('SELECT public.gwcc_backup_create()'),/reviewed super administrator/));
+    }
+    await db.exec(`UPDATE public.profiles SET authorization_reviewed_at=NULL WHERE id='${root}'`);
+    await asUser(db,root,()=>assert.rejects(db.query('SELECT public.gwcc_backup_status()'),/reviewed super administrator/));
+    await db.exec(`UPDATE public.profiles SET authorization_reviewed_at=now(),is_active=false WHERE id='${root}'`);
+    await asUser(db,root,()=>assert.rejects(db.query('SELECT public.gwcc_backup_status()'),/reviewed super administrator/));
+    await db.exec(`UPDATE public.profiles SET is_active=true WHERE id='${root}';ALTER TABLE auth.users ADD COLUMN banned_until timestamptz;UPDATE auth.users SET banned_until=now()+interval '1 day' WHERE id='${root}'`);
+    await asUser(db,root,()=>assert.rejects(db.query('SELECT public.gwcc_backup_status()'),/reviewed super administrator/));
+    const timeout=(await db.query("SELECT proconfig FROM pg_proc WHERE oid='public.gwcc_backup_create()'::regprocedure")).rows[0].proconfig;
+    assert.ok(timeout.includes('statement_timeout=30s'));
+    await db.exec('SET ROLE anon');
+    await assert.rejects(db.query('SELECT public.gwcc_backup_status()'),/permission denied/);
+  }finally{await db.close();}
+});
+
 test('new finance references are server-assigned and collision-safe while historical duplicate references and balances remain intact',async()=>{
   let before;
   const db=await setupDatabase({beforeFinanceControls:async(db)=>{
@@ -381,7 +455,9 @@ test('welfare receipts reconcile atomically, disbursements require real ledger e
     await assert.rejects(apply(db,[upsert('welfare_claims',{...claim,amount_disbursed:0})]),/total does not match/);
   });
     // A later use of the in-app repair SQL must not restore anonymous access or reset money.
-    const {SQL_FIX_RLS_SCHEMA}=await import('../src/lib/supabaseSchema.ts');await db.exec(SQL_FIX_RLS_SCHEMA);
+    const {SQL_FIX_RLS_SCHEMA}=await import('../src/lib/supabaseSchema.ts');
+    // WASM has no native pg_cron. Production scheduling is verified against the real database.
+    await db.exec(SQL_FIX_RLS_SCHEMA.replace(/CREATE EXTENSION IF NOT EXISTS [^;]+;/g,''));
     const grants=(await db.query("SELECT tablename FROM pg_tables WHERE schemaname='public' AND (has_table_privilege('anon', quote_ident(schemaname)||'.'||quote_ident(tablename), 'SELECT') OR has_table_privilege('anon',quote_ident(schemaname)||'.'||quote_ident(tablename),'INSERT,UPDATE,DELETE'))")).rows;
     assert.deepEqual(grants,[]);
     assert.equal((await db.query("SELECT current_balance::float AS b FROM public.church_accounts WHERE id='cash'")).rows[0].b,50);
