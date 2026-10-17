@@ -11,6 +11,7 @@ import {checkOperationRecovery} from './operation-recovery-browser-checks.mjs';
 import {checkChurchFinance} from './finance-browser-checks.mjs';
 import {checkCommunication} from './communication-browser-checks.mjs';
 import {checkMfa} from './mfa-browser-checks.mjs';
+import {checkTasks} from './tasks-browser-checks.mjs';
 import {checkBackup} from './backup-browser-checks.mjs';
 
 const port=Number(process.env.TEST_PORT||3401),origin=`http://127.0.0.1:${port}`;
@@ -28,7 +29,9 @@ try{
   const unauthenticated=await fetch(`${origin}/api/ai/assistant`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:'Test'})});assert.equal(unauthenticated.status,401);
   const invalidJson=await fetch(`${origin}/api/staff`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{bad'});assert.equal(invalidJson.status,400);
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{channel:'chromium'}),args:['--no-sandbox']});
-  if(process.env.TEST_SCOPE==='mfa'){
+  if(process.env.TEST_SCOPE==='tasks'){
+    await checkTasks(browser,{origin,settings:initialSettings});
+  }else if(process.env.TEST_SCOPE==='mfa'){
     await checkMfa(browser,{origin,settings:initialSettings});
   }else if(process.env.TEST_SCOPE==='backup'){
     await checkBackup(browser,{origin,settings:initialSettings});
@@ -211,6 +214,7 @@ try{
   await checkCommunication(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkBackup(browser,{origin,settings:initialSettings});
   await checkMfa(browser,{origin,settings:initialSettings});
+  await checkTasks(browser,{origin,settings:initialSettings});
   console.info(`Browser smoke passed: mobile authorization, ${pages.length} signed-in pages, member invitation/linking/suspension guards/password help/password setup/portal, welfare arrears/defaulter filters/CSV/partial claim approval/member portal, durable draft retry, and logout cache clearing.`);
   }
 }finally{

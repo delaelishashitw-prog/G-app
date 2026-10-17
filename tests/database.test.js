@@ -917,3 +917,130 @@ test('approval rollout preserves historical expenses and balances; historical pa
     assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='history-cash'")).rows[0].current_balance,'100.00');
   }finally{await db.close();}
 });
+
+const taskId=()=>crypto.randomUUID();
+const taskAction=async(db,id,action,data={},version=null,idempotency=operation())=>(await db.query('SELECT public.gwcc_follow_up_action($1,$2,$3,$4,$5) AS result',[idempotency,id,version,action,JSON.stringify(data)])).rows[0].result;
+const taskList=async db=>(await db.query('SELECT public.gwcc_follow_up_list() AS result')).rows[0].result;
+const reviewedRole=async(db,id,role)=>db.query('UPDATE public.profiles SET role=$2,authorization_reviewed_at=now(),is_active=true,has_login_account=true WHERE id=$1',[id,role]);
+const generalTask=(owner)=>({kind:'general',source_type:'none',title:'Synthetic follow-up task',description:'Review the equipment list',due_date:'2026-10-16',priority:'high',assigned_to_id:owner});
+
+test('follow-up tasks require real reviewed staff owners, preserve immutable actors and history, reject stale edits and retry completion once',async()=>{
+  const db=await setupDatabase();
+  try{
+    await reviewedRole(db,other,'finance_officer');
+    const id=taskId(),request=operation();
+    const created=await asUser(db,root,()=>taskAction(db,id,'create',{...generalTask(other),created_by_id:member,history:[{action:'forged'}],status:'completed'},null,request));
+    assert.equal(created.created_by_id,root);assert.equal(created.status,'open');assert.equal(created.assigned_to_id,other);assert.deepEqual(created.history.map(e=>e.action),['create']);
+    await asUser(db,root,async()=>{
+      assert.deepEqual(await taskAction(db,id,'create',{...generalTask(other),created_by_id:member,history:[{action:'forged'}],status:'completed'},null,request),created);
+      await assert.rejects(taskAction(db,id,'create',generalTask(root),null,request),/reused with different/);
+      await assert.rejects(taskAction(db,taskId(),'create',generalTask('directory-without-login')),/active reviewed staff/);
+      await assert.rejects(taskAction(db,taskId(),'create',{...generalTask(root),due_date:'2026-02-31'}),/date\/time|out of range/);
+      await assert.rejects(apply(db,[upsert('follow_up_tasks',{id,title:'Bypass'})]),/Unknown table/);
+      await assert.rejects(db.query("UPDATE public.gwcc_documents SET data='{}' WHERE namespace='follow_up_tasks'"),/permission denied/);
+    });
+    await asUser(db,member,async()=>{await assert.rejects(taskList(db),/reviewed staff/);await assert.rejects(taskAction(db,id,'complete',{outcome:'Not allowed'},created.updated_at),/reviewed staff/);});
+    const started=await asUser(db,other,()=>taskAction(db,id,'start',{},created.updated_at));
+    await asUser(db,root,()=>assert.rejects(taskAction(db,id,'update',{title:'Stale edit'},created.updated_at),/changed on another device/));
+    const updated=await asUser(db,root,()=>taskAction(db,id,'update',{title:'Updated real task',due_date:'2026-10-18'},started.updated_at));
+    await asUser(db,other,()=>assert.rejects(taskAction(db,id,'complete',{outcome:'Stale outcome'},started.updated_at),/changed on another device/));
+    const completion=operation(),paid=await asUser(db,other,()=>taskAction(db,id,'complete',{outcome:'Equipment list checked'},updated.updated_at,completion));
+    assert.equal(paid.completed_by_id,other);assert.equal(paid.status,'completed');assert.equal(paid.outcome,'Equipment list checked');
+    await asUser(db,other,async()=>{
+      assert.deepEqual(await taskAction(db,id,'complete',{outcome:'Equipment list checked'},updated.updated_at,completion),paid);
+      await assert.rejects(taskAction(db,id,'complete',{outcome:'Changed'},updated.updated_at,completion),/reused with different/);
+      await assert.rejects(taskAction(db,id,'update',{history:[]},paid.updated_at),/Reopen a closed task/);
+      await assert.rejects(taskAction(db,id,'reopen',{outcome:''},paid.updated_at),/outcome or reason/);
+    });
+    const reopened=await asUser(db,root,()=>taskAction(db,id,'reopen',{outcome:'Check the revised equipment list'},paid.updated_at));
+    assert.equal(reopened.status,'open');assert.equal(reopened.completed_by_id,undefined);assert.deepEqual(reopened.history.map(e=>e.action),['create','start','update','complete','reopen']);
+    const lateReplay=await asUser(db,other,()=>taskAction(db,id,'complete',{outcome:'Equipment list checked'},updated.updated_at,completion));
+    assert.deepEqual(lateReplay,reopened);
+    const receipts=(await db.query("SELECT request_hash,result FROM public.gwcc_applied_operations WHERE operation_id=$1",[completion])).rows;
+    assert.equal(receipts[0].request_hash.length,64);assert.deepEqual(receipts[0].result,{kind:'follow_up_task',task_id:id});
+  }finally{await db.close();}
+});
+
+test('pastoral task privacy survives staff role changes, reassignment and idempotency replay; staff cannot delegate outside their authority',async()=>{
+  const db=await setupDatabase();
+  try{
+    await reviewedRole(db,other,'pastor');const privateId=taskId(),privateOp=operation();
+    const pastoral=await asUser(db,other,()=>taskAction(db,privateId,'create',{...generalTask(other),kind:'pastoral',title:'Confidential pastoral check-in'},null,privateOp));
+    await reviewedRole(db,member,'administrator');
+    await db.exec(`INSERT INTO auth.mfa_factors VALUES('${member}','${member}','totp','verified'); INSERT INTO auth.sessions VALUES('${member}','${member}','${member}','aal2',NULL);`);
+    await asUser(db,member,async()=>{
+      assert.deepEqual(await taskList(db),[]);await assert.rejects(taskAction(db,privateId,'complete',{outcome:'Outside pastoral access'},pastoral.updated_at),/outside your access/);
+      await assert.rejects(taskAction(db,taskId(),'create',{...generalTask(member),kind:'pastoral'}),/category is outside/);
+      const people=(await db.query("SELECT public.gwcc_follow_up_people('visitor') AS result")).rows[0].result;assert.ok(people.every(person=>Object.keys(person).sort().join(',')==='id,name,role'));
+    });
+    await reviewedRole(db,other,'finance_officer');
+    await asUser(db,other,async()=>{
+      assert.deepEqual(await taskList(db),[]);
+      await assert.rejects(taskAction(db,privateId,'create',{...generalTask(other),kind:'pastoral',title:'Confidential pastoral check-in'},null,privateOp),/outside your access/);
+      await assert.rejects(taskAction(db,taskId(),'create',generalTask(root)),/Only administrators may delegate/);
+      assert.deepEqual((await db.query("SELECT data FROM public.gwcc_documents WHERE namespace='follow_up_tasks'")).rows,[]);
+    });
+    const assignedId=taskId(),task=await asUser(db,root,()=>taskAction(db,assignedId,'create',generalTask(other)));
+    const startOp=operation(),started=await asUser(db,other,()=>taskAction(db,assignedId,'start',{},task.updated_at,startOp));
+    await asUser(db,root,()=>taskAction(db,assignedId,'update',{assigned_to_id:root},started.updated_at));
+    await asUser(db,other,()=>assert.rejects(taskAction(db,assignedId,'start',{},task.updated_at,startOp),/outside your access/));
+    await db.exec(`UPDATE public.profiles SET is_active=false WHERE id='${other}'`);
+    await asUser(db,other,()=>assert.rejects(taskList(db),/reviewed staff/));
+    await asUser(db,root,()=>assert.rejects(taskList(db),/reviewed staff/),{aal:'aal1',session_id:root,role:'authenticated'});
+    await db.exec('SET ROLE anon');await assert.rejects(db.query('SELECT public.gwcc_follow_up_list()'),/permission denied/);await db.exec('RESET ROLE');
+  }finally{await db.close();}
+});
+
+test('visitor tasks reject duplicate open assignments, unsupported links and false conversion; task completion does not change membership',async()=>{
+  const db=await setupDatabase();
+  try{
+    await db.exec("INSERT INTO public.visitors(id,full_name,phone,visit_date,service_attended) VALUES('task-visitor','Synthetic Visitor','0240000001','2026-10-16','Sunday');");
+    const create={...generalTask(root),kind:'visitor',source_type:'visitor',source_id:'task-visitor'},id=taskId();
+    const task=await asUser(db,root,()=>taskAction(db,id,'create',create));
+    await asUser(db,root,async()=>{
+      await assert.rejects(taskAction(db,taskId(),'create',create),/open task already exists/);
+      await assert.rejects(apply(db,[upsert('visitors',{id:'task-visitor',follow_up_status:'converted_to_member'})]),/member enrollment flow/);
+      await assert.rejects(taskAction(db,id,'update',{source_type:'pastoral_care'},task.updated_at),/category and linked record are fixed/);
+      await assert.rejects(taskAction(db,taskId(),'create',{...generalTask(root),source_type:'pastoral_care',source_id:'task-visitor'}),/General tasks/);
+    });
+    const done=await asUser(db,root,()=>taskAction(db,id,'complete',{outcome:'Called and agreed next steps'},task.updated_at));
+    assert.equal((await db.query("SELECT follow_up_status FROM public.visitors WHERE id='task-visitor'")).rows[0].follow_up_status,'new');
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM public.members')).rows[0].n,0);
+    const next=await asUser(db,root,()=>taskAction(db,taskId(),'create',create));
+    await asUser(db,root,()=>assert.rejects(taskAction(db,id,'reopen',{outcome:'Must not duplicate assignment'},done.updated_at),/already has an open task/));
+    await asUser(db,root,()=>taskAction(db,next.id,'cancel',{outcome:'Scheduling corrected'},next.updated_at));
+    await db.exec("UPDATE public.visitors SET follow_up_status='closed' WHERE id='task-visitor'");
+    await asUser(db,root,()=>assert.rejects(taskAction(db,id,'reopen',{outcome:'Visitor no longer available'},done.updated_at),/no longer available/));
+  }finally{await db.close();}
+});
+
+test('visitor interaction logging appends concurrent notes atomically, authenticates the recorder and preserves retry history in complete recovery coverage',async()=>{
+  const db=await setupDatabase();
+  try{
+    await db.exec("INSERT INTO public.visitors(id,full_name,phone,visit_date,service_attended,notes) VALUES('logged-visitor','Synthetic Visitor','0240000001','2026-10-16','Sunday','Earlier note');");
+    const today=new Date().toISOString().slice(0,10),record=async(id,summary,patch={})=>(await db.query('SELECT public.gwcc_log_visitor_follow_up($1,$2,$3) AS result',[id,'logged-visitor',JSON.stringify({date:today,channel:'phone_call',status:'follow_up_required',summary,actor_id:member,minister:'Fabricated caller',...patch})])).rows[0].result;
+    const request=operation();
+    await asUser(db,root,async()=>{
+      await Promise.all([record(request,'First real interaction'),record(operation(),'Second real interaction')]);
+      const notes=(await db.query("SELECT notes FROM public.visitors WHERE id='logged-visitor'")).rows[0].notes;
+      assert.match(notes,/Earlier note/);assert.match(notes,/First real interaction/);assert.match(notes,/Second real interaction/);assert.ok(!notes.includes('Fabricated caller'));
+      assert.equal((await record(request,'First real interaction')).notes,notes);await assert.rejects(record(request,'Changed interaction'),/reused with different/);
+      await assert.rejects(record(operation(),'Invalid conversion',{status:'converted_to_member'}),/valid interaction/);
+      await assert.rejects(record(operation(),'Future contact',{date:'2999-01-01'}),/dated in the future/);
+      const history=(await db.query("SELECT public.gwcc_visitor_follow_up_history('logged-visitor') AS result")).rows[0].result;
+      assert.equal(history.length,2);assert.ok(history.every(event=>event.actor_id===root));
+      await assert.rejects(apply(db,[upsert('visitor_interactions',{id:'forged',summary:'Fake history'})]),/Unknown table/);
+    });
+    await reviewedRole(db,other,'finance_officer');await asUser(db,other,async()=>{
+      await assert.rejects(record(operation(),'Not authorised'),/follow-up access/);
+      await assert.rejects(db.query("SELECT public.gwcc_visitor_follow_up_history('logged-visitor')"),/follow-up access/);
+    });
+    const id=taskId();await asUser(db,root,async()=>{
+      await taskAction(db,id,'create',generalTask(root));
+      const backup=(await db.query('SELECT public.gwcc_backup_create() AS id')).rows[0].id;
+      const data=(await db.query('SELECT public.gwcc_backup_export($1) AS result',[backup])).rows[0].result;
+      const docs=JSON.parse(data.payload_text).tables['public.gwcc_documents'];assert.equal(docs.filter(row=>row.namespace==='visitor_interactions').length,2);assert.equal(docs.filter(row=>row.namespace==='follow_up_tasks').length,1);
+      const rehearsal=(await db.query('SELECT public.gwcc_backup_rehearse($1) AS result',[backup])).rows[0].result;assert.equal(rehearsal.tables_checked,34);
+    });
+  }finally{await db.close();}
+});

@@ -1,6 +1,9 @@
 import React from 'react';
 import { X, Cake, Phone, MessageCircle, AlertCircle, Sparkles, ArrowRight, UserCheck, Heart } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import {useFollowUp} from '../contexts/FollowUpContext';
+import {openTask} from '../lib/followUp';
+import {ghanaToday} from '../lib/financeViewUtils';
 import { useChurchData } from '../contexts/ChurchDataContext';
 
 interface NotificationModalProps {
@@ -12,6 +15,8 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({ isOpen, on
   const navigate = useNavigate();
   const { members, visitors, prayerRequests, pledges } = useChurchData();
 
+  const {tasks}=useFollowUp();
+  const dueTasks=tasks.filter(task=>openTask(task)&&task.due_date<=ghanaToday()).sort((a,b)=>a.due_date.localeCompare(b.due_date));
   if (!isOpen) return null;
 
   // Check upcoming birthdays (in September / current month or near dates)
@@ -58,6 +63,7 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({ isOpen, on
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <button onClick={()=>{navigate('/tasks');onClose();}} className="w-full text-left rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-950 p-4"><strong className="block text-sm">Follow-up tasks due ({dueTasks.length})</strong><span className="block text-xs mt-1">{dueTasks.length?dueTasks.slice(0,3).map(task=>task.title).join(' · '):'Open the Task Centre to assign and track follow-up work.'}</span></button>
           {/* Upcoming Birthdays Section */}
           <div className="p-3.5 bg-amber-50/70 border border-amber-200/80 rounded-xl space-y-2">
             <div className="flex items-center justify-between">

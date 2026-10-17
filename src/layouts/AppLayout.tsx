@@ -93,6 +93,7 @@ export const AppLayout: React.FC = () => {
   const getRequiredModuleForPath = (pathname: string): { module: string; label: string } | null => {
     const clean = pathname.toLowerCase();
     if (clean === '/' || clean === '') return null; // Dashboard is core
+    if (clean.startsWith('/tasks')) return {module:'tasks',label:'Follow-up Task Centre'};
     if (clean.startsWith('/users')) return { module: 'users', label: 'Staff Directory & Access Control' };
     if (clean.startsWith('/church-finance') || clean.startsWith('/finance')) return { module: 'finance', label: 'Church Treasury & Finance' };
     if (clean.startsWith('/giving')) return { module: 'giving', label: 'Member Giving & Tithes' };

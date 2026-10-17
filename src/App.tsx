@@ -1,6 +1,7 @@
 import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import {FollowUpProvider} from './contexts/FollowUpContext';
 import { ChurchDataProvider } from './contexts/ChurchDataContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { ThemeProvider } from './contexts/ThemeContext';
@@ -12,6 +13,7 @@ import { OfflineConnectivityBanner } from './components/OfflineConnectivityBanne
 // Code-split pages with React.lazy for fast initial bundle and optimal performance
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
 const MembersPage = lazy(() => import('./pages/MembersPage').then(m => ({ default: m.MembersPage })));
+const TasksPage=lazy(()=>import('./pages/TasksPage').then(m=>({default:m.TasksPage})));
 const VisitorsPage = lazy(() => import('./pages/VisitorsPage').then(m => ({ default: m.VisitorsPage })));
 const AttendancePage = lazy(() => import('./pages/AttendancePage').then(m => ({ default: m.AttendancePage })));
 const ServicesPage = lazy(() => import('./pages/ServicesPage').then(m => ({ default: m.ServicesPage })));
@@ -44,6 +46,7 @@ export default function App() {
           <AuthProvider>
             <ChurchDataProvider>
               <ToastProvider>
+                <FollowUpProvider>
                 <OfflineConnectivityBanner />
                 <Suspense fallback={<LoadingFallback />}>
                   <SecurityBoundary><Routes>
@@ -56,6 +59,7 @@ export default function App() {
                     <Route index element={<DashboardPage />} />
                     <Route path="members" element={<MembersPage />} />
                     <Route path="members/:memberId" element={<MembersPage />} />
+                    <Route path="tasks" element={<TasksPage/>}/>
                     <Route path="visitors" element={<VisitorsPage />} />
                     <Route path="attendance" element={<AttendancePage />} />
                     <Route path="services" element={<ServicesPage />} />
@@ -79,6 +83,7 @@ export default function App() {
                   </Route>
                 </Routes></SecurityBoundary>
               </Suspense>
+                </FollowUpProvider>
             </ToastProvider>
           </ChurchDataProvider>
         </AuthProvider>

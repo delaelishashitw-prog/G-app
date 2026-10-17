@@ -592,6 +592,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       applyData(result.data);
       if(!result.success) {setSupabaseStatus('error');setSupabaseError(result.errors.join('; '));return {success:false,source:'supabase',message:result.errors.join('; ')};}
       const now=new Date();setLastRefreshedAt(now);setLastSyncTime(now.toISOString());setSupabaseStatus('connected');setSupabaseError(null);
+      window.dispatchEvent(new Event('gwcc-refresh-follow-ups'));
       return {success:true,source:'supabase',message:'Church records refreshed; unsent local changes preserved.'};
     } finally {setIsRefreshing(false);}
   },[isAuthenticated,currentUser.id,applyData]);

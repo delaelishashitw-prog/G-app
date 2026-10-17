@@ -52,7 +52,7 @@ export const EditVisitorModal: React.FC<EditVisitorModalProps> = ({
         how_heard: visitor.how_heard || 'Friend / Family',
         prayer_request: visitor.prayer_request || '',
         follow_up_status: visitor.follow_up_status || 'new',
-        assigned_to_name: visitor.assigned_to_name || 'Pastor David Osei-Tutu',
+        assigned_to_name: visitor.assigned_to_name || '',
         notes: visitor.notes || '',
       });
     }
@@ -230,7 +230,7 @@ export const EditVisitorModal: React.FC<EditVisitorModalProps> = ({
                 <option value="follow_up_required">Follow-Up Required</option>
                 <option value="contacted">Contacted (In Progress)</option>
                 <option value="returning_visitor">Returning Visitor</option>
-                <option value="converted_to_member">Converted to Member</option>
+                <option value="converted_to_member" disabled={visitor?.follow_up_status!=='converted_to_member'}>Converted to Member</option>
                 <option value="closed">Closed / Inactive</option>
               </select>
             </div>

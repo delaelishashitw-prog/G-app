@@ -28,6 +28,8 @@ import {
   Landmark,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import {useFollowUp} from '../contexts/FollowUpContext';
+import {overdueTask} from '../lib/followUp';
 import { useChurchData } from '../contexts/ChurchDataContext';
 
 interface SidebarProps {
@@ -46,6 +48,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { canAccess, currentUser, logout } = useAuth();
   const { visitors, prayerRequests, welfareClaims, rosterConflicts, pastoralVisitations, members } = useChurchData();
   const navigate = useNavigate();
+  const {tasks}=useFollowUp();
+  const overdueTasks=tasks.filter(task=>overdueTask(task)).length;
 
   const pendingVisitorsCount = visitors.filter(
     (v) => v.follow_up_status === 'new' || v.follow_up_status === 'follow_up_required'
@@ -85,6 +89,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       group: 'Core Administration',
       items: [
         { name: 'Dashboard', path: '/', icon: LayoutDashboard, module: 'dashboard' },
+        {name:'Task Centre',path:'/tasks',icon:CalendarCheck,module:'tasks',badge:overdueTasks||undefined,badgeColor:'bg-rose-600 text-white'},
         { name: 'Members', path: '/members', icon: Users, module: 'members' },
         {
           name: 'Visitors',
