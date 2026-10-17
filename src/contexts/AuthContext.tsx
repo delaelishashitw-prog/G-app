@@ -208,7 +208,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (ticket !== generation.current) return;
       // A different identity must never inherit the previous user's cached records.
       const previousId = sessionStorage.getItem('gwcc_cache_owner');
-      if (previousId && previousId !== profile.id) clearPrivateCache();
+      if (previousId && previousId !== profile.id) clearPrivateCache(previousId);
       sessionStorage.setItem('gwcc_cache_owner', profile.id);
       if(!security.satisfied)clearPrivateCache(profile.id);
       await setSyncIdentity(security.satisfied?profile.id:null,security.satisfied?profile.role:null);
@@ -243,7 +243,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }).catch(() => { if (alive) { resetIdentity(); setIsAuthLoading(false); } });
     const { data: { subscription } } = client.auth.onAuthStateChange((_event, nextSession) => {
       if(_event==='SIGNED_IN' && nextSession?.access_token!==validatedToken.current){
-        generation.current++;setSecurityStatus(null);setIsAuthLoading(true);void setSyncIdentity(null);
+        generation.current++;setSecurityStatus(null);setIsAuthLoading(true);clearPrivateCache();
       }
       // Supabase holds an auth lock while dispatching this callback. Do DB work afterwards.
       queueMicrotask(() => { if (alive) hydrate(nextSession).catch(() => {}); });

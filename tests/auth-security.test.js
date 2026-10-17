@@ -11,7 +11,7 @@ import {staffHandler} from '../server/staff.js';
 import {staffWebHandler} from '../server/staffWeb.js';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
-function storage(){const items=new Map();return {getItem:key=>items.get(key)??null,setItem:(key,value)=>items.set(key,String(value)),removeItem:key=>items.delete(key),clear:()=>items.clear()};}
+function storage(){const items=new Map();return {getItem:key=>items.get(key)??null,setItem(key,value){items.set(key,String(value));this[key]=String(value);},removeItem(key){items.delete(key);delete this[key];},clear(){for(const key of items.keys())delete this[key];items.clear();}};}
 globalThis.localStorage=storage();globalThis.sessionStorage=storage();
 globalThis.window={location:{origin:'https://app.example.test'},addEventListener(){},removeEventListener(){},dispatchEvent(){},setInterval,clearInterval};
 globalThis.document={visibilityState:'visible',addEventListener(){},removeEventListener(){}};
@@ -208,9 +208,12 @@ test('a new password sign-in immediately suspends the old verified session while
  client.channel=()=>({on(){return this;},subscribe(){return this;}});client.removeChannel=()=>{};
  const auth=await mountAuth(client);
  try{
-  assert.equal(auth.value.isAuthenticated,true);hold=true;
+  assert.equal(auth.value.isAuthenticated,true);
+  const readCache=`gwcc_cache_${user.id}_members`,pending=`gwcc_outbox_v2_${user.id}`;localStorage.setItem(readCache,'previous private records');localStorage.setItem(pending,'pending work retained');
+  hold=true;
   await act(async()=>{listener('SIGNED_IN',next);});
   assert.equal(auth.value.isAuthenticated,false);assert.equal(auth.value.canAccess('finance'),false);assert.equal(auth.value.isAuthLoading,true);
+  assert.equal(localStorage.getItem(readCache),null);assert.equal(localStorage.getItem(pending),'pending work retained');
   await act(async()=>{await auth.value.logout();});assert.equal(auth.value.currentUser.id,'');
   await act(async()=>{release();});assert.equal(auth.value.currentUser.id,'');assert.equal(auth.value.isAuthenticated,false);
  }finally{await auth.unmount();}
