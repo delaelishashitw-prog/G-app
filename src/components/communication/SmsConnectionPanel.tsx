@@ -103,14 +103,14 @@ export const SmsConnectionPanel:React.FC<{draft:CommunicationRecord|null;reviewR
     {draft&&canSend&&<div ref={reviewPanel} tabIndex={-1} role="region" aria-label="Review SMS submission" className="scroll-mt-24 space-y-3 border-2 border-emerald-700 rounded-xl p-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">
       <h3 className="font-semibold break-words [overflow-wrap:anywhere]">Review SMS: {draft.title}</h3>{reviewing&&<p className="text-sm">Checking the current audience…</p>}{reviewError&&<p role="alert" className="text-sm text-rose-800">{reviewError}</p>}
       {review&&<>
-        <p className="text-sm">From <strong>{review.preview.sender}</strong> · {review.preview.recipients.length} Ghana mobile recipients</p>
+        <p className="text-sm">From <strong>{review.preview.sender}</strong> · {review.preview.recipients.length} Ghana mobile {review.preview.recipients.length===1?'recipient':'recipients'}</p>
         <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm">{review.preview.message}</p>
         <p className="text-xs text-slate-600">Estimated {review.estimate.segments} {review.estimate.encoding} segment(s) per number · {review.estimate.total} total segments. Arkesel determines final charges.</p>
         <details className="text-xs"><summary className="cursor-pointer underline">Review every number and SMS exclusions</summary><div className="max-h-48 overflow-y-auto mt-2 space-y-1">{review.preview.recipients.map(row=><p key={row.id} className="break-words">{row.name} · +{row.phone}</p>)}{review.preview.excluded.map(row=><p key={row.id} className="text-amber-900 break-words">{row.name} — {row.reason}</p>)}</div></details>
         {review.preview.sender!==connection?.sender_id&&<p className="text-xs text-rose-800">Save the draft with the configured approved sender ID before sending.</p>}
         {review.estimate.segments>10||review.estimate.total>500?<p className="text-xs text-rose-800">Shorten this message or reduce the audience to fit the submission limit.</p>:null}
         <label className="flex gap-2 text-xs items-start"><input type="checkbox" checked={consent} disabled={working} onChange={e=>setConsent(e.target.checked)} className="mt-0.5"/>I have permission to message these recipients and accept the SMS charges.</label>
-        <button type="button" onClick={send} disabled={working||!consent||!ready||review.preview.sender!==connection?.sender_id||review.estimate.segments>10||review.estimate.total>500} className="rounded-lg px-3 py-2 bg-emerald-800 text-white text-sm disabled:opacity-50">Confirm and send to {review.preview.recipients.length} numbers</button>
+        <button type="button" onClick={send} disabled={working||!consent||!ready||review.preview.sender!==connection?.sender_id||review.estimate.segments>10||review.estimate.total>500} className="rounded-lg px-3 py-2 bg-emerald-800 text-white text-sm disabled:opacity-50">Confirm and send to {review.preview.recipients.length} {review.preview.recipients.length===1?'number':'numbers'}</button>
       </>}
       <button type="button" disabled={working} onClick={onClose} className={button}>Cancel SMS review</button>
     </div>}

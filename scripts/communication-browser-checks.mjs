@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {communicationPhone} from '../src/lib/communicationUtils.ts';
+import {smsSegments} from '../src/lib/smsSegments.js';
 import {watchSyncStatus,waitForSync,readSavedOutbox} from './sync-browser-utils.mjs';
 
 export async function checkCommunication(browser,{origin,settings,sampleMember}){
@@ -10,6 +12,8 @@ export async function checkCommunication(browser,{origin,settings,sampleMember})
   const session={user,access_token:token,refresh_token:'qa-refresh',expires_at:exp,expires_in:3600,token_type:'bearer'};
   const member=(id,extra={})=>({...sampleMember,id,member_id:'SYNTHETIC-'+id,first_name:'Synthetic',last_name:id,phone:'0240000001',status:'active',is_archived:false,ministry_id:'ministry-a',small_group_id:'group-a',leadership_position:'',...extra});
   const fixture={profiles:[profile],settings:[{id:'gwcc_global_settings',...settings}],members:[member('a'),member('b',{phone:'+233240000001'}),member('c',{is_archived:true,phone:'0240000002'}),member('d',{status:'inactive',phone:'0240000003'}),member('e',{phone:'23324000001'}),member('f',{status:'leader',phone:'0240000004'})],ministries:[{id:'ministry-a',name:'Synthetic Ministry A',leader_name:'Synthetic Leader',meeting_day:'Saturday',meeting_time:'16:00',is_active:true}],small_groups:[{id:'group-a',name:'Synthetic Group A',meeting_location:'Synthetic hall',meeting_day:'Wednesday',meeting_time:'18:00'}],communications:[{id:'legacy-message',title:'Legacy audience',message:'Old synthetic draft',sender_id:'GWCC',channel:'sms',recipient_type:'custom',recipient_count:10,status:'draft',sent_at:today+'T00:00:00Z'}]};
+  fixture.members[0].date_of_birth='1990-'+today.slice(5);
+  fixture.visitors=[{id:'outreach-v1',full_name:'Synthetic Visitor One',phone:'0240000011',visit_date:today,service_attended:'Sunday',follow_up_status:'new'}, {id:'outreach-v2',full_name:'Synthetic Visitor Two',phone:'0240000012',visit_date:today,service_attended:'Sunday',follow_up_status:'new'}];
   async function setup(role='super_admin'){
     const data=structuredClone(fixture);data.profiles[0].role=role;
     const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
@@ -27,15 +31,15 @@ export async function checkCommunication(browser,{origin,settings,sampleMember})
       else if(body.action==='history')result={dispatches:smsHistory};
       else if(body.action==='preview'){
         const record=data.communications.find(row=>row.id===body.draft_id);assert.ok(record);assert.equal(record.updated_at,body.version);
-        const recipients=record.recipient_ids.map(id=>{const person=data.members.find(row=>row.id===id);return {id,name:person.first_name+' '+person.last_name,phone:person.phone==='0240000001'?'233240000001':'233240000004'};});
-        result={preview:{draft_id:record.id,version:record.updated_at,digest:'qa-digest-'+record.updated_at,title:record.title,message:record.message,sender:record.sender_id,recipients,excluded:[]},estimate:{segments:1,encoding:'GSM-7',total:recipients.length}};
+        const recipients=record.recipient_ids.map(id=>{const person=(record.recipient_type==='individual_visitor'?data.visitors:data.members).find(row=>row.id===id);return {id,name:person.full_name||person.first_name+' '+person.last_name,phone:communicationPhone(person.phone)};});
+        result={preview:{draft_id:record.id,version:record.updated_at,digest:'qa-digest-'+record.updated_at,title:record.title,message:record.message,sender:record.sender_id,recipients,excluded:[]},estimate:{...smsSegments(record.message),total:smsSegments(record.message).segments*recipients.length}};
       }else if(['test','send'].includes(body.action)){
         assert.equal(body.confirmed,true);assert.ok(smsReady);
         let dispatch=smsHistory.find(row=>row.id===body.operation_id);const reused=Boolean(dispatch);
         if(!dispatch){
           let snapshot;
           if(body.action==='test'){assert.equal(body.phone,'233240000001');snapshot={title:'SMS connection test',message:smsStatus().test_message,sender:'GWCC',is_test:true,recipients:[{id:'test',name:'Synthetic test recipient',phone:body.phone}]};}
-          else {const record=data.communications.find(row=>row.id===body.draft_id);assert.equal(body.digest,'qa-digest-'+record.updated_at);snapshot={title:record.title,message:record.message,sender:record.sender_id,is_test:false,recipients:record.recipient_ids.map(id=>({id,name:'Synthetic '+id,phone:id==='a'?'233240000001':'233240000004'}))};}
+          else {const record=data.communications.find(row=>row.id===body.draft_id);assert.equal(body.digest,'qa-digest-'+record.updated_at);snapshot={title:record.title,message:record.message,sender:record.sender_id,is_test:false,recipients:record.recipient_ids.map(id=>{const person=(record.recipient_type==='individual_visitor'?data.visitors:data.members).find(row=>row.id===id);return {id,name:person.full_name||person.first_name+' '+person.last_name,phone:communicationPhone(person.phone)};})};}
           dispatch={id:body.operation_id,draft_id:body.draft_id||null,state:'submitted',snapshot,created_at:new Date().toISOString(),estimated_units:snapshot.recipients.length,outcomes:snapshot.recipients.map((r,i)=>({phone:r.phone,provider_id:body.operation_id+'-'+i,status:'accepted'}))};smsHistory.unshift(dispatch);smsWrites.push(body);
         }result={dispatch,reused};
       }else if(body.action==='refresh'){
@@ -67,9 +71,9 @@ export async function checkCommunication(browser,{origin,settings,sampleMember})
     });
     const page=await context.newPage(),errors=[];page.setDefaultTimeout(12000);page.on('pageerror',error=>errors.push(error.message));
     await page.goto(origin+'/communication');await page.getByRole('heading',{name:['super_admin','pastor'].includes(role)?'Communication':'Access Restricted',exact:true}).waitFor();
-    return {context,page,data,requests,reads,errors,smsRequests,smsWrites,setSmsReady:value=>{smsReady=value;},setHistoryFailure:value=>{historyFailure=value;},setReject:value=>{rejectWrites=value;}};
+    return {context,page,data,requests,reads,errors,smsRequests,smsWrites,smsHistory,setSmsReady:value=>{smsReady=value;},setHistoryFailure:value=>{historyFailure=value;},setReject:value=>{rejectWrites=value;}};
   }
-  const {context,page,data,requests,errors,smsRequests,smsWrites,setSmsReady,setHistoryFailure,setReject}=await setup();
+  const {context,page,data,requests,errors,smsRequests,smsWrites,smsHistory,setSmsReady,setHistoryFailure,setReject}=await setup();
   const saved=title=>page.getByRole('article',{name:'Saved message: '+title,exact:true});
   try{
     await page.getByText('2 unique valid phone numbers · 4 excluded records.',{exact:true}).waitFor();
@@ -148,6 +152,33 @@ export async function checkCommunication(browser,{origin,settings,sampleMember})
     const sent=page.getByRole('article',{name:'SMS submission: '+record.title,exact:true});await sent.getByText('0 delivered · 2 awaiting delivery · 0 failed/rejected · 0 unconfirmed',{exact:true}).waitFor();assert.equal(smsWrites.length,2);
     assert.equal(smsRequests.filter(row=>row.action==='send').length,1);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'SMS panel overflows on mobile.');
     if(process.env.SMS_QA_SCREENSHOT){await smsPanel.scrollIntoViewIfNeeded();await page.screenshot({path:process.env.SMS_QA_SCREENSHOT});}
+
+    // Personal outreach starts a new draft and must never inherit a broadcast audience or existing draft ID.
+    await saved(record.title).getByRole('button',{name:'Edit draft',exact:true}).click();
+    const originalDraft=structuredClone(data.communications.find(row=>row.id===record.id));
+    await page.getByRole('button',{name:/Celebrant Blessings/}).click();await page.getByRole('button',{name:'Open Blessing Studio',exact:true}).first().click();
+    const blessing=page.getByRole('dialog',{name:'Personal blessing studio',exact:true});assert.equal(await blessing.getByText('100 units',{exact:true}).count(),0);
+    await blessing.getByRole('button',{name:/Concise SMS/}).click();await blessing.getByRole('button',{name:'Prepare SMS draft',exact:true}).click();await blessing.waitFor({state:'hidden'});
+    assert.equal(await page.getByLabel('Recipients',{exact:true}).inputValue(),'individual_member');assert.equal(await page.getByLabel('Choose contact',{exact:true}).inputValue(),'a');
+    await page.getByRole('button',{name:'Save draft',exact:true}).click();const personalTitle='Birthday Blessing: Synthetic a';await saved(personalTitle).getByText('Draft · cloud confirmed',{exact:true}).waitFor();await waitForSync(page);
+    const personal=data.communications.find(row=>row.title===personalTitle);assert.notEqual(personal.id,record.id);assert.deepEqual(personal.recipient_ids,['a']);assert.equal(personal.recipient_count,1);assert.deepEqual(data.communications.find(row=>row.id===record.id),originalDraft);
+    await page.getByRole('button',{name:'Check connection — no SMS sent',exact:true}).click();await saved(personalTitle).getByRole('button',{name:'Review SMS send',exact:true}).click();await review.getByText(/1 Ghana mobile recipient/).waitFor();
+    await review.getByLabel('I have permission to message these recipients and accept the SMS charges.',{exact:true}).check();await review.getByRole('button',{name:'Confirm and send to 1 number',exact:true}).click();
+    await page.getByRole('article',{name:'SMS submission: '+personalTitle,exact:true}).waitFor();assert.equal(smsWrites.length,3);assert.deepEqual(smsHistory[0].snapshot.recipients.map(row=>row.id),['a']);
+    await page.getByRole('button',{name:/First-Timer Follow-up/}).click();await page.getByRole('button',{name:'Open Welcome Studio',exact:true}).first().click();const welcome=page.getByRole('dialog',{name:'Personal welcome studio',exact:true});
+    assert.ok(!(await welcome.getByLabel('Personal welcome message',{exact:true}).inputValue()).includes('http'));assert.equal(await welcome.getByText('100 units',{exact:true}).count(),0);
+    await welcome.getByRole('button',{name:'Set up welcome video',exact:true}).click();const video=page.getByRole('dialog',{name:'Welcome video setup',exact:true});await video.getByText('No welcome video is configured. Welcome messages will omit the video section.',{exact:true}).waitFor();
+    assert.equal(await video.locator('video,iframe').count(),0);await video.getByLabel('Published welcome video URL',{exact:true}).fill('https://example.test/welcome');await video.getByRole('button',{name:'Save video link',exact:true}).click();
+    await video.getByRole('link',{name:'Open published video',exact:true}).waitFor();assert.equal(await video.getByRole('link',{name:'Open published video',exact:true}).getAttribute('href'),'https://example.test/welcome');await video.press('Escape');await video.waitFor({state:'hidden'});await welcome.waitFor();
+    assert.ok((await welcome.getByLabel('Personal welcome message',{exact:true}).inputValue()).includes('https://example.test/welcome'));await welcome.getByRole('button',{name:'Prepare SMS draft',exact:true}).click();
+    assert.equal(await page.getByLabel('Recipients',{exact:true}).inputValue(),'individual_visitor');assert.equal(await page.getByLabel('Choose contact',{exact:true}).inputValue(),'outreach-v1');
+    await page.getByRole('button',{name:'Save draft',exact:true}).click();const welcomeTitle='First-Timer Welcome: Synthetic Visitor One';await saved(welcomeTitle).getByText('Draft · cloud confirmed',{exact:true}).waitFor();await waitForSync(page);
+    const personalVisitor=data.communications.find(row=>row.title===welcomeTitle);assert.deepEqual(personalVisitor.recipient_ids,['outreach-v1']);assert.equal(personalVisitor.recipient_count,1);assert.notEqual(personalVisitor.id,personal.id);assert.equal(data.communications.find(row=>row.id===personal.id).recipient_type,'individual_member');
+    await page.getByRole('button',{name:'Check connection — no SMS sent',exact:true}).click();await saved(welcomeTitle).getByRole('button',{name:'Review SMS send',exact:true}).click();await review.getByText('Review every number and SMS exclusions',{exact:true}).click();await review.getByText('Synthetic Visitor One · +233240000011',{exact:true}).waitFor();assert.equal(await review.getByText(/Synthetic Visitor Two/).count(),0);assert.equal(smsWrites.length,3);
+    if(process.env.OUTREACH_QA_SCREENSHOT_DIR){for(const button of await page.getByRole('button',{name:'Dismiss toast',exact:true}).all())await button.click();await page.waitForFunction(()=>document.querySelectorAll('button[aria-label="Dismiss toast"]').length===0);}
+    for(const width of [390,1440]){await page.setViewportSize({width,height:width===390?844:1000});await page.waitForFunction(expected=>parseFloat(getComputedStyle(document.querySelector('main').parentElement).paddingLeft)===expected,width===390?0:256);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Personal outreach overflows.');if(process.env.OUTREACH_QA_SCREENSHOT_DIR)await review.screenshot({path:process.env.OUTREACH_QA_SCREENSHOT_DIR+'/outreach-'+width+'.png'});}
+    await review.getByRole('button',{name:'Cancel SMS review',exact:true}).click();
+
     assert.deepEqual(errors,[]);assert.ok(requests.length>0);
     await page.setViewportSize({width:1440,height:1000});await page.goto(origin+'/ministries');await page.getByText('Synthetic Ministry A',{exact:true}).first().waitFor();
     await page.getByRole('button',{name:'Announcement drafts',exact:true}).click();await page.getByLabel('Ministry announcement message',{exact:true}).fill('Synthetic ministry announcement');await page.getByRole('button',{name:'Save announcement draft',exact:true}).click();await page.getByText('Announcement draft saved',{exact:true}).waitFor();await waitForSync(page);
@@ -155,5 +186,5 @@ export async function checkCommunication(browser,{origin,settings,sampleMember})
   }catch(error){fs.mkdirSync('../rollout-check',{recursive:true});await page.screenshot({path:'../rollout-check/sms-browser-failure.png',fullPage:true});fs.writeFileSync('../rollout-check/sms-browser-failure.txt',await page.locator('body').innerText());fs.writeFileSync('../rollout-check/sms-browser-requests.json',JSON.stringify(smsRequests,null,2));throw error;}finally{await context.close();}
   const denied=await setup('attendance_officer');try{assert.equal(denied.reads.includes('communications'),false);assert.equal(await denied.page.getByText('Old synthetic draft',{exact:true}).count(),0);}finally{await denied.context.close();}
   const readOnly=await setup('pastor');try{await readOnly.page.getByRole('heading',{name:'SMS connection · Arkesel',exact:true}).waitFor();assert.equal(await readOnly.page.getByRole('button',{name:'Send one test SMS',exact:true}).count(),0);assert.equal(readOnly.smsWrites.length,0);}finally{await readOnly.context.close();}
-  console.info('Communication browser checks passed: durable drafts, audiences, provider setup, charged test consent, focused mobile/desktop review and reopening, connection-preserving history reload/failure, reviewed sending, duplicate-click prevention, delivery refresh, ministry drafts and role restrictions. Provider requests were synthetic.');
+  console.info('Communication browser checks passed: durable drafts, audiences, provider setup, charged test consent, focused mobile/desktop review and reopening, connection-preserving history reload/failure, reviewed sending, duplicate-click prevention, delivery refresh, ministry drafts and role restrictions. Personal member/visitor recipient isolation, new-draft preservation, real video setup and no fabricated credits passed. Provider requests were synthetic.');
 }

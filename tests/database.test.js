@@ -1044,3 +1044,46 @@ test('visitor interaction logging appends concurrent notes atomically, authentic
     });
   }finally{await db.close();}
 });
+
+test('personal communication drafts and SMS claims resolve exactly one chosen member or visitor and preserve broadcast drafts',async()=>{
+ const db=await setupDatabase();try{
+  let memberDraft,visitorDraft,memberPreview,visitorPreview;
+  await asUser(db,root,async()=>{
+   await apply(db,[upsert('members',{id:'personal-a',first_name:'Other',last_name:'Member',phone:'0240000001',status:'active'}),upsert('members',{id:'personal-b',first_name:'Chosen',last_name:'Member',phone:'+233240000001',status:'active'}),upsert('visitors',{id:'personal-v1',full_name:'Other Visitor',phone:'0240000002',visit_date:'2026-10-17',service_attended:'Sunday',follow_up_status:'new'}),upsert('visitors',{id:'personal-v2',full_name:'Chosen Visitor',phone:'0240000003',visit_date:'2026-10-17',service_attended:'Sunday',follow_up_status:'new'})]);
+   const record=(id,type,target)=>({id,title:'Personal synthetic draft',message:'Hello chosen contact',channel:'sms',recipient_type:type,recipient_group_id:target,recipient_group_name:'Forged display name',recipient_ids:['personal-a','personal-v1'],recipient_count:999,sender_id:'GWCC'});
+   memberDraft=(await apply(db,[upsert('communications',record('personal-member-draft','individual_member','personal-b'))])).rows[0].result[0].record;
+   visitorDraft=(await apply(db,[upsert('communications',record('personal-visitor-draft','individual_visitor','personal-v2'))])).rows[0].result[0].record;
+   assert.deepEqual(memberDraft.recipient_ids,['personal-b']);assert.equal(memberDraft.recipient_count,1);assert.equal(memberDraft.recipient_group_name,'Chosen Member');
+   assert.deepEqual(visitorDraft.recipient_ids,['personal-v2']);assert.equal(visitorDraft.recipient_count,1);assert.equal(visitorDraft.recipient_group_name,'Chosen Visitor');
+   memberPreview=await smsPreview(db,memberDraft);visitorPreview=await smsPreview(db,visitorDraft);
+   assert.deepEqual(memberPreview.recipients.map(row=>row.id),['personal-b']);assert.deepEqual(visitorPreview.recipients.map(row=>row.id),['personal-v2']);
+   const broadcast=(await apply(db,[upsert('communications',{...record('broadcast-preserved','all_members',null),recipient_group_name:null})])).rows[0].result[0].record;
+   assert.deepEqual(broadcast.recipient_ids,['personal-a']);assert.equal(broadcast.recipient_group_id,null);
+   for(const [type,id] of [['individual_member','missing'],['individual_visitor','personal-a'],['individual_member',null]])await assert.rejects(apply(db,[upsert('communications',record('invalid-target-'+String(type)+String(id),type,id))]),/Choose one current/);
+   await assert.rejects(db.query("SELECT * FROM gwcc_private.communication_audience('all_members',NULL)"),/permission denied/);
+  });
+  await smsService(db,async()=>{
+   const id=operation(),first=await smsClaim(db,memberDraft,memberPreview,{id});assert.equal(first.dispatch.snapshot.recipients.length,1);assert.equal(first.dispatch.snapshot.recipients[0].id,'personal-b');assert.equal((await smsClaim(db,memberDraft,memberPreview,{id})).created,false);
+   const visitorClaim=await smsClaim(db,visitorDraft,visitorPreview);assert.equal(visitorClaim.dispatch.snapshot.recipients.length,1);assert.equal(visitorClaim.dispatch.snapshot.recipients[0].id,'personal-v2');
+  });
+  await db.exec("UPDATE public.members SET phone='0240000009' WHERE id='personal-b'");
+  await smsService(db,()=>assert.rejects(smsClaim(db,memberDraft,memberPreview),/phone numbers changed/));
+  await db.exec("UPDATE public.visitors SET follow_up_status='closed' WHERE id='personal-v2'");
+  await asUser(db,root,()=>assert.rejects(smsPreview(db,visitorDraft),/audience changed/));
+ }finally{await db.close();}
+});
+
+test('personal drafts reject unavailable phones or contacts, and the server refuses unresolved name tags before SMS review',async()=>{
+ const db=await setupDatabase();try{
+  await asUser(db,root,async()=>{
+   await apply(db,[upsert('members',{id:'single-active',first_name:'Active',last_name:'Contact',phone:'0240000001',status:'active'}),upsert('members',{id:'single-bad',first_name:'Bad',last_name:'Phone',phone:'024000',status:'active'}),upsert('members',{id:'single-inactive',first_name:'Inactive',last_name:'Contact',phone:'0240000002',status:'inactive'})]);
+   const make=(target)=>({id:'check-'+target,title:'Synthetic personal',message:'Hello selected contact',channel:'sms',recipient_type:'individual_member',recipient_group_id:target,recipient_ids:[],recipient_count:0,sender_id:'GWCC'});
+   for(const target of ['single-bad','single-inactive'])await assert.rejects(apply(db,[upsert('communications',make(target))]),/Choose one current/);
+   const tagged=(await apply(db,[upsert('communications',{...make('single-active'),message:'Hello [First Name]'})])).rows[0].result[0].record;
+   await assert.rejects(smsPreview(db,tagged),/first-name placeholder/);
+   const clean=(await apply(db,[upsert('communications',{...tagged,message:'Hello Active'},tagged.updated_at)])).rows[0].result[0].record;
+   assert.equal((await smsPreview(db,clean)).recipients.length,1);
+   await assert.rejects(apply(db,[upsert('communications',{...clean,message:'Stale edit'},tagged.updated_at)]),/changed on another device/);
+  });
+ }finally{await db.close();}
+});
