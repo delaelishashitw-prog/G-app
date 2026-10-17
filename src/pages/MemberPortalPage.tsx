@@ -253,7 +253,6 @@ export const MemberPortalPage: React.FC = () => {
     recordPledgePayment,
     addPrayerRequest,
     addPastoralCare,
-    addEventAttendee,
     updateMember,
     settings,
     foundationCohorts,
@@ -421,12 +420,7 @@ export const MemberPortalPage: React.FC = () => {
       .filter(
         (g) =>
           g.member_id === activeMember.id ||
-          g.member_id === activeMember.member_id ||
-          (g.donor_name &&
-            activeMember.last_name &&
-            activeMember.first_name &&
-            g.donor_name.toLowerCase().includes(activeMember.last_name.toLowerCase()) &&
-            g.donor_name.toLowerCase().includes(activeMember.first_name.toLowerCase()))
+          g.member_id === activeMember.member_id
       )
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [activeMember, giving]);
@@ -447,8 +441,7 @@ export const MemberPortalPage: React.FC = () => {
     return pledges.filter(
       (p) =>
         p.member_id === activeMember.id ||
-        p.member_id === activeMember.member_id ||
-        (p.member_name && activeMember.last_name && p.member_name.toLowerCase().includes(activeMember.last_name.toLowerCase()))
+        p.member_id === activeMember.member_id
     );
   }, [activeMember, pledges]);
 
@@ -459,8 +452,7 @@ export const MemberPortalPage: React.FC = () => {
       .filter(
         (a) =>
           a.member_id === activeMember.id ||
-          a.member_id === activeMember.member_id ||
-          (a.member_name && activeMember.last_name && a.member_name.toLowerCase().includes(activeMember.last_name.toLowerCase()))
+          a.member_id === activeMember.member_id
       )
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [activeMember, attendance]);
@@ -472,8 +464,7 @@ export const MemberPortalPage: React.FC = () => {
       .filter(
         (p) =>
           p.member_id === activeMember.id ||
-          p.member_id === activeMember.member_id ||
-          (p.requester_name && activeMember.last_name && p.requester_name.toLowerCase().includes(activeMember.last_name.toLowerCase()))
+          p.member_id === activeMember.member_id
       )
       .sort((a, b) => new Date(b.created_at || b.date_submitted).getTime() - new Date(a.created_at || a.date_submitted).getTime());
   }, [activeMember, prayerRequests]);
@@ -508,13 +499,11 @@ export const MemberPortalPage: React.FC = () => {
 
   const memberEventContributions = useMemo(() => {
     if (!activeMember) return [];
-    const memFullName = `${activeMember.first_name} ${activeMember.last_name}`.toLowerCase().trim();
     return welfareEventContributions
       .filter(
         (c) =>
           c.member_id === activeMember.id ||
-          c.member_id === activeMember.member_id ||
-          c.contributor_name.toLowerCase().trim() === memFullName
+          c.member_id === activeMember.member_id
       )
       .sort((a, b) => new Date(b.payment_date).getTime() - new Date(a.payment_date).getTime());
   }, [activeMember, welfareEventContributions]);
@@ -551,12 +540,7 @@ export const MemberPortalPage: React.FC = () => {
       foundationStudents.find(
         (s) =>
           s.member_id === activeMember.id ||
-          s.member_id === activeMember.member_id ||
-          (s.member_name &&
-            activeMember.last_name &&
-            activeMember.first_name &&
-            s.member_name.toLowerCase().includes(activeMember.last_name.toLowerCase()) &&
-            s.member_name.toLowerCase().includes(activeMember.first_name.toLowerCase()))
+          s.member_id === activeMember.member_id
       ) || null
     );
   }, [activeMember, foundationStudents]);
@@ -568,6 +552,7 @@ export const MemberPortalPage: React.FC = () => {
     // Helper to match activeMember with an assigned duty entry
     const isMemberAssigned = (assignedId?: string, assignedName?: string, assignedPhone?: string): boolean => {
       if (!activeMember) return false;
+      if (usesPrivateCloudRoster) return assignedId === activeMember.id || assignedId === activeMember.member_id;
 
       // 1. Exact ID / member_id match
       if (assignedId && assignedId.trim()) {
@@ -917,6 +902,45 @@ export const MemberPortalPage: React.FC = () => {
   const [confirmPortalPin, setConfirmPortalPin] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
+  const initializedProfile = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    const id = activeMember?.id || null;
+    if (initializedProfile.current === id) return;
+    initializedProfile.current = id;
+    setEditPhone(activeMember?.phone || '');
+    setEditEmail(activeMember?.email || '');
+    setEditAddress(activeMember?.residential_address || '');
+    setEditGps(activeMember?.gps_address || '');
+    setEditEmergencyName(activeMember?.emergency_name || '');
+    setEditEmergencyPhone(activeMember?.emergency_phone || '');
+    setNewPortalPin(''); setConfirmPortalPin('');
+  }, [activeMember]);
+
+  const [savingRsvp, setSavingRsvp] = useState<string | null>(null);
+  const [rsvpErrors, setRsvpErrors] = useState<Record<string, string>>({});
+  const [savedRsvps, setSavedRsvps] = useState<Set<string>>(() => new Set());
+  const rsvpInFlight = React.useRef(false);
+  const handleRsvp = async (eventId: string) => {
+    if (!activeMember || currentRole !== 'member' || rsvpInFlight.current) return;
+    const key = `${activeMember.id}:${eventId}`;
+    rsvpInFlight.current = true; setSavingRsvp(eventId);
+    setRsvpErrors(previous => ({...previous, [key]: ''}));
+    try {
+      const client = getSupabaseClient();
+      if (!client) throw new Error('Secure member sign-in is unavailable.');
+      const {data, error} = await client.rpc('gwcc_member_rsvp', {p_event_id: eventId});
+      if (error) throw error;
+      if (!data?.attendees?.some((a: {member_id?: string}) => a.member_id === activeMember.id || a.member_id === activeMember.member_id)) {
+        throw new Error('Registration was not confirmed. Try again to check its status.');
+      }
+      setSavedRsvps(previous => new Set(previous).add(key));
+      toastSuccess('RSVP Confirmed', 'Your event registration has been saved.');
+      await refreshData();
+    } catch (error) {
+      setRsvpErrors(previous => ({...previous, [key]: (error as Error).message || 'Registration could not be confirmed. Try again.'}));
+    } finally { rsvpInFlight.current = false; setSavingRsvp(null); }
+  };
+
   // Handle Member Sign-In
   const handleMemberSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1044,13 +1068,6 @@ export const MemberPortalPage: React.FC = () => {
       toastError('Password Too Short', 'Member account passwords must be at least 12 characters.');
       return;
     }
-    if (
-      usesPrivateCloudRoster &&
-      editEmail.trim().toLowerCase() !== (activeMember.email || '').trim().toLowerCase()
-    ) {
-      toastError('Email Update Required', 'Contact the church office to change the verified email on your secure member account.');
-      return;
-    }
 
     setIsSavingProfile(true);
     try {
@@ -1059,10 +1076,10 @@ export const MemberPortalPage: React.FC = () => {
       const {data:saved,error:profileError}=await client.rpc('gwcc_member_action',{p_action:'profile',p_id:activeMember.id,p_data:{
         phone: editPhone.trim() || activeMember.phone,
         email: editEmail.trim() || activeMember.email,
-        residential_address: editAddress.trim() || activeMember.residential_address,
-        gps_address: editGps.trim() || activeMember.gps_address,
-        emergency_name: editEmergencyName.trim() || activeMember.emergency_name,
-        emergency_phone: editEmergencyPhone.trim() || activeMember.emergency_phone,
+        residential_address: editAddress.trim(),
+        gps_address: editGps.trim(),
+        emergency_name: editEmergencyName.trim(),
+        emergency_phone: editEmergencyPhone.trim(),
       }});
       if(profileError)throw profileError;
       setPortalMember(saved);
@@ -1412,7 +1429,7 @@ export const MemberPortalPage: React.FC = () => {
                 { id: 'ministry', label: 'Ministry & Cell', icon: Users },
                 { id: 'prayers', label: 'Prayers & Pastoral', icon: HeartHandshake },
                 { id: 'events', label: 'Church Events', icon: Calendar },
-                { id: 'profile', label: 'My Profile & PIN', icon: User },
+                { id: 'profile', label: 'My Profile & Security', icon: User },
               ].map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.id;
@@ -3582,11 +3599,11 @@ export const MemberPortalPage: React.FC = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {events.map((ev) => {
-                const isRsvp = ev.attendees?.some(
+                const rsvpKey = `${activeMember.id}:${ev.id}`;
+                const isRsvp = savedRsvps.has(rsvpKey) || ev.attendees?.some(
                   (a) =>
                     a.member_id === activeMember.id ||
-                    a.member_id === activeMember.member_id ||
-                    (a.name && activeMember.last_name && a.name.toLowerCase().includes(activeMember.last_name.toLowerCase()))
+                    a.member_id === activeMember.member_id
                 );
 
                 return (
@@ -3615,6 +3632,7 @@ export const MemberPortalPage: React.FC = () => {
                     </div>
 
                     <div className="pt-2">
+                      {rsvpErrors[rsvpKey] && <p role="alert" className="text-xs text-red-700 mb-2">{rsvpErrors[rsvpKey]}</p>}
                       {isRsvp ? (
                         <div className="w-full py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5">
                           <CheckCircle2 className="w-4 h-4 text-emerald-600" />
@@ -3623,20 +3641,12 @@ export const MemberPortalPage: React.FC = () => {
                       ) : (
                         <button
                           type="button"
-                          onClick={() => {
-                            addEventAttendee(ev.id, {
-                              name: `${activeMember.first_name} ${activeMember.last_name}`,
-                              phone: activeMember.phone,
-                              email: activeMember.email,
-                              member_id: activeMember.id,
-                              role: 'Member',
-                            });
-                            toastSuccess('RSVP Confirmed', `You are registered for ${ev.title}!`);
-                          }}
+                          disabled={currentRole !== 'member' || savingRsvp !== null || ['cancelled', 'completed'].includes(ev.status) || (ev.end_date || ev.start_date) < new Date().toISOString().slice(0,10)}
+                          onClick={() => void handleRsvp(ev.id)}
                           className="w-full py-2 bg-indigo-800 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition shadow-xs flex items-center justify-center gap-1.5"
                         >
                           <CalendarCheck className="w-4 h-4" />
-                          <span>1-Click RSVP for Event</span>
+                          <span>{savingRsvp === ev.id ? 'Saving registration...' : currentRole !== 'member' ? 'Member sign-in required to register' : ['cancelled','completed'].includes(ev.status) || (ev.end_date || ev.start_date) < new Date().toISOString().slice(0,10) ? 'Registration closed' : '1-Click RSVP for Event'}</span>
                         </button>
                       )}
                     </div>
@@ -3661,6 +3671,8 @@ export const MemberPortalPage: React.FC = () => {
             </div>
 
             <form onSubmit={handleSaveProfile} className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-xs space-y-6">
+              {currentRole !== 'member' && <p className="text-sm text-amber-800">Staff preview is for inspection. Members update their own profile after signing in.</p>}
+              <fieldset disabled={currentRole !== 'member'} className="space-y-6">
               {/* Personal Details */}
               <div>
                 <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2">
@@ -3669,10 +3681,11 @@ export const MemberPortalPage: React.FC = () => {
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1">
+                    <label className="block font-bold text-slate-700 mb-1" htmlFor="portal-profile-0">
                       Phone Number (WhatsApp)
                     </label>
                     <input
+                      id="portal-profile-0"
                       type="text"
                       value={editPhone}
                       onChange={(e) => setEditPhone(e.target.value)}
@@ -3681,22 +3694,27 @@ export const MemberPortalPage: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1">
+                    <label className="block font-bold text-slate-700 mb-1" htmlFor="portal-profile-1">
                       Email Address
                     </label>
                     <input
+                      id="portal-profile-1"
                       type="email"
+                      readOnly
+                      aria-describedby="portal-contact-email-help"
                       value={editEmail}
                       onChange={(e) => setEditEmail(e.target.value)}
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     />
+                    <p id="portal-contact-email-help" className="text-xs text-slate-500 mt-1">Contact the church office to change this contact email. Your login email may be different.</p>
                   </div>
 
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1">
+                    <label className="block font-bold text-slate-700 mb-1" htmlFor="portal-profile-2">
                       Residential Address
                     </label>
                     <input
+                      id="portal-profile-2"
                       type="text"
                       value={editAddress}
                       onChange={(e) => setEditAddress(e.target.value)}
@@ -3705,10 +3723,11 @@ export const MemberPortalPage: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1">
+                    <label className="block font-bold text-slate-700 mb-1" htmlFor="portal-profile-3">
                       Ghana Post GPS Digital Address
                     </label>
                     <input
+                      id="portal-profile-3"
                       type="text"
                       placeholder="e.g. GA-183-4921"
                       value={editGps}
@@ -3727,10 +3746,11 @@ export const MemberPortalPage: React.FC = () => {
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1">
+                    <label className="block font-bold text-slate-700 mb-1" htmlFor="portal-profile-4">
                       Emergency Contact Name
                     </label>
                     <input
+                      id="portal-profile-4"
                       type="text"
                       value={editEmergencyName}
                       onChange={(e) => setEditEmergencyName(e.target.value)}
@@ -3739,10 +3759,11 @@ export const MemberPortalPage: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1">
+                    <label className="block font-bold text-slate-700 mb-1" htmlFor="portal-profile-5">
                       Emergency Contact Phone
                     </label>
                     <input
+                      id="portal-profile-5"
                       type="text"
                       value={editEmergencyPhone}
                       onChange={(e) => setEditEmergencyPhone(e.target.value)}
@@ -3764,10 +3785,11 @@ export const MemberPortalPage: React.FC = () => {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1">
+                    <label className="block font-bold text-slate-700 mb-1" htmlFor="portal-profile-6">
                       New Account Password
                     </label>
                     <input
+                      id="portal-profile-6"
                       type="password"
                       placeholder="Enter a new password (12+ characters)"
                       autoComplete="new-password"
@@ -3779,10 +3801,11 @@ export const MemberPortalPage: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1">
+                    <label className="block font-bold text-slate-700 mb-1" htmlFor="portal-profile-7">
                       Confirm New Password
                     </label>
                     <input
+                      id="portal-profile-7"
                       type="password"
                       placeholder="Repeat password to confirm"
                       value={confirmPortalPin}
@@ -3803,6 +3826,7 @@ export const MemberPortalPage: React.FC = () => {
                   <span>{isSavingProfile ? 'Saving Changes...' : 'Save Profile Changes'}</span>
                 </button>
               </div>
+              </fieldset>
             </form>
           </div>
         )}

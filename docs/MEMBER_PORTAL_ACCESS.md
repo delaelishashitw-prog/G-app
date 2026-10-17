@@ -32,3 +32,11 @@ The database links the exact Auth UUID in a transaction. It locks the member and
 Tests cover invitation preflight, literal email matching, existing-account linking, staff/disabled/banned/archived accounts, duplicate/changed identities, retries and partial failures, database authorization and ownership isolation, mobile controls, password reset, and the invitation password setup → member portal flow. Browser fixtures use synthetic identities and mock delivery; no real member email or password is used.
 
 Family detail rows and the application footer wrap on narrow screens so opening a member's Portal Access does not leave an overflowing page behind the dialog.
+
+## Member event registration and profile
+
+Members receive public event details and only their own RSVP through `gwcc_member_events`. Full event rows, other attendees' contact information and event budgets remain available to authorized staff. Member registration uses `gwcc_member_rsvp`; the database derives identity from the verified account, locks the event, preserves existing attendees and returns the saved registration. Exact member IDs (or an existing exact member code) identify an RSVP. Matching names do not establish identity. Retrying an interrupted confirmation does not append another attendee. Cancelled, completed and past events reject new registrations.
+
+The portal confirms registration only after this server response. It displays a retryable error when confirmation fails. Member requests require a connection. Older unsuccessful event changes remain preserved for review in the account's pending storage, but are neither replayed as staff writes nor displayed as confirmed registrations. Cached full event lists from an older client are ignored; refresh or reopen the portal after this release.
+
+Profile fields initialize when the linked member record loads or the inspected member changes. Saving can clear optional addresses and emergency contacts. The contact email is read-only with guidance to contact the church office; it may differ from the Auth login email. Staff preview is read-only for profile editing and event registration. Account passwords continue to be managed through Supabase Auth.
