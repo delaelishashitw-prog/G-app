@@ -1,13 +1,15 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import type { UserProfile, UserRole } from '../types/database.types';
+import {authRequestError} from './authConnectivity';
 
 export const USER_ROLES: UserRole[] = ['super_admin', 'senior_pastor', 'administrator', 'finance_officer', 'pastor', 'ministry_leader', 'attendance_officer', 'data_entry', 'member'];
 
 /** Authorization comes exclusively from the protected profile, never user_metadata. */
 export async function readVerifiedProfile(client: SupabaseClient, user: User): Promise<UserProfile> {
   if (!user.email_confirmed_at) throw new Error('Verify your email address before signing in.');
-  const { data, error } = await client.from('profiles').select('*').eq('id', user.id).single();
-  if (error || !data) throw new Error('Your church account is not activated. Contact the church office.');
+  const { data, error, status } = await client.from('profiles').select('*').eq('id', user.id).single();
+  if(error)throw authRequestError(error,status);
+  if (!data) throw new Error('Your church account is not activated. Contact the church office.');
   if (data.id !== user.id || data.is_active !== true || data.has_login_account === false) {
     throw new Error('This account is inactive. Contact the church office.');
   }

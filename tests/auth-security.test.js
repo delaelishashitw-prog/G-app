@@ -13,7 +13,7 @@ import {staffWebHandler} from '../server/staffWeb.js';
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 function storage(){const items=new Map();return {getItem:key=>items.get(key)??null,setItem(key,value){items.set(key,String(value));this[key]=String(value);},removeItem(key){items.delete(key);delete this[key];},clear(){for(const key of items.keys())delete this[key];items.clear();}};}
 globalThis.localStorage=storage();globalThis.sessionStorage=storage();
-globalThis.window={location:{origin:'https://app.example.test'},addEventListener(){},removeEventListener(){},dispatchEvent(){},setInterval,clearInterval};
+globalThis.window={location:{origin:'https://app.example.test'},addEventListener(){},removeEventListener(){},dispatchEvent(){},setInterval,clearInterval,setTimeout,clearTimeout};
 globalThis.document={visibilityState:'visible',addEventListener(){},removeEventListener(){}};
 const user={id:'22222222-2222-4222-8222-222222222222',email:'member@example.test',email_confirmed_at:'2026-01-01',user_metadata:{role:'super_admin',first_name:'Elisha',last_name:'Richard'}};
 const profile={id:user.id,email:user.email,role:'member',first_name:'Elisha',last_name:'Richard',is_active:true,has_login_account:true};
@@ -232,4 +232,36 @@ test('a member who opts into MFA reaches the code challenge before any member-re
   client.auth.getSession=async()=>({data:{session}});satisfied=true;
   await act(async()=>{await auth.value.refreshSecurity();});assert.equal(auth.value.isAuthenticated,true);assert.equal(auth.value.currentMember.id,'linked-mfa-member');assert.equal(lookups,1);
  }finally{await auth.unmount();}
+});
+
+test('transport failures retain only an already verified unexpired identity; reconnecting restores checks and a revocation still clears access',async()=>{
+ const exp=Math.floor(Date.now()/1000)+3600,token=`x.${Buffer.from(JSON.stringify({exp})).toString('base64url')}.verified-test`;
+ let mode='ok';const session={access_token:token,expires_at:exp,user};
+ const record={...profile,role:'administrator',authorization_reviewed_at:'2026-10-23'};
+ const client=mockClient({getSession:async()=>({data:{session}}),getUser:async()=>mode==='auth-network'?{data:{user:null},error:{name:'AuthRetryableFetchError',status:0,message:'Failed to fetch'}}:{data:{user}}});
+ client.rpc=async()=>mode==='security-network'?{data:null,error:{message:'Service unavailable'},status:503}:mode==='security-denied'?{data:null,error:{message:'Access denied'},status:403}:{data:{role:record.role,required:true,verified_factors:1,satisfied:true}};
+ client.from=()=>({select(){return this;},eq(){return this;},single:async()=>mode==='profile-network'?{data:null,error:{message:'Service unavailable'},status:503}:{data:record},order:async()=>({data:[record]})});
+ client.channel=()=>({on(){return this;},subscribe(){return this;}});client.removeChannel=()=>{};
+ const auth=await mountAuth(client);
+ try{
+  assert.equal(auth.value.isAuthenticated,true);localStorage.setItem(`gwcc_cache_${user.id}_members`,'preserved verified cache');
+  for(mode of ['auth-network','profile-network','security-network']){
+   await act(async()=>auth.value.refreshSecurity());
+   assert.equal(auth.value.isAuthenticated,true,mode);assert.equal(auth.value.currentUser.id,user.id);assert.match(auth.value.connectionNotice,/Connection interrupted/);
+   assert.equal(localStorage.getItem(`gwcc_cache_${user.id}_members`),'preserved verified cache');
+  }
+  mode='ok';await act(async()=>auth.value.refreshSecurity());assert.equal(auth.value.connectionNotice,'');
+  mode='security-denied';await act(async()=>{await assert.rejects(auth.value.refreshSecurity(),/Access denied/);});
+  assert.equal(auth.value.isAuthenticated,false);assert.equal(auth.value.currentUser.id,'');assert.equal(localStorage.getItem(`gwcc_cache_${user.id}_members`),null);
+ }finally{await auth.unmount();}
+});
+
+test('offline cold starts and different identities never inherit a prior authorization, and signed token expiry bounds offline access',async()=>{
+ const {unexpiredVerifiedSession,isTemporaryAuthFailure}=await import('../src/lib/authConnectivity.ts');
+ const exp=Math.floor(Date.now()/1000)-5,token=`x.${Buffer.from(JSON.stringify({exp})).toString('base64url')}.test`;
+ assert.equal(unexpiredVerifiedSession({access_token:token,expires_at:exp+10000,user}),false);
+ assert.equal(isTemporaryAuthFailure({status:403,message:'Failed to fetch'}),false);
+ const client=mockClient({getSession:async()=>({data:{session:{access_token:token,expires_at:exp+10000,user}}}),getUser:async()=>({data:{user:null},error:{name:'AuthRetryableFetchError',status:0,message:'Failed to fetch'}})});
+ const auth=await mountAuth(client,{gwcc_auth_authenticated:'true',gwcc_active_user:JSON.stringify({...profile,role:'super_admin'})});
+ try{assert.equal(auth.value.isAuthenticated,false);assert.equal(auth.value.currentUser.id,'');}finally{await auth.unmount();}
 });

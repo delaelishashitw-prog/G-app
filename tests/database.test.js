@@ -1233,3 +1233,101 @@ test('coordinator rejection requires a reason and does not alter the duty, and r
   await db.exec('SET ROLE anon');await assert.rejects(db.query('SELECT public.gwcc_roster_requests()'),/permission denied/);await db.exec('RESET ROLE');
  }finally{await db.close();}
 });
+
+test('official giving channels require finance approval, expose only payment instructions, safely retry, and hide changed account details',async()=>{
+ const db=await setupDatabase();
+ try{
+  let account,enabled;
+  await asUser(db,root,async()=>{
+   const rows=(await apply(db,[upsert('church_accounts',{id:'giving-bank',name:'Private treasury label',account_type:'bank',account_number:'000000000001',bank_or_provider:'Synthetic Bank',current_balance:1234,currency:'GHS',is_active:true,description:'Private ledger note'}),upsert('church_accounts',{id:'giving-cash',name:'Cash drawer',account_type:'cash_petty',current_balance:0,currency:'GHS'})])).rows[0].result;
+   account=rows.find(row=>row.record.id==='giving-bank').record;
+   assert.deepEqual((await db.query('SELECT public.gwcc_giving_channels() result')).rows[0].result,[]);
+   const catalog=(await db.query('SELECT public.gwcc_giving_channel_accounts() result')).rows[0].result;
+   assert.equal(catalog.length,1);assert.equal(catalog[0].enabled,false);assert.ok(!('current_balance' in catalog[0]));assert.ok(!('description' in catalog[0]));
+   const id=operation(),args=[id,account.id,account.updated_at,null,true,'Greater Works Synthetic Church'];
+   enabled=(await db.query('SELECT public.gwcc_set_giving_channel($1,$2,$3,$4,$5,$6) result',args)).rows[0].result;
+   assert.deepEqual((await db.query('SELECT public.gwcc_set_giving_channel($1,$2,$3,$4,$5,$6) result',args)).rows[0].result,enabled);
+   await assert.rejects(db.query('SELECT public.gwcc_set_giving_channel($1,$2,$3,$4,$5,$6)',[...args.slice(0,5),'Different name']),/reused/);
+   await assert.rejects(db.query('SELECT public.gwcc_set_giving_channel($1,$2,$3,$4,$5,$6)',[operation(),account.id,account.updated_at,null,true,'Stale approval']),/giving channel changed/);
+  });
+  await asUser(db,member,async()=>{
+   const list=(await db.query('SELECT public.gwcc_giving_channels() result')).rows[0].result;
+   assert.equal(list.length,1);assert.deepEqual(Object.keys(list[0]).sort(),['id','account_type','account_number','bank_or_provider','currency','account_name'].sort());
+   assert.equal(list[0].account_name,'Greater Works Synthetic Church');assert.equal((await db.query('SELECT * FROM public.church_accounts')).rows.length,0);
+   assert.equal((await db.query("SELECT * FROM public.gwcc_documents WHERE namespace='official_giving_channels'")).rows.length,0);
+   await assert.rejects(db.query('SELECT public.gwcc_giving_channel_accounts()'),/Finance staff/);
+   await assert.rejects(db.query('SELECT public.gwcc_set_giving_channel($1,$2,$3,$4,$5,$6)',[operation(),account.id,account.updated_at,enabled.updated_at,false,'']),/Finance staff/);
+  });
+  await asUser(db,root,async()=>{
+   account=(await apply(db,[upsert('church_accounts',{...account,account_number:'000000000002'},account.updated_at)])).rows[0].result[0].record;
+   assert.deepEqual((await db.query('SELECT public.gwcc_giving_channels() result')).rows[0].result,[]);
+   const args=[operation(),account.id,account.updated_at,enabled.updated_at,true,'Greater Works Synthetic Church'];
+   await db.query('SELECT public.gwcc_set_giving_channel($1,$2,$3,$4,$5,$6)',args);
+   const published=(await db.query('SELECT public.gwcc_giving_channels() result')).rows[0].result;
+   assert.equal(published[0].account_number,'000000000002');
+   const current=(await db.query('SELECT public.gwcc_giving_channel_accounts() result')).rows[0].result[0];
+   await db.query('SELECT public.gwcc_set_giving_channel($1,$2,$3,$4,$5,$6)',[operation(),account.id,account.updated_at,current.channel_version,false,current.account_name]);
+   assert.deepEqual((await db.query('SELECT public.gwcc_giving_channels() result')).rows[0].result,[]);
+  });
+  assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='giving-bank'")).rows[0].current_balance,'1234.00');
+  assert.equal((await db.query("SELECT count(*)::int n FROM public.audit_logs WHERE action='APPROVE_GIVING_CHANNEL'")).rows[0].n,2);
+  assert.equal((await db.query("SELECT has_function_privilege('anon','public.gwcc_giving_channels()','EXECUTE') allowed")).rows[0].allowed,false);
+ }finally{await db.close();}
+});
+
+test('cell reports save canonical identities and exact totals, preserve report history, enforce roles and never post money',async()=>{
+ const db=await setupDatabase();
+ try{
+  const date=new Date().toISOString().slice(0,10),report={id:'cell-report',group_id:'cell-one',group_name:'Forged name',leader_name:'Forged leader',date,topic:'Synthetic meeting',scripture:'Acts 2:42',attendance_men:3,attendance_women:4,attendance_children:2,attendance_visitors:1,total_attendance:999,offering_amount:25.50,prayer_requests:'Synthetic private prayer',testimonies:'Synthetic testimony',recorded_by_id:member,recorded_by:'Forged actor'};
+  await asUser(db,root,async()=>{
+   await apply(db,[upsert('small_groups',{id:'cell-one',name:'Actual Cell',leader_name:'Actual Leader',meeting_location:'Synthetic address',meeting_day:'Wednesday',meeting_time:'19:00',member_count:0})]);
+   const opid=operation(),changes=[upsert('cell_meeting_reports',report)];
+   const saved=(await apply(db,changes,opid)).rows[0].result;
+   assert.deepEqual((await apply(db,changes,opid)).rows[0].result,saved);
+   assert.equal(saved[0].record.total_attendance,10);assert.equal(saved[0].record.group_name,'Actual Cell');assert.equal(saved[0].record.leader_name,'Actual Leader');assert.equal(saved[0].record.recorded_by_id,root);
+   assert.equal((await db.query("SELECT count(*)::int n FROM public.gwcc_documents WHERE namespace='cell_meeting_reports'")).rows[0].n,1);
+   await assert.rejects(apply(db,[upsert('cell_meeting_reports',{...report,topic:'Rewrite'},saved[0].record.updated_at)]),/preserved/);
+   await assert.rejects(apply(db,[{table:'cell_meeting_reports',id:report.id,operation:'delete'}]),/preserved/);
+   for(const patch of [{attendance_men:-1},{attendance_women:1.5},{offering_amount:'NaN'},{offering_amount:12.345},{date:'2026-02-30'},{group_id:'missing'},{topic:''}])await assert.rejects(apply(db,[upsert('cell_meeting_reports',{...report,id:crypto.randomUUID(),...patch})]));
+  });
+  await db.exec(`UPDATE public.profiles SET role='finance_officer',authorization_reviewed_at=now() WHERE id='${other}'`);
+  for(const id of [member,other])await asUser(db,id,async()=>{
+   assert.equal((await db.query("SELECT * FROM public.gwcc_documents WHERE namespace='cell_meeting_reports'")).rows.length,0);
+   await assert.rejects(apply(db,[upsert('cell_meeting_reports',{...report,id:'unauthorized'})]),/authorization|Not authorized/);
+  });
+  assert.equal((await db.query('SELECT count(*)::int n FROM public.giving')).rows[0].n,0);
+  assert.equal((await db.query('SELECT count(*)::int n FROM public.church_finances')).rows[0].n,0);
+  assert.equal((await db.query("SELECT count(*)::int n FROM public.gwcc_documents WHERE namespace='cell_meeting_reports'")).rows[0].n,1);
+ }finally{await db.close();}
+});
+
+test('saved legacy counseling requests recover with unchanged operation IDs and safely unblock later edits after a lost response',async()=>{
+ const {SyncOutbox}=await import('../src/lib/syncOutbox.ts');
+ const db=await setupDatabase();
+ try{await asUser(db,root,async()=>{
+  let revision=0;const outbox=new SyncOutbox(root,{getItem:()=>null,setItem(){},removeItem(){}},()=>{},{load:async()=>null,save:async(_snapshot,expected)=>{assert.equal(expected,revision);return ++revision;}});
+  const record={id:'old-counseling',member_id:'synthetic-person',member_name:'Synthetic Member',date:new Date().toISOString().slice(0,10),status:'scheduled',key_discussion:'Synthetic private note'};
+  await outbox.enqueue(upsert('pastoral_counseling',record));await outbox.enqueue(upsert('counseling_sessions',record));await outbox.enqueue(upsert('members',{id:'later-member',first_name:'Later',last_name:'Edit',phone:'0240000000'}));
+  const requests=[];let interrupt=true;
+  const transport={async rpc(name,args){requests.push(structuredClone(args));try{const result=(await db.query(`SELECT public.${name}($1,$2) result`,[args.p_operation_id,JSON.stringify(args.p_changes)])).rows[0].result;if(interrupt){interrupt=false;return {data:null,error:{message:'Synthetic response lost'}};}return {data:result,error:null};}catch(error){return {data:null,error:{message:error.message}};}}};
+  assert.equal((await outbox.flush(transport)).pending,3);
+  const status=await outbox.flush(transport);assert.equal(status.success,true);assert.equal(status.pending,0);assert.deepEqual(requests[0],requests[1]);
+  assert.equal((await db.query("SELECT count(*)::int n FROM public.gwcc_documents WHERE namespace='counseling_sessions'")).rows[0].n,1);
+  assert.equal((await db.query("SELECT count(*)::int n FROM public.gwcc_documents WHERE namespace='pastoral_counseling'")).rows[0].n,0);
+  assert.equal((await db.query("SELECT count(*)::int n FROM public.members WHERE id='later-member'")).rows[0].n,1);
+ });}finally{await db.close();}
+});
+
+test('removing ministry or cell assignments persists explicit nulls through JSON and a database refresh',async()=>{
+ const {removeMemberFromMinistry}=await import('../src/features/ministries/ministryStore.ts');
+ const {sanitizeMemberForSupabase}=await import('../src/lib/supabase.ts');
+ const db=await setupDatabase();
+ try{await asUser(db,root,async()=>{
+  const data=(await apply(db,[upsert('ministries',{id:'clear-ministry',name:'Synthetic Ministry',member_count:0}),upsert('small_groups',{id:'clear-cell',name:'Synthetic Cell',meeting_location:'Synthetic address',meeting_day:'Wednesday',meeting_time:'19:00',member_count:0}),upsert('members',{id:'clear-person',first_name:'Synthetic',last_name:'Member',phone:'0240000000',ministry_id:'clear-ministry',ministry_name:'Synthetic Ministry',small_group_id:'clear-cell',small_group_name:'Synthetic Cell'})])).rows[0].result;
+  let members=[data.find(row=>row.table==='members').record],mutation;
+  removeMemberFromMinistry('clear-person',fn=>members=fn(members),()=>{},(table,record)=>mutation=upsert(table,sanitizeMemberForSupabase({...record,small_group_id:null,small_group_name:null}),data.find(row=>row.table==='members').record.updated_at));
+  await apply(db,JSON.parse(JSON.stringify([mutation])));
+  const actual=(await db.query("SELECT ministry_id,ministry_name,small_group_id,small_group_name FROM public.members WHERE id='clear-person'")).rows[0];
+  assert.deepEqual(actual,{ministry_id:null,ministry_name:null,small_group_id:null,small_group_name:null});
+ });}finally{await db.close();}
+});

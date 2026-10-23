@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   Network,
   Users,
@@ -27,27 +27,15 @@ import {
 } from 'lucide-react';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { formatGHS } from '../lib/currencyUtils';
-
-interface CellMeetingReport {
-  id: string;
-  group_id: string;
-  group_name: string;
-  date: string;
-  topic: string;
-  scripture: string;
-  leader_name: string;
-  attendance_men: number;
-  attendance_women: number;
-  attendance_children: number;
-  attendance_visitors: number;
-  total_attendance: number;
-  offering_amount: number;
-  prayer_requests: string;
-  testimonies: string;
-}
+import type {CellMeetingReport} from '../lib/cellReports';
+import {useToast} from '../contexts/ToastContext';
 
 export const SmallGroupsPage: React.FC = () => {
-  const { smallGroups, members, addSmallGroup, updateMember } = useChurchData();
+  const { smallGroups, members, addSmallGroup, updateMember,cellMeetingReports:meetingReports,recordCellMeetingReport } = useChurchData();
+
+  const {info}=useToast();
+  const [reportError,setReportError]=useState(''),[savingReport,setSavingReport]=useState(false);
+  const reportId=useRef(crypto.randomUUID()),reportBusy=useRef(false);
 
   // State
   const [activeTab, setActiveTab] = useState<'cells' | 'reports' | 'zones'>('cells');
@@ -76,71 +64,16 @@ export const SmallGroupsPage: React.FC = () => {
     host_name: '',
   });
 
-  // Cell Meeting Reports state (persisted in local state with realistic seed data)
-  const [meetingReports, setMeetingReports] = useState<CellMeetingReport[]>([
-    {
-      id: 'rep-1',
-      group_id: smallGroups[0]?.id || '1',
-      group_name: smallGroups[0]?.name || 'Joma Grace Center',
-      date: new Date(Date.now() - 3 * 86400000).toISOString().split('T')[0],
-      topic: 'Walking in Supernatural Authority',
-      scripture: 'Luke 10:19',
-      leader_name: smallGroups[0]?.leader_name || 'Bro. Emmanuel Mensah',
-      attendance_men: 5,
-      attendance_women: 8,
-      attendance_children: 4,
-      attendance_visitors: 2,
-      total_attendance: 19,
-      offering_amount: 280.00,
-      prayer_requests: 'Healing for Mama Serwaa; Safe travel for brother Isaac travelling to Kumasi.',
-      testimonies: 'Sister Grace testified of securing a new teaching appointment after 6 months prayer.'
-    },
-    {
-      id: 'rep-2',
-      group_id: smallGroups[1]?.id || '2',
-      group_name: smallGroups[1]?.name || 'Ablekuma Sector Fellowship',
-      date: new Date(Date.now() - 4 * 86400000).toISOString().split('T')[0],
-      topic: 'The Power of Prevailing Prayer',
-      scripture: 'James 5:16b',
-      leader_name: smallGroups[1]?.leader_name || 'Deacon Daniel Osei',
-      attendance_men: 6,
-      attendance_women: 7,
-      attendance_children: 3,
-      attendance_visitors: 1,
-      total_attendance: 17,
-      offering_amount: 215.50,
-      prayer_requests: 'Academic breakthrough for BECE and WASSCE candidates in the fellowship.',
-      testimonies: 'Deacon Osei shared God miraculous provision for church outreach materials.'
-    },
-    {
-      id: 'rep-3',
-      group_id: smallGroups[2]?.id || '3',
-      group_name: smallGroups[2]?.name || 'Weija Foothills Cell',
-      date: new Date(Date.now() - 10 * 86400000).toISOString().split('T')[0],
-      topic: 'Rooted and Grounded in Love',
-      scripture: 'Ephesians 3:17-19',
-      leader_name: smallGroups[2]?.leader_name || 'Sis. Abigail Addo',
-      attendance_men: 4,
-      attendance_women: 9,
-      attendance_children: 5,
-      attendance_visitors: 3,
-      total_attendance: 21,
-      offering_amount: 340.00,
-      prayer_requests: 'Peace in the family of one of the new visitors.',
-      testimonies: 'New family of four received Christ during the home fellowship.'
-    }
-  ]);
-
   // New Report Form
   const [reportForm, setReportForm] = useState({
     date: new Date().toISOString().split('T')[0],
     topic: '',
     scripture: '',
-    attendance_men: 4,
-    attendance_women: 6,
-    attendance_children: 2,
-    attendance_visitors: 1,
-    offering_amount: 150,
+    attendance_men: 0,
+    attendance_women: 0,
+    attendance_children: 0,
+    attendance_visitors: 0,
+    offering_amount: 0,
     prayer_requests: '',
     testimonies: ''
   });
@@ -176,7 +109,7 @@ export const SmallGroupsPage: React.FC = () => {
       ? Math.round((totalAssignedDisciples / totalChurchMembers) * 100)
       : 0;
 
-    const totalReportsOfferings = meetingReports.reduce((acc, r) => acc + (r.offering_amount || 0), 0);
+    const totalReportsOfferings = meetingReports.filter(r=>r.date.slice(0,7)===new Date().toISOString().slice(0,7)).reduce((acc,r)=>acc+(r.offering_amount||0),0);
     const avgAttendance = meetingReports.length > 0
       ? Math.round(meetingReports.reduce((acc, r) => acc + r.total_attendance, 0) / meetingReports.length)
       : 0;
@@ -238,17 +171,18 @@ export const SmallGroupsPage: React.FC = () => {
     if (confirm('Remove this member from the cell fellowship roster?')) {
       if (updateMember) {
         updateMember(memberId, {
-          small_group_id: undefined,
-          small_group_name: undefined
+          small_group_id: null,
+          small_group_name: null
         });
       }
     }
   };
 
   // Handle Submit Meeting Report
-  const handleReportSubmit = (e: React.FormEvent) => {
+  const handleReportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedGroupForReport) return;
+    if (!selectedGroupForReport||reportBusy.current) return;
+    reportBusy.current=true;setSavingReport(true);setReportError('');
 
     const total =
       Number(reportForm.attendance_men || 0) +
@@ -257,7 +191,7 @@ export const SmallGroupsPage: React.FC = () => {
       Number(reportForm.attendance_visitors || 0);
 
     const newRep: CellMeetingReport = {
-      id: `rep-${Date.now()}`,
+      id: reportId.current,
       group_id: selectedGroupForReport.id,
       group_name: selectedGroupForReport.name,
       date: reportForm.date,
@@ -274,20 +208,25 @@ export const SmallGroupsPage: React.FC = () => {
       testimonies: reportForm.testimonies
     };
 
-    setMeetingReports([newRep, ...meetingReports]);
+    try{
+    await recordCellMeetingReport(newRep);
+    reportId.current=crypto.randomUUID();
+    info('Meeting report saved on this device','The sync banner shows cloud confirmation. Reported offerings require a separate confirmed finance receipt.');
     setSelectedGroupForReport(null);
     setReportForm({
       date: new Date().toISOString().split('T')[0],
       topic: '',
       scripture: '',
-      attendance_men: 4,
-      attendance_women: 6,
-      attendance_children: 2,
-      attendance_visitors: 1,
-      offering_amount: 150,
+      attendance_men: 0,
+      attendance_women: 0,
+      attendance_children: 0,
+      attendance_visitors: 0,
+      offering_amount: 0,
       prayer_requests: '',
       testimonies: ''
     });
+    }catch(cause){setReportError((cause as Error).message);}
+    finally{reportBusy.current=false;setSavingReport(false);}
   };
 
   return (
@@ -362,9 +301,9 @@ export const SmallGroupsPage: React.FC = () => {
         <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
             <p className="text-[11px] font-semibold text-slate-500">Average Cell Attendance</p>
-            <p className="text-2xl font-extrabold text-slate-900 mt-1">{stats.avgAttendance || 18}</p>
+            <p className="text-2xl font-extrabold text-slate-900 mt-1">{stats.avgAttendance}</p>
             <p className="text-[10px] text-emerald-600 font-medium flex items-center gap-1 mt-0.5">
-              <TrendingUp className="w-3 h-3" /> Healthy fellowship size
+              <TrendingUp className="w-3 h-3" /> Based on saved meeting reports
             </p>
           </div>
           <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center">
@@ -374,7 +313,7 @@ export const SmallGroupsPage: React.FC = () => {
 
         <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
-            <p className="text-[11px] font-semibold text-slate-500">Cell Offerings (Month)</p>
+            <p className="text-[11px] font-semibold text-slate-500">Reported Offerings (Month)</p>
             <p className="text-2xl font-extrabold text-emerald-800 mt-1">{formatGHS(stats.totalReportsOfferings)}</p>
             <p className="text-[10px] text-slate-500 font-medium flex items-center gap-1 mt-0.5">
               <DollarSign className="w-3 h-3" /> From weekly cell reports
@@ -591,7 +530,7 @@ export const SmallGroupsPage: React.FC = () => {
                       <span>Roster ({membersInGroup.length})</span>
                     </button>
                     <button
-                      onClick={() => setSelectedGroupForReport(group)}
+                      onClick={() => {setReportError('');setSelectedGroupForReport(group);}}
                       className="py-2 px-3 bg-[#064e3b] hover:bg-[#047857] text-white text-xs font-semibold rounded-xl transition flex items-center justify-center gap-1.5 shadow-xs"
                       title="Log Weekly Cell Meeting Report"
                     >
@@ -631,16 +570,17 @@ export const SmallGroupsPage: React.FC = () => {
             <div>
               <h3 className="text-sm font-bold text-slate-900">Weekly Cell Meeting Logs & Attendance</h3>
               <p className="text-xs text-slate-500">
-                Tracked reports submitted by cell leaders including offering and scripture focus.
+                Saved cell reports. Reported offerings do not change treasury balances; finance records confirmed receipts separately.
               </p>
             </div>
 
             <div className="text-xs font-semibold text-emerald-800 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200">
-              Total Cell Giving Recorded: {formatGHS(stats.totalReportsOfferings)}
+              Reported Offerings This Month: {formatGHS(stats.totalReportsOfferings)}
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {!meetingReports.length&&<p className="text-sm text-slate-600">No cell meeting reports have been recorded yet.</p>}
             {meetingReports.map((report) => (
               <div
                 key={report.id}
@@ -655,6 +595,7 @@ export const SmallGroupsPage: React.FC = () => {
                       <BookOpen className="w-4 h-4 text-emerald-700" />
                       {report.topic}
                     </h4>
+                    {report._sync_status==='pending'&&<p className="text-xs text-amber-800 mt-1">Awaiting cloud confirmation</p>}
                     <p className="text-xs text-slate-500 font-mono">Scripture: {report.scripture}</p>
                   </div>
                   <span className="text-xs text-slate-400 font-medium">
@@ -995,7 +936,8 @@ export const SmallGroupsPage: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleReportSubmit} className="p-6 space-y-3.5 text-xs overflow-y-auto flex-1">
+            <form onSubmit={handleReportSubmit} aria-label="Cell meeting report" className="p-6 space-y-3.5 text-xs overflow-y-auto flex-1">
+              {reportError&&<p role="alert" className="text-rose-800">{reportError}</p>}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Meeting Date *</label>
@@ -1122,10 +1064,10 @@ export const SmallGroupsPage: React.FC = () => {
                   Cancel
                 </button>
                 <button
-                  type="submit"
+                  type="submit" disabled={savingReport}
                   className="px-5 py-2 bg-[#064e3b] hover:bg-[#047857] text-white rounded-xl font-bold shadow-md"
                 >
-                  Save Meeting Report
+                  {savingReport?'Saving report…':'Save Meeting Report'}
                 </button>
               </div>
             </form>
@@ -1242,7 +1184,7 @@ export const SmallGroupsPage: React.FC = () => {
                   Cancel
                 </button>
                 <button
-                  type="submit"
+                  type="submit" disabled={savingReport}
                   className="px-5 py-2 bg-[#064e3b] hover:bg-[#047857] text-white rounded-xl font-bold shadow-md"
                 >
                   Create Small Group

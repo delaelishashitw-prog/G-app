@@ -1,11 +1,13 @@
 import type {SupabaseClient} from '@supabase/supabase-js';
 import {USER_ROLES} from './authPolicy';
 import type {UserRole} from '../types/database.types';
+import {authRequestError} from './authConnectivity';
 
 export type SecurityStatus={role:UserRole;required:boolean;verified_factors:number;satisfied:boolean};
 export async function readSecurityStatus(client:SupabaseClient,role:UserRole):Promise<SecurityStatus>{
-  const {data,error}=await client.rpc('gwcc_security_status');
-  if(error || !data || data.role!==role || typeof data.required!=='boolean' || typeof data.satisfied!=='boolean'
+  const {data,error,status}=await client.rpc('gwcc_security_status');
+  if(error)throw authRequestError({...error,message:`Account security could not be checked. ${error.message}`},status);
+  if(!data || data.role!==role || typeof data.required!=='boolean' || typeof data.satisfied!=='boolean'
     || !Number.isInteger(data.verified_factors) || data.verified_factors<0 || !USER_ROLES.includes(data.role)){
     throw new Error('Account security could not be checked. Please reconnect and try again.');
   }

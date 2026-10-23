@@ -47,7 +47,7 @@ export const ScheduleCounselingModal: React.FC<ScheduleCounselingModalProps> = (
 }) => {
   const defaultCounselor = settings.senior_pastor || 'Prophet Elisha K. Richard';
 
-  const [memberId, setMemberId] = useState(editingSession?.member_id || members[0]?.id || '');
+  const [memberId, setMemberId] = useState(editingSession?.member_id || '');
   const [sessionType, setSessionType] = useState<CounselingSessionType>(
     editingSession?.session_type || 'spiritual_deliverance'
   );
@@ -142,11 +142,13 @@ export const ScheduleCounselingModal: React.FC<ScheduleCounselingModalProps> = (
                 Select Member (Counselee) <span className="text-rose-500">*</span>
               </label>
               <select
+                aria-label="Counselee"
                 value={memberId}
                 onChange={(e) => setMemberId(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white font-medium focus:ring-2 focus:ring-emerald-500 outline-hidden"
                 required
               >
+                <option value="">Select a church member</option>
                 {members.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.first_name} {m.last_name} ({m.status || 'Active'}) - {m.phone}

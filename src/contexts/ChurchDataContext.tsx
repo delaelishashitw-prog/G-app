@@ -1,3 +1,4 @@
+import {validateCellReport,type CellMeetingReport} from '../lib/cellReports';
 import { withSyncTransaction, hasPendingChanges } from '../lib/supabase';
 import { createPickupToken, findPickup } from '../lib/childSafety';
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
@@ -299,6 +300,8 @@ interface ChurchDataContextType {
   assignMemberToMinistry: (memberId: string, ministryId: string, ministryName: string, role?: string) => void;
   removeMemberFromMinistry: (memberId: string) => void;
   smallGroups: SmallGroup[];
+  cellMeetingReports: CellMeetingReport[];
+  recordCellMeetingReport: (report:CellMeetingReport)=>Promise<void>;
   addSmallGroup: (group: Omit<SmallGroup, 'id' | 'member_count'>) => SmallGroup;
 
   // Events
@@ -474,6 +477,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [departmentBudgets, setDepartmentBudgets] = useState<DepartmentBudget[]>([]);
   const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [smallGroups, setSmallGroups] = useState<SmallGroup[]>([]);
+  const [cellMeetingReports,setCellMeetingReports]=useState<CellMeetingReport[]>([]);
   const [events, setEvents] = useState<ChurchEvent[]>([]);
   const [pastoralCare, setPastoralCare] = useState<PastoralCareRecord[]>([]);
   const [prayerRequests, setPrayerRequests] = useState<PrayerRequest[]>([]);
@@ -543,6 +547,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     departmentBudgets: setDepartmentBudgets,
     ministries: setMinistries,
     smallGroups: setSmallGroups,
+    cellMeetingReports:setCellMeetingReports,
     events: setEvents,
     pastoralCare: setPastoralCare,
     prayerRequests: setPrayerRequests,
@@ -561,7 +566,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     counselingSessions: setCounselingSessions,
     intercessorySlots: setIntercessorySlots
   };
-  const currentData = { members, visitors, services, attendance, headcounts, giving, campaigns, pledges, expenses, churchAccounts, churchFinances, departmentBudgets, ministries, smallGroups, events, pastoralCare, prayerRequests, communications, auditLogs, welfareContributions, welfareClaims, welfareEvents, welfareEventContributions, childCheckIns, assets, rosterAssignments, foundationCohorts, foundationStudents, pastoralVisitations, counselingSessions, intercessorySlots };
+  const currentData = { members, visitors, services, attendance, headcounts, giving, campaigns, pledges, expenses, churchAccounts, churchFinances, departmentBudgets, ministries, smallGroups, cellMeetingReports, events, pastoralCare, prayerRequests, communications, auditLogs, welfareContributions, welfareClaims, welfareEvents, welfareEventContributions, childCheckIns, assets, rosterAssignments, foundationCohorts, foundationStudents, pastoralVisitations, counselingSessions, intercessorySlots };
   const currentDataRef=React.useRef(currentData); currentDataRef.current=currentData;
   const documentBaseline=React.useRef<Record<string,any[]>>({});
   const incomingDocuments=React.useRef<Record<string,any[]>>({});
@@ -620,6 +625,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     for(const {key,table} of SYNC_TABLES) {
       if(key==='settings') {local.settings=mergePendingRecords('settings',[{id:'gwcc_global_settings',...loadFromStorage('settings',initialSettings)}])[0];continue;}
       if(currentUser.role==='member' && table==='events'){local.events=[];continue;}
+      if(table==='cell_meeting_reports'&&!['super_admin','senior_pastor','administrator','pastor'].includes(currentUser.role)){local.cellMeetingReports=[];continue;}
       (local as any)[key]=table==='communications'&&!canAccess('communication')?[]:mergePendingRecords(table,loadFromStorage(key,[]));
     }
     applyData(local);setDataOwner(`${currentUser.id}:${currentUser.role}`);
@@ -664,7 +670,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if(!isAuthenticated || dataOwner!==`${currentUser.id}:${currentUser.role}`) return;
     saveToStorage('settings',settings);
     for(const [key,rows] of Object.entries(currentData)) saveToStorage(key,rows);
-  },[isAuthenticated,currentUser.id,currentUser.role,dataOwner,settings,members, visitors, services, attendance, headcounts, giving, campaigns, pledges, expenses, churchAccounts, churchFinances, departmentBudgets, ministries, smallGroups, events, pastoralCare, prayerRequests, communications, auditLogs, welfareContributions, welfareClaims, welfareEvents, welfareEventContributions, childCheckIns, assets, rosterAssignments, foundationCohorts, foundationStudents, pastoralVisitations, counselingSessions, intercessorySlots]);
+  },[isAuthenticated,currentUser.id,currentUser.role,dataOwner,settings,members, visitors, services, attendance, headcounts, giving, campaigns, pledges, expenses, churchAccounts, churchFinances, departmentBudgets, ministries, smallGroups, cellMeetingReports, events, pastoralCare, prayerRequests, communications, auditLogs, welfareContributions, welfareClaims, welfareEvents, welfareEventContributions, childCheckIns, assets, rosterAssignments, foundationCohorts, foundationStudents, pastoralVisitations, counselingSessions, intercessorySlots]);
 
   // Modules previously stored only on one device now use the same durable outbox.
   useEffect(()=>{
@@ -1056,6 +1062,17 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const removeMemberFromMinistry = (memberId: string) => {
     removeMemberFromMinistryRecord(memberId, setMembers, logAction, dbSyncUpsert);
+  };
+
+  const recordCellMeetingReport=async(report:CellMeetingReport)=>{
+    if(!isAuthenticated||!['super_admin','senior_pastor','administrator','pastor'].includes(currentUser.role))throw new Error('Cell reporting staff access is required.');
+    validateCellReport(report);
+    if(!currentDataRef.current.smallGroups.some(group=>group.id===report.group_id))throw new Error('Select a saved cell group.');
+    if(currentDataRef.current.cellMeetingReports.some(row=>row.id===report.id))return;
+    const saved={...report,created_at:new Date().toISOString(),recorded_by_id:currentUser.id,recorded_by:`${currentUser.first_name} ${currentUser.last_name}`};
+    const result=await dbSyncUpsert('cell_meeting_reports',saved);
+    if(!result.durable)throw new Error(result.error||'This device could not preserve the report. Keep the form open and retry.');
+    setCellMeetingReports(prev=>[{...saved,_sync_status:'pending'},...prev.filter(row=>row.id!==saved.id)]);
   };
 
   const addSmallGroup = (data: Omit<SmallGroup, 'id' | 'member_count'>): SmallGroup =>
@@ -1497,7 +1514,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       assignMemberToMinistry,
       removeMemberFromMinistry,
       smallGroups,
+      cellMeetingReports,
       addSmallGroup,
+      recordCellMeetingReport,
       events,
       createEvent,
       updateEvent,
@@ -1606,6 +1625,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       pledges,
       ministries,
       smallGroups,
+      cellMeetingReports,
       events,
       pastoralCare,
       prayerRequests,

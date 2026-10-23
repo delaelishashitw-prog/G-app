@@ -124,10 +124,10 @@ export interface Member {
   membership_class_completed: boolean;
   right_hand_of_fellowship_date?: string;
   previous_church?: string;
-  ministry_id?: string;
-  ministry_name?: string;
-  small_group_id?: string;
-  small_group_name?: string;
+  ministry_id?: string | null;
+  ministry_name?: string | null;
+  small_group_id?: string | null;
+  small_group_name?: string | null;
   leadership_position?: string;
 
   // Family & Marital Details

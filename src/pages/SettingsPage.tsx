@@ -1,3 +1,4 @@
+import {GivingChannelsPanel} from '../components/finance/GivingChannels';
 import React, { useState, useEffect } from 'react';
 import {
   Settings as SettingsIcon,
@@ -149,26 +150,6 @@ export const SettingsPage: React.FC = () => {
   const [timezone, setTimezone] = useState(settings.timezone || 'UTC');
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  // Financial Accounts & MoMo Configuration State (persisted in localStorage)
-  const [momoNumber, setMomoNumber] = useState(() => {
-    return localStorage.getItem('gwcc_momo_number') || '';
-  });
-  const [momoAccountName, setMomoAccountName] = useState(() => {
-    return localStorage.getItem('gwcc_momo_name') || '';
-  });
-  const [telecelNumber, setTelecelNumber] = useState(() => {
-    return localStorage.getItem('gwcc_telecel_number') || '';
-  });
-  const [bankName, setBankName] = useState(() => {
-    return localStorage.getItem('gwcc_bank_name') || '';
-  });
-  const [bankAccountNumber, setBankAccountNumber] = useState(() => {
-    return localStorage.getItem('gwcc_bank_account') || '';
-  });
-  const [bankBranch, setBankBranch] = useState(() => {
-    return localStorage.getItem('gwcc_bank_branch') || '';
-  });
-
   // Weekly Services Schedule (persisted in localStorage)
   const [sundayServiceTime, setSundayServiceTime] = useState(() => {
     return localStorage.getItem('gwcc_sunday_time') || '';
@@ -270,17 +251,6 @@ export const SettingsPage: React.FC = () => {
     setSavedSuccess(true);
     toastSuccess('Settings Saved', 'Church profile information updated successfully.');
     setTimeout(() => setSavedSuccess(false), 3000);
-  };
-
-  const handleSaveFinancialConfig = (e: React.FormEvent) => {
-    e.preventDefault();
-    localStorage.setItem('gwcc_momo_number', momoNumber);
-    localStorage.setItem('gwcc_momo_name', momoAccountName);
-    localStorage.setItem('gwcc_telecel_number', telecelNumber);
-    localStorage.setItem('gwcc_bank_name', bankName);
-    localStorage.setItem('gwcc_bank_account', bankAccountNumber);
-    localStorage.setItem('gwcc_bank_branch', bankBranch);
-    toastSuccess('Financial Channels Saved', 'Official MoMo Merchant and Bank account details updated.');
   };
 
   const handleSaveServiceSchedule = (e: React.FormEvent) => {
@@ -1287,119 +1257,7 @@ export const SettingsPage: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 2: MOMO & FINANCIAL ACCOUNTS */}
-      {activeTab === 'finance' && (
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-5 max-w-3xl">
-          <div className="border-b border-slate-100 pb-3">
-            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <Smartphone className="w-5 h-5 text-emerald-700" />
-              Ghana Mobile Money & Bank Accounts Configuration
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              These details are populated onto member digital giving receipts, financial bulletins, and payment voucher records.
-            </p>
-          </div>
-
-          <form onSubmit={handleSaveFinancialConfig} className="space-y-4 text-xs">
-            <div className="p-4 bg-amber-50/60 border border-amber-200 rounded-xl space-y-3">
-              <h3 className="font-bold text-amber-900 text-xs uppercase tracking-wide flex items-center gap-1.5">
-                <Smartphone className="w-4 h-4 text-amber-700" />
-                MTN Mobile Money (MoMo) Merchant
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">MTN Merchant / Number</label>
-                  <input
-                    type="text"
-                    value={momoNumber}
-                    onChange={(e) => setMomoNumber(e.target.value)}
-                    placeholder="Enter mobile money number"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Account / Merchant Name</label>
-                  <input
-                    type="text"
-                    value={momoAccountName}
-                    onChange={(e) => setMomoAccountName(e.target.value.toUpperCase())}
-                    placeholder="Enter merchant account name"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 bg-rose-50/60 border border-rose-200 rounded-xl space-y-3">
-              <h3 className="font-bold text-rose-900 text-xs uppercase tracking-wide flex items-center gap-1.5">
-                <Smartphone className="w-4 h-4 text-rose-700" />
-                Telecel Cash Merchant
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Telecel Cash Number</label>
-                  <input
-                    type="text"
-                    value={telecelNumber}
-                    onChange={(e) => setTelecelNumber(e.target.value)}
-                    placeholder="Enter merchant number"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 bg-blue-50/60 border border-blue-200 rounded-xl space-y-3">
-              <h3 className="font-bold text-blue-900 text-xs uppercase tracking-wide flex items-center gap-1.5">
-                <Landmark className="w-4 h-4 text-blue-700" />
-                Church Bank Account Details
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Bank Name</label>
-                  <input
-                    type="text"
-                    value={bankName}
-                    onChange={(e) => setBankName(e.target.value)}
-                    placeholder="GCB Bank / Ecobank"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Account Number</label>
-                  <input
-                    type="text"
-                    value={bankAccountNumber}
-                    onChange={(e) => setBankAccountNumber(e.target.value)}
-                    placeholder="Enter bank account number"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Branch</label>
-                  <input
-                    type="text"
-                    value={bankBranch}
-                    onChange={(e) => setBankBranch(e.target.value)}
-                    placeholder="Enter bank branch"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-2">
-              <button
-                type="submit"
-                className="px-5 py-2.5 bg-[#064e3b] hover:bg-[#047857] text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center gap-2"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>Save Financial Channels</span>
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+      {activeTab === 'finance' && <GivingChannelsPanel/>}
 
       {/* TAB 3: SERVICES & TIMETABLE */}
       {activeTab === 'services' && (
