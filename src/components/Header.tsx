@@ -285,7 +285,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onOpenAssistant}
             className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-800 to-teal-800 hover:from-emerald-700 hover:to-teal-700 text-white text-xs sm:text-sm font-semibold shadow-xs transition border border-emerald-600/40"
-            title="Open GWCC Pastoral AI Assistant (Gemini 3.8 Flash)"
+            title="Open GWCC Pastoral AI Assistant"
           >
             <Sparkles className="w-4 h-4 text-emerald-300 animate-pulse" />
             <span className="hidden 2xl:inline">AI Assistant</span>

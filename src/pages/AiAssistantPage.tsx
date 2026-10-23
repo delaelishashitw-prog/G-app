@@ -1,5 +1,7 @@
 import { authenticatedFetch } from '../lib/apiClient';
-import React, { useState } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import React, { useRef, useState } from 'react';
+import { AttendanceInsightsPanel } from '../components/AttendanceInsightsPanel';
 import {
   Sparkles,
   BookOpen,
@@ -23,13 +25,23 @@ import {
 import { useChurchData } from '../contexts/ChurchDataContext';
 
 export const AiAssistantPage: React.FC = () => {
-  const { settings, members, visitors, smallGroups, ministries, giving } = useChurchData();
+  const { currentUser } = useAuth();
+  return <AiAssistantWorkspace key={`${currentUser.id}:${currentUser.role}`} />;
+};
+
+const AiAssistantWorkspace: React.FC = () => {
+  const { settings } = useChurchData();
+  const { hasRole, currentUser } = useAuth();
+  // Only improve discoverability here: the backend remains the authority.
+  const canReadAttendanceInsights = hasRole(['super_admin', 'senior_pastor', 'administrator', 'pastor', 'attendance_officer']);
 
   const [activeCategory, setActiveCategory] = useState<'sermon' | 'pastoral' | 'comms' | 'cells' | 'custom'>('sermon');
   const [promptInput, setPromptInput] = useState('');
   const [responseOutput, setResponseOutput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const requestBusy = useRef(false);
+  const [responseModel, setResponseModel] = useState('');
 
   // Pre-configured Studio Templates
   const templates = {
@@ -37,7 +49,7 @@ export const AiAssistantPage: React.FC = () => {
       {
         title: 'Supernatural Abundance & Grace',
         topic: 'Walking in Supernatural Abundance (Ephesians 3:20)',
-        prompt: 'Draft an inspiring 3-point Pentecostal sermon outline on "Walking in Supernatural Abundance" (Ephesians 3:20). Include biblical exegesis, 3 strong supporting scriptures, an authentic Ghanaian real-life faith illustration (e.g. from business, family, or ministry in Accra), and concluding altar call prayer points.',
+        prompt: 'Draft an inspiring 3-point Pentecostal sermon outline on "Walking in Supernatural Abundance" (Ephesians 3:20). Include biblical exegesis, 3 strong supporting scriptures, a clearly labelled hypothetical Ghanaian faith illustration (e.g. from business, family, or ministry in Accra), and concluding altar call prayer points.',
       },
       {
         title: 'Communion & Covenant Blood',
@@ -50,16 +62,16 @@ export const AiAssistantPage: React.FC = () => {
         prompt: 'Generate a biblical, faith-building 10-minute offering exhortation on faithful stewardship and covenant giving for a Ghanaian congregation. Avoid manipulation; ground the message in love, obedience, and divine multiplication.',
       },
       {
-        title: 'Friday All-Night Warfare & Deliverance',
+        title: 'Prophetic Prayer & Deliverance',
         topic: 'Dismantling Foundations of Delay (Psalm 11:3, Colossians 2:14-15)',
-        prompt: 'Provide a dynamic sermon and prophetic prayer outline for our Friday All-Night Vigil at GWCC Joma. Include 7 targeted prayer warfare bulletins for families, careers, and youth advancement.',
+        prompt: 'Provide a dynamic sermon and prophetic prayer outline for a proposed prophetic prayer service at GWCC Joma; use placeholders for the date and time. Include 7 targeted prayer warfare bulletins for families, careers, and youth advancement.',
       },
     ],
     pastoral: [
       {
         title: 'First-Time Visitor Pastoral Care',
         topic: 'Warm Welcome & Personal Follow-Up',
-        prompt: 'Write an empathetic and encouraging pastoral letter from Prophet Elisha K. Richard, Senior Pastor of Greater Works City Church, Joma to a new visitor who attended for the first time. Express heartfelt love, provide church service schedules, and invite them for coffee or prayer.',
+        prompt: 'Write an empathetic and encouraging pastoral letter from Prophet Elisha K. Richard, Senior Pastor of Greater Works City Church, Joma to a new visitor who attended for the first time. Express heartfelt love, use placeholders for unconfirmed service schedules, and offer a voluntary opportunity to connect with the church.',
       },
       {
         title: 'Bereavement & Funeral Condolence',
@@ -81,7 +93,7 @@ export const AiAssistantPage: React.FC = () => {
       {
         title: 'Ghana Bulk SMS: Sunday Prophetic Service',
         topic: 'High-Impact SMS Broadcast (<160 chars)',
-        prompt: 'Generate 3 high-impact, punchy SMS broadcast messages under 160 characters each for Greater Works City Church, Joma, inviting members and neighbors to Sunday Prophetic Celebration Service at 8:30 AM.',
+        prompt: 'Generate 3 high-impact, punchy SMS broadcast messages under 160 characters each for Greater Works City Church, Joma, inviting members and neighbors to Sunday Prophetic Celebration Service at [confirmed Sunday service time].',
       },
       {
         title: 'WhatsApp Weekly Devotional Broadcast',
@@ -91,12 +103,12 @@ export const AiAssistantPage: React.FC = () => {
       {
         title: 'Community Outreach Announcement',
         topic: 'Medical Screening & Community Evangelism',
-        prompt: 'Write a persuasive community announcement inviting residents of Joma, Ablekuma, and surrounding communities to a free community health screening and evangelism crusade hosted by GWCC.',
+        prompt: 'Write a persuasive community announcement inviting residents of Joma, Ablekuma, and surrounding communities to a proposed community health screening and evangelism outreach. Use placeholders for the confirmed date, time, venue and approved medical partner; do not claim the event is scheduled.',
       },
       {
         title: 'Secretariat Official Notice',
         topic: 'Administrative Notice by General Secretary',
-        prompt: 'Draft an official administrative notice from the Church Secretariat signed by General Secretary Tamekloe Clara Gaewornu to all department heads and church members regarding upcoming quarterly church council reviews, ministry calendar deadlines, and compliance requirements.',
+        prompt: 'Draft an official administrative notice from the Church Secretariat with a placeholder for the authorised signatory to all department heads and church members regarding upcoming quarterly church council reviews, ministry calendar deadlines, and compliance requirements.',
       },
     ],
     cells: [
@@ -116,32 +128,19 @@ export const AiAssistantPage: React.FC = () => {
 
   const handleRunPrompt = async (textToRun?: string) => {
     const prompt = (textToRun || promptInput).trim();
-    if (!prompt || isLoading) return;
+    if (!prompt || requestBusy.current) return;
+    requestBusy.current = true;
 
     setIsLoading(true);
     setResponseOutput('');
+    setResponseModel('');
 
     try {
-      const churchContext = {
-        churchName: settings.church_name,
-        seniorPastor: settings.senior_pastor || 'Prophet Elisha K. Richard',
-        generalSecretary: settings.general_secretary || 'Tamekloe Clara Gaewornu',
-        tagline: settings.tagline,
-        location: settings.location,
-        address: settings.address,
-        gpsAddress: settings.gps_address,
-        registeredMembersCount: members.length,
-        visitorsCount: visitors.length,
-        smallGroupsCount: smallGroups.length,
-        ministries: ministries.map((m) => m.name),
-      };
-
       const response = await authenticatedFetch('/api/ai/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt,
-          churchContext,
         }),
       });
 
@@ -151,11 +150,13 @@ export const AiAssistantPage: React.FC = () => {
       }
 
       const data = await response.json();
-      setResponseOutput(data.text || 'No response generated.');
+      setResponseOutput(data.text || 'No draft generated.');
+      setResponseModel(data.model || '');
     } catch (err: any) {
       console.error('AI Generation Error:', err);
       setResponseOutput(`⚠️ **Notice**: ${err.message || 'Unable to contact the AI assistant service at this moment.'}`);
     } finally {
+      requestBusy.current = false;
       setIsLoading(false);
     }
   };
@@ -181,10 +182,10 @@ export const AiAssistantPage: React.FC = () => {
             </span>
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-white">
-            GWCC Pastoral AI Assistant & Studio
+            GWCC Pastoral AI Agent & Studio
           </h1>
           <p className="text-xs text-emerald-100/90 mt-1 max-w-2xl">
-            Powered by <strong>Gemini 3.8 Flash</strong>. Generate theological sermon outlines, pastoral counseling letters, Ghana bulk communications, and community cell fellowship materials tailored for {settings.church_name}.
+            Prepare sermon outlines, general pastoral messages, announcements and cell study materials for {settings.church_name}. All generated content is a draft for staff review.
           </p>
         </div>
 
@@ -197,6 +198,7 @@ export const AiAssistantPage: React.FC = () => {
         </div>
       </div>
 
+      {canReadAttendanceInsights && <AttendanceInsightsPanel key={`${currentUser.id}:${currentUser.role}`} />}
       {/* Main Categories Selector */}
       <div className="flex border-b border-slate-200 gap-2 overflow-x-auto pb-px">
         <button
@@ -220,7 +222,7 @@ export const AiAssistantPage: React.FC = () => {
           }`}
         >
           <HeartHandshake className="w-4 h-4 text-rose-600" />
-          <span>Pastoral Care & Counseling</span>
+          <span>Pastoral Message Drafts</span>
         </button>
 
         <button
@@ -278,13 +280,15 @@ export const AiAssistantPage: React.FC = () => {
 
             <div className="space-y-2.5">
               {(templates[activeCategory] || []).map((item, idx) => (
-                <div
+                <button
+                  type="button"
+                  disabled={isLoading}
                   key={idx}
                   onClick={() => {
                     setPromptInput(item.prompt);
                     handleRunPrompt(item.prompt);
                   }}
-                  className="p-3.5 border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/40 rounded-xl cursor-pointer transition space-y-1 group"
+                  className="w-full text-left p-3.5 border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/40 rounded-xl cursor-pointer transition space-y-1 group disabled:opacity-50"
                 >
                   <div className="flex items-center justify-between">
                     <h4 className="font-bold text-xs text-slate-900 group-hover:text-emerald-950">
@@ -296,7 +300,7 @@ export const AiAssistantPage: React.FC = () => {
                   </div>
                   <p className="text-[11px] text-slate-600 font-medium">{item.topic}</p>
                   <p className="text-[11px] text-slate-400 line-clamp-2 mt-1">{item.prompt}</p>
-                </div>
+                </button>
               ))}
 
               {activeCategory === 'custom' && (
@@ -318,19 +322,22 @@ export const AiAssistantPage: React.FC = () => {
         <div className="lg:col-span-7 space-y-4">
           {/* Prompt Input Box */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
-            <label className="block font-bold text-slate-800 text-xs">
+            <label htmlFor="ai-studio-prompt" className="block font-bold text-slate-800 text-xs">
               Prompt Instructions & Context
             </label>
+            <p className="text-xs text-slate-500">Do not include private member details, counselling notes, prayer requests or financial records. Enter confirmed event dates and times; review every draft before use.</p>
             <textarea
+              id="ai-studio-prompt"
+              maxLength={10000}
               rows={4}
               value={promptInput}
               onChange={(e) => setPromptInput(e.target.value)}
-              placeholder="Enter your sermon topic, counseling need, scripture reference, or question..."
+              placeholder="Enter a sermon topic, scripture reference, or general drafting request..."
               className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-emerald-600 leading-relaxed"
             />
             <div className="flex items-center justify-between pt-1">
               <span className="text-[11px] text-slate-400">
-                Model: <strong className="font-mono text-emerald-800">gemini-3.8-flash</strong>
+                Draft only — review before sharing
               </span>
               <button
                 type="button"
@@ -349,7 +356,7 @@ export const AiAssistantPage: React.FC = () => {
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
                 <FileText className="w-4 h-4 text-emerald-700" />
-                <h3 className="font-bold text-slate-900 text-sm">Generated Ministerial Response</h3>
+                <h3 className="font-bold text-slate-900 text-sm">Ministerial draft — review before sharing</h3>
               </div>
               {responseOutput && (
                 <button
@@ -372,12 +379,13 @@ export const AiAssistantPage: React.FC = () => {
               )}
             </div>
 
+            {responseModel && <p className="text-xs text-slate-500">Model: {responseModel}</p>}
             {isLoading && (
               <div className="p-12 text-center space-y-3">
                 <Loader2 className="w-8 h-8 animate-spin text-emerald-700 mx-auto" />
                 <h4 className="font-bold text-slate-800 text-sm">Formulating Scriptural Output</h4>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  Consulting biblical cross-references, hermeneutical context, and Greater Works City Church ministry voice...
+                  Generating a draft for staff review...
                 </p>
               </div>
             )}

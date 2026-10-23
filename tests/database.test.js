@@ -40,6 +40,28 @@ async function asUser(db,id,fn,claims={aal:'aal2',session_id:id,role:'authentica
   await db.query("SELECT set_config('request.jwt.claims',$1,false)",[JSON.stringify(claims)]);
   try{return await fn();}finally{await db.exec('RESET ROLE');}
 }
+
+test('AI attendance data remains behind actual RLS, reviewed roles, live session and MFA checks',async()=>{
+  const db=await setupDatabase();
+  try {
+    await asUser(db,root,async()=>{
+      await apply(db,[upsert('services',{id:'ai-test-service',name:'Synthetic AI service',type:'sunday',day_of_week:'Sunday',start_time:'08:00',end_time:'10:30'})]);
+      await apply(db,[upsert('attendance',{id:'ai-test-row',service_id:'ai-test-service',service_name:'Synthetic AI service',date:'2026-10-18',member_id:'synthetic-ai-person',status:'present'})]);
+    });
+    const select=()=>db.query("SELECT id,service_id,service_name,date,status,member_id,visitor_id FROM public.attendance WHERE date BETWEEN '2026-10-01' AND '2026-10-21' AND id='ai-test-row'");
+    for(const role of ['super_admin','senior_pastor','administrator','pastor','attendance_officer']) {
+      await db.query('UPDATE public.profiles SET role=$1,authorization_reviewed_at=now() WHERE id=$2',[role,root]);
+      await asUser(db,root,async()=>assert.equal((await select()).rows.length,1,role));
+    }
+    await asUser(db,member,async()=>assert.equal((await select()).rows.length,0,'member'));
+    await db.query('UPDATE public.profiles SET is_active=false WHERE id=$1',[root]);
+    await asUser(db,root,async()=>assert.equal((await select()).rows.length,0,'disabled account'));
+    await db.query("UPDATE public.profiles SET is_active=true,role='administrator' WHERE id=$1",[root]);
+    await asUser(db,root,async()=>assert.equal((await select()).rows.length,0,'MFA required'),{aal:'aal1',session_id:root,role:'authenticated'});
+    await db.query('UPDATE auth.sessions SET not_after=now()-interval \'1 minute\' WHERE user_id=$1',[root]);
+    await asUser(db,root,async()=>assert.equal((await select()).rows.length,0,'expired session'));
+  } finally {await db.close();}
+});
 let op=0;
 const operation=()=>`aaaaaaaa-aaaa-4aaa-8aaa-${String(++op).padStart(12,'0')}`;
 const apply=(db,changes,id=operation())=>db.query('SELECT public.gwcc_apply_mutations($1,$2) AS result',[id,JSON.stringify(changes)]);

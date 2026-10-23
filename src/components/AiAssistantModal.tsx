@@ -1,4 +1,6 @@
 import { authenticatedFetch } from '../lib/apiClient';
+import { useAuth } from '../contexts/AuthContext';
+import { Link } from 'react-router-dom';
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Sparkles,
@@ -33,17 +35,23 @@ interface AiAssistantModalProps {
   initialPrompt?: string;
 }
 
-export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
+export const AiAssistantModal: React.FC<AiAssistantModalProps> = props => {
+  const { currentUser } = useAuth();
+  return <AiAssistantSession key={`${currentUser.id}:${currentUser.role}`} {...props} />;
+};
+
+const AiAssistantSession: React.FC<AiAssistantModalProps> = ({
   isOpen,
   onClose,
   initialPrompt,
 }) => {
-  const { settings, members, visitors, smallGroups, ministries } = useChurchData();
+  const { settings } = useChurchData();
+  const requestBusy = useRef(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
       sender: 'assistant',
-      text: `**Shalom and Blessings!** I am your **GWCC Ministerial AI Assistant**, grounded in biblical scripture and designed for **${settings.church_name}** in Joma, Accra.\n\nHow may I assist your ministry today?\n* 📖 **Sermon Preparation & Outlines**\n* 🕊️ **Pastoral Care & Counseling Messages**\n* 📢 **Announcements & Ghana Bulk SMS Copy**\n* 👥 **Cell Group Lessons & Discipleship Guides**`,
+      text: `**Shalom and Blessings!** I am your **GWCC Ministerial AI Assistant**, grounded in biblical scripture and designed for **${settings.church_name}** in Joma, Accra.\n\nHow may I assist your ministry today?\n* 📖 **Sermon Preparation & Outlines**\n* 🕊️ **General Pastoral Message Drafts**\n* 📢 **Announcements & Ghana Bulk SMS Copy**\n* 👥 **Cell Group Lessons & Discipleship Guides**`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
@@ -71,7 +79,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
     {
       label: 'Sermon Outline: Supernatural Abundance',
       icon: BookOpen,
-      prompt: 'Draft an inspiring 3-point Pentecostal sermon outline on "Walking in Supernatural Abundance" (Ephesians 3:20). Include relevant scriptures, a Ghanaian real-life illustration, and concluding altar call prayer points.',
+      prompt: 'Draft an inspiring 3-point Pentecostal sermon outline on "Walking in Supernatural Abundance" (Ephesians 3:20). Include relevant scriptures, a clearly labelled hypothetical Ghanaian illustration, and concluding altar call prayer points.',
     },
     {
       label: 'Visitor Follow-up WhatsApp Message',
@@ -79,9 +87,9 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
       prompt: 'Write a warm, faith-filled WhatsApp follow-up message to a first-time church visitor who attended Sunday service at Greater Works City Church in Joma.',
     },
     {
-      label: 'Friday All-Night Vigil SMS (<160 chars)',
+      label: 'Prophetic Service SMS (<160 chars)',
       icon: Flame,
-      prompt: 'Draft 3 punchy SMS announcement options under 160 characters for our upcoming Friday Prophetic All-Night Vigil at GWCC Joma.',
+      prompt: 'Draft 3 punchy SMS announcement options under 160 characters for a proposed Prophetic Service at GWCC Joma, using placeholders for the confirmed date and time.',
     },
     {
       label: 'Pastoral Bereavement Condolence',
@@ -97,7 +105,8 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
 
   const handleSendMessage = async (textToSend?: string) => {
     const prompt = (textToSend || inputPrompt).trim();
-    if (!prompt || isLoading) return;
+    if (!prompt || requestBusy.current) return;
+    requestBusy.current = true;
 
     const userMessage: Message = {
       id: `msg-${Date.now()}`,
@@ -111,27 +120,11 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
     setIsLoading(true);
 
     try {
-      // Package church context so AI is grounded in GWCC statistics
-      const churchContext = {
-        churchName: settings.church_name,
-        seniorPastor: settings.senior_pastor || 'Prophet Elisha K. Richard',
-        generalSecretary: settings.general_secretary || 'Tamekloe Clara Gaewornu',
-        tagline: settings.tagline,
-        location: settings.location,
-        address: settings.address,
-        gpsAddress: settings.gps_address,
-        registeredMembersCount: members.length,
-        visitorsCount: visitors.length,
-        smallGroupsCount: smallGroups.length,
-        ministries: ministries.map((m) => m.name),
-      };
-
       const response = await authenticatedFetch('/api/ai/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt,
-          churchContext,
         }),
       });
 
@@ -144,7 +137,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
       const assistantMessage: Message = {
         id: `msg-${Date.now() + 1}`,
         sender: 'assistant',
-        text: data.text || 'I have completed your request, Beloved.',
+        text: data.text ? `Draft — review before sharing\n${data.model ? `Model: ${data.model}\n` : ''}\n${data.text}` : 'No draft was returned. Please try again.',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
 
@@ -159,6 +152,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
       };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
+      requestBusy.current = false;
       setIsLoading(false);
     }
   };
@@ -184,7 +178,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="relative w-full max-w-3xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden h-[90vh] sm:h-[85vh] flex flex-col">
+      <div role="dialog" aria-modal="true" aria-label="GWCC Ministerial AI Assistant" className="relative w-full max-w-3xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden h-[90vh] sm:h-[85vh] flex flex-col">
         {/* Modal Header */}
         <div className="px-5 py-3.5 bg-gradient-to-r from-emerald-950 via-[#064e3b] to-emerald-900 text-white flex items-center justify-between shadow-md">
           <div className="flex items-center gap-2.5">
@@ -195,7 +189,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-bold tracking-tight text-white">GWCC Ministerial AI Assistant</h3>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-[10px] font-mono font-bold text-emerald-200 border border-emerald-400/20">
-                  Gemini 3.8
+                  Drafts only
                 </span>
               </div>
               <p className="text-[11px] text-emerald-200/90">
@@ -213,6 +207,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
               <RotateCcw className="w-4 h-4" />
             </button>
             <button
+              aria-label="Close AI assistant"
               onClick={onClose}
               className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
             >
@@ -221,6 +216,9 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
           </div>
         </div>
 
+        <div className="px-4 py-3 text-xs bg-amber-50 text-amber-950 border-b border-amber-200">
+          Drafts require staff review. Keep private member details, counselling notes, prayer requests and financial records out of prompts. <Link to="/assistant" onClick={onClose} className="underline font-semibold">Open Pastoral AI Agent</Link> for attendance summaries.
+        </div>
         {/* Quick Prompts Bar */}
         <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 overflow-x-auto flex items-center gap-1.5 shrink-0 text-xs">
           <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider shrink-0 flex items-center gap-1 mr-1">
@@ -315,7 +313,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
               </div>
               <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-2 text-slate-600 text-xs">
                 <Loader2 className="w-4 h-4 animate-spin text-emerald-700" />
-                <span>Consulting scriptures & generating ministerial response...</span>
+                <span>Generating a draft for staff review...</span>
               </div>
             </div>
           )}
@@ -336,7 +334,9 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
               type="text"
               value={inputPrompt}
               onChange={(e) => setInputPrompt(e.target.value)}
-              placeholder="Ask for sermon outline, visitor follow-up, prayer points, SMS text..."
+              aria-label="AI drafting prompt"
+              maxLength={10000}
+              placeholder="Sermon outline, general follow-up, prayer points, SMS draft..."
               className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:outline-emerald-600 text-slate-800"
               disabled={isLoading}
             />
@@ -346,12 +346,12 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
               className="px-4 py-2.5 bg-[#064e3b] hover:bg-[#047857] disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-1.5 shrink-0"
             >
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              <span className="hidden sm:inline">Send Prompt</span>
+              <span className="hidden sm:inline">Generate draft</span>
             </button>
           </form>
           <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1.5 px-1">
-            <span>Powered by Gemini 3.8 Flash • Specialized for Greater Works City Church</span>
-            <span>Shift + Enter for new lines</span>
+            <span>AI drafts for staff review • Greater Works City Church</span>
+            <span>Drafts are not sent automatically</span>
           </div>
         </div>
       </div>
