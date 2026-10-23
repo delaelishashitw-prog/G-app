@@ -1,3 +1,4 @@
+import {GivingChannelsPanel} from '../components/finance/GivingChannels';
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -1022,6 +1023,7 @@ export const ChurchFinancePage: React.FC = () => {
       {/* TAB 1: TREASURY & HOLDING ACCOUNTS */}
       {activeTab === 'treasury' && (
         <div className="space-y-6">
+          <GivingChannelsPanel/>
           {churchAccounts.length === 0 ? (
             <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border border-slate-200 dark:border-slate-800 text-center">
               <Landmark className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-600 mb-3" />

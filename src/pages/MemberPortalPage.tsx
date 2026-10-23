@@ -1,3 +1,4 @@
+import {GivingInstructions} from '../components/finance/GivingChannels';
 import {rosterDate,rosterToday,isUpcomingDuty,type RosterSubstituteRequest} from '../lib/rosterUtils';
 import { isActiveTransaction } from '../lib/ledgerUtils';
 import React, { useState, useMemo } from 'react';
@@ -2722,33 +2723,7 @@ export const MemberPortalPage: React.FC = () => {
               )}
             </div>
 
-            {/* Official Church Giving Channels Info */}
-            <div className="bg-gradient-to-r from-slate-900 to-emerald-950 text-white p-6 rounded-3xl border border-emerald-500/30 space-y-4">
-              <h3 className="font-extrabold text-sm text-emerald-300 flex items-center gap-2">
-                <Smartphone className="w-4 h-4" />
-                Greater Works City Church Official Mobile Money Giving Details
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                <div className="bg-white/10 p-3.5 rounded-2xl border border-white/10">
-                  <p className="text-[10px] text-amber-300 uppercase font-bold">MTN Mobile Money</p>
-                  <p className="text-base font-black text-white mt-1">024 456 7890</p>
-                  <p className="text-[11px] text-slate-300">Name: Greater Works City Church</p>
-                  <p className="text-[10px] text-slate-400 mt-1">Ref: {activeMember.member_id} (Tithe/Offering)</p>
-                </div>
-                <div className="bg-white/10 p-3.5 rounded-2xl border border-white/10">
-                  <p className="text-[10px] text-red-300 uppercase font-bold">Telecel Cash</p>
-                  <p className="text-base font-black text-white mt-1">020 876 5432</p>
-                  <p className="text-[11px] text-slate-300">Name: Greater Works City Church</p>
-                  <p className="text-[10px] text-slate-400 mt-1">Ref: {activeMember.member_id}</p>
-                </div>
-                <div className="bg-white/10 p-3.5 rounded-2xl border border-white/10">
-                  <p className="text-[10px] text-blue-300 uppercase font-bold">GCB Bank Cathedral Account</p>
-                  <p className="text-base font-black text-white mt-1">1041130009821</p>
-                  <p className="text-[11px] text-slate-300">Branch: Ablekuma/Joma</p>
-                  <p className="text-[10px] text-slate-400 mt-1">Swift: GCBGHAC</p>
-                </div>
-              </div>
-            </div>
+            <GivingInstructions reference={activeMember.member_id}/>
           </div>
         )}
 

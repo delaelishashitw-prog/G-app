@@ -54,11 +54,11 @@ export function deleteMinistry(
   setMinistries((prev) => prev.filter((ministry) => ministry.id !== id));
   setMembers((prev) =>
     prev.map((member) => {
-      if (member.ministry_id === id || member.ministry_name === ministryName) {
+      if (member.ministry_id ? member.ministry_id === id : member.ministry_name === ministryName) {
         const cleared = {
           ...member,
-          ministry_id: undefined,
-          ministry_name: undefined,
+          ministry_id: null,
+          ministry_name: null,
           updated_at: new Date().toISOString(),
         };
         dbSyncUpsert('members', cleared);
@@ -117,8 +117,8 @@ export function removeMemberFromMinistry(
       const previousMinistry = member.ministry_name || 'Ministry';
       const updated = {
         ...member,
-        ministry_id: undefined,
-        ministry_name: undefined,
+        ministry_id: null,
+        ministry_name: null,
         updated_at: new Date().toISOString(),
       };
       logAction(
