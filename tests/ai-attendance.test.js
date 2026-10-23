@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attendanceInsightsHandler, buildAttendanceSummary, validateAttendancePeriod } from '../server/aiAttendance.js';
 import serverlessHandler from '../api/ai/attendance-insights.js';
+import { HttpError } from '../server/security.js';
 
 const period = { startDate: '2026-10-01', endDate: '2026-10-21' };
 function response() { return { code: 0, headers: {}, body: null, setHeader(key, value) { this.headers[key] = value; }, status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; } }; }
@@ -46,8 +47,8 @@ test('counts unique present entries by service and date without sending personal
 test('denies access if no verified staff authorisation and allows attendance officer for bounded aggregate query', async () => {
   const record = { service_id: 'wed', service_name: 'Wednesday Encounter', date: '2026-10-21', member_id: 'private-123', visitor_id: null, status: 'present' };
   const deny = response();
-  await attendanceInsightsHandler(req(), deny, { authorizeRequest: async () => { throw Object.assign(new Error('Sign-in is required.'), { status: 401 }); } });
-  assert.equal(deny.code, 500); // plain Error is not an HttpError; security errors are HttpError in production
+  await attendanceInsightsHandler(req(), deny, { authorizeRequest: async () => { throw new HttpError(401, 'Sign-in is required.'); } });
+  assert.equal(deny.code, 401);
   const res = response();
   await attendanceInsightsHandler(req(), res, { authorizeRequest: async () => ({ profile: { role: 'attendance_officer' }, client: queryClient([record]) }) });
   assert.equal(res.code, 200);
@@ -64,4 +65,41 @@ test('fails closed rather than presenting incomplete results on database error o
   const large = response();
   await attendanceInsightsHandler(req(), large, { authorizeRequest: async () => ({ profile: { role: 'pastor' }, client: queryClient([], { count: 6000 }) }) });
   assert.equal(large.code, 422);
+});
+
+test('every authorised staff role receives read-only aggregates; unapproved roles never query attendance', async () => {
+  const roles = ['super_admin','senior_pastor','administrator','pastor','attendance_officer'];
+  for (const role of roles) {
+    const res = response(); let reads = 0;
+    const client = { from: (table) => { reads++; return queryClient([]).from(table); } };
+    await attendanceInsightsHandler(req(), res, {authorizeRequest: async (_req, options) => {
+      assert.ok(options.roles.includes(role)); assert.equal(options.bucket, 'ai');
+      return {profile:{role},client};
+    }});
+    assert.equal(res.code, 200, role);
+    assert.equal(reads, 1, role);
+    assert.equal(res.body.totalCheckins, 0, role);
+  }
+  for (const role of ['member','finance_officer','ministry_leader','data_entry']) {
+    const res = response(); let reads = 0;
+    await attendanceInsightsHandler(req(), res, { authorizeRequest: async () => ({
+      profile:{role},client:{from(){reads++;throw Error('Unauthorized database access')}}
+    })});
+    assert.equal(res.code, 403,role); assert.equal(reads,0,role);
+  }
+});
+test('unverified, suspended, expired-session, incorrect-origin and throttled requests cannot read attendance', async () => {
+  for (const status of [401,403,429,503]) {
+    const res = response(); let reads = 0;
+    await attendanceInsightsHandler(req(),res,{authorizeRequest:async()=>{throw new HttpError(status, 'Security check blocked');},
+      client:{from(){reads++;throw Error('Must not read')}}});
+    assert.equal(res.code,status); assert.equal(reads,0);
+  }
+});
+test('rejects invalid date range before consulting attendance records',async()=>{
+  const res=response(); let reads=0;
+  await attendanceInsightsHandler(req({startDate:'2026-09-01',endDate:'2026-10-21'}),res,{
+    authorizeRequest:async()=>({profile:{role:'super_admin'},client:{from(){reads++;throw Error('Must not query')}}})
+  });
+  assert.equal(res.code,400);assert.equal(reads,0);
 });
