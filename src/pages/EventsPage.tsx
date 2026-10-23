@@ -51,7 +51,8 @@ export const EventsPage: React.FC = () => {
   const { canAccess, currentRole, currentUser } = useAuth();
   const canManageEvents =
     canAccess('events') &&
-    (currentRole === 'senior_pastor' ||
+    (currentRole === 'super_admin' ||
+      currentRole === 'senior_pastor' ||
       currentRole === 'administrator' ||
       currentRole === 'pastor' ||
       currentRole === 'ministry_leader');

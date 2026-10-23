@@ -6,6 +6,7 @@ import { getSupabaseClient, getStoredSupabaseConfig, clearPrivateCache, setSyncI
 import { readVerifiedProfile, GUEST_PROFILE, clearLegacyCredentials } from '../lib/authPolicy';
 import {readSecurityStatus, type SecurityStatus} from '../lib/mfa';
 import { apiRequest } from '../lib/apiClient';
+import {authRequestError,isTemporaryAuthFailure,unexpiredVerifiedSession,verifiedSessionExpiresAt} from '../lib/authConnectivity';
 
 interface AuthContextType {
   currentUser: UserProfile;
@@ -21,6 +22,7 @@ interface AuthContextType {
   hasRole: (roles: UserRole[]) => boolean;
   isAuthenticated: boolean;
   securityStatus: SecurityStatus | null;
+  connectionNotice: string;
   refreshSecurity: () => Promise<void>;
   session: Session | null;
   isAuthLoading: boolean;
@@ -194,10 +196,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentMember, setCurrentMember] = useState<Member | null>(null);
   const generation = useRef(0);
   const validatedToken=useRef<string|null>(null);
+  const verifiedIdentity=useRef<{session:Session;profile:UserProfile}|null>(null);
+  const [connectionNotice,setConnectionNotice]=useState('');
   const isAuthenticated = Boolean(session && currentUser.id && currentUser.is_active && securityStatus?.satisfied);
 
   const resetIdentity = useCallback(() => {
-    generation.current++;validatedToken.current=null;setIsAuthLoading(false);
+    generation.current++;validatedToken.current=null;verifiedIdentity.current=null;setConnectionNotice('');setIsAuthLoading(false);
     setSession(null); setSecurityStatus(null); setCurrentUser(GUEST_PROFILE); setCurrentMember(null); setUsersList([]);
     clearLegacyCredentials();
     clearPrivateCache();
@@ -207,38 +211,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const ticket = ++generation.current;
     const client = getSupabaseClient();
     if (!client || !nextSession) { resetIdentity(); setIsAuthLoading(false); return; }
-    setIsAuthLoading(true);
+    if(!verifiedIdentity.current)setIsAuthLoading(true);
     try {
       const { data: { user }, error } = await client.auth.getUser(nextSession.access_token);
-      if (error || !user) throw new Error('Your session has expired. Please sign in again.');
-      const profile = await readVerifiedProfile(client, user);
-      const security=await readSecurityStatus(client,profile.role);
-      if (ticket !== generation.current) return;
-      // A different identity must never inherit the previous user's cached records.
-      const previousId = sessionStorage.getItem('gwcc_cache_owner');
-      if (previousId && previousId !== profile.id) clearPrivateCache(previousId);
-      sessionStorage.setItem('gwcc_cache_owner', profile.id);
+      if(error)throw error;
+      if(!user)throw new Error('Your session has expired. Please sign in again.');
+      const profile = await readVerifiedProfile(client,user);
+      const security = await readSecurityStatus(client,profile.role);
+      let directory:UserProfile[]=[profile];
+      let member:Member|null=null;
+      if(security.satisfied){
+        if(['super_admin','senior_pastor','administrator'].includes(profile.role)){
+          const {data,error:directoryError}=await client.from('profiles').select('*').order('first_name');
+          if(!directoryError&&data)directory=data;
+        }
+        if(profile.role==='member'){
+          const {data,error:memberError,status}=await client.from('members').select('*').eq('auth_user_id',user.id).maybeSingle();
+          if(memberError)throw authRequestError(memberError,status);
+          member=data||null;
+        }
+      }
+      if(ticket!==generation.current)return;
+      const previousId=sessionStorage.getItem('gwcc_cache_owner');
+      if(previousId&&previousId!==profile.id)clearPrivateCache(previousId);
+      sessionStorage.setItem('gwcc_cache_owner',profile.id);
       if(!security.satisfied)clearPrivateCache(profile.id);
       await setSyncIdentity(security.satisfied?profile.id:null,security.satisfied?profile.role:null);
-      if (ticket !== generation.current) return;
+      if(ticket!==generation.current)return;
       validatedToken.current=nextSession.access_token;
-      setSession(nextSession); setCurrentUser(profile); setSecurityStatus(security);
-      if(!security.satisfied){setUsersList([profile]);setCurrentMember(null);return;}
-      const directoryRoles: UserRole[] = ['super_admin', 'senior_pastor', 'administrator'];
-      if (directoryRoles.includes(profile.role)) {
-        const { data, error: directoryError } = await client.from('profiles').select('*').order('first_name');
-        if (ticket !== generation.current) return;
-        setUsersList(!directoryError && data ? data : [profile]);
-      } else setUsersList([profile]);
-      if (profile.role === 'member') {
-        const { data, error: memberError } = await client.from('members').select('*').eq('auth_user_id', user.id).maybeSingle();
-        if (ticket !== generation.current) return;
-        setCurrentMember(!memberError && data ? data : null);
-      } else setCurrentMember(null);
-    } catch (error) {
-      if (ticket === generation.current) resetIdentity();
+      verifiedIdentity.current=security.satisfied?{session:nextSession,profile}:null;
+      setSession(nextSession);setCurrentUser(profile);setSecurityStatus(security);
+      setUsersList(directory);setCurrentMember(member);setConnectionNotice('');
+    } catch(error){
+      if(ticket===generation.current){
+        const previous=verifiedIdentity.current;
+        if(isTemporaryAuthFailure(error)&&previous&&previous.profile.id===nextSession.user.id&&unexpiredVerifiedSession(previous.session)){
+          setConnectionNotice('Connection interrupted. Previously verified records remain available; cloud confirmation requires reconnection.');
+          return;
+        }
+        resetIdentity();
+      }
       throw error;
-    } finally { if (ticket === generation.current) setIsAuthLoading(false); }
+    } finally {if(ticket===generation.current)setIsAuthLoading(false);}
   }, [resetIdentity]);
 
   useEffect(() => {
@@ -251,7 +265,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }).catch(() => { if (alive) { resetIdentity(); setIsAuthLoading(false); } });
     const { data: { subscription } } = client.auth.onAuthStateChange((_event, nextSession) => {
       if(_event==='SIGNED_IN' && nextSession?.access_token!==validatedToken.current){
-        generation.current++;setSecurityStatus(null);setIsAuthLoading(true);clearPrivateCache();
+        generation.current++;verifiedIdentity.current=null;setConnectionNotice('');setSecurityStatus(null);setIsAuthLoading(true);clearPrivateCache();
       }
       // Supabase holds an auth lock while dispatching this callback. Do DB work afterwards.
       queueMicrotask(() => { if (alive) hydrate(nextSession).catch(() => {}); });
@@ -263,14 +277,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!session || !currentUser.id) return;
     const client = getSupabaseClient();
     if (!client) return;
-    const refresh = () => hydrate(session).catch(() => {});
+    const refresh = () => {
+      client.auth.getSession().then(({data,error})=>error?hydrate(session):hydrate(data.session)).catch(()=>{});
+    };
     const timer = window.setInterval(refresh, 60000);
     const onFocus = () => { if (document.visibilityState === 'visible') refresh(); };
     document.addEventListener('visibilitychange', onFocus);
+    window.addEventListener('online',refresh);
     const channel = client.channel(`profile-${currentUser.id}`).on('postgres_changes',
       { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${currentUser.id}` }, refresh).subscribe();
-    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onFocus); client.removeChannel(channel); };
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onFocus);window.removeEventListener('online',refresh);client.removeChannel(channel); };
   }, [session?.access_token, currentUser.id, hydrate]);
+
+  useEffect(()=>{
+    const deadline=verifiedSessionExpiresAt(session);
+    if(!deadline)return;
+    const timer=window.setTimeout(()=>{if(!unexpiredVerifiedSession(verifiedIdentity.current?.session||null))resetIdentity();},Math.max(0,Math.min(2147483647,deadline-Date.now())));
+    return()=>window.clearTimeout(timer);
+  },[session?.access_token,resetIdentity]);
 
   const login = async (email: string, password?: string, memberOnly = false) => {
     const client = getSupabaseClient();
@@ -311,7 +335,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const client = getSupabaseClient();
     if (!client) return;
     const { data, error } = await client.auth.refreshSession();
-    if (error) { resetIdentity(); return; }
+    if (error) {
+      if(isTemporaryAuthFailure(error)&&unexpiredVerifiedSession(verifiedIdentity.current?.session||null)){setConnectionNotice('Connection interrupted. Previously verified records remain available; cloud confirmation requires reconnection.');return;}
+      resetIdentity(); return;
+    }
     await hydrate(data.session).catch(() => {});
   }, [hydrate, resetIdentity]);
 
@@ -386,7 +413,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
   const contextValue: AuthContextType = {
     currentUser, currentRole: currentUser.role, availableUsers: usersList, isAuthenticated, session, isAuthLoading,
-    securityStatus,refreshSecurity, currentMember, isMemberPortalUser: currentUser.role === 'member', login, loginAsMember, register, createUser,
+    securityStatus,connectionNotice,refreshSecurity, currentMember, isMemberPortalUser: currentUser.role === 'member', login, loginAsMember, register, createUser,
     updateUser, deleteUser, toggleUserStatus, resetPassword, setTemporaryPassword, changePassword, logout, refreshSession,
     setPortalMember, canAccess, hasRole,
     // Identity simulation is intentionally unavailable for a real authenticated session.

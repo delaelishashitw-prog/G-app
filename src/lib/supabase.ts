@@ -1,5 +1,6 @@
 import {COMMUNICATION_ROLES} from './communicationUtils';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { routeInitialAuthLink } from './authLinks';
 import { SyncOutbox, type Mutation, type SyncResult } from './syncOutbox';
 import { setCacheOwner, clearScopedCache } from './storageScope';
 import {
@@ -53,6 +54,8 @@ export function getStoredSupabaseConfig(): { url: string; anonKey: string; sourc
 let cachedClient: SupabaseClient | null = null;
 let currentConfigKey = '';
 const GLOBAL_SUPABASE_CLIENT_KEY = '__GWCC_SUPABASE_CLIENT__';
+
+routeInitialAuthLink();
 
 function getGlobalSupabaseClient(): SupabaseClient | null {
   return (globalThis as typeof globalThis & { [GLOBAL_SUPABASE_CLIENT_KEY]?: SupabaseClient })[
@@ -941,6 +944,7 @@ export interface ChurchAllData {
   pledges: PledgeRecord[];
   ministries: Ministry[];
   smallGroups: SmallGroup[];
+  cellMeetingReports?: import('./cellReports').CellMeetingReport[];
   events: ChurchEvent[];
   pastoralCare: PastoralCareRecord[];
   prayerRequests: PrayerRequest[];
@@ -1021,7 +1025,7 @@ export async function flushSyncOutbox({approveRestored=false}:{approveRestored?:
   const fixedClient=createClient(config.url,config.anonKey,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false},global:{headers:{Authorization:`Bearer ${session.access_token}`}}});
   const transport={rpc:(name:string,args:any)=>owner===syncOwner && active===outbox?fixedClient.rpc(name,args):Promise.resolve({data:null,error:{message:'The signed-in account changed. Remaining changes were kept for their owner.'}})};
   return active.flush(transport,records=>{
-    if(owner===syncOwner) emit('gwcc-sync-records',{owner,records});
+    if(owner===syncOwner) emit('gwcc-sync-records',{owner,records:records.map((item:any)=>item.table==='pastoral_counseling'&&item.canonical_table==='counseling_sessions'?{...item,table:'counseling_sessions'}:item)});
   },approveRestored);
 }
 async function queueMany(changes:Mutation[],autoFlush=true):Promise<SyncResult> {
@@ -1068,7 +1072,7 @@ export const SYNC_TABLES: Array<{table:string;key:keyof ChurchAllData;document?:
 ].map(([table,key])=>({table,key:key as keyof ChurchAllData})).concat([
   ['assets','assets'],['department_budgets','departmentBudgets'],['foundation_cohorts','foundationCohorts'],
   ['foundation_students','foundationStudents'],['pastoral_visitations','pastoralVisitations'],
-  ['counseling_sessions','counselingSessions'],['intercessory_slots','intercessorySlots'],
+  ['counseling_sessions','counselingSessions'],['intercessory_slots','intercessorySlots'],['cell_meeting_reports','cellMeetingReports'],
 ].map(([table,key])=>({table,key:key as keyof ChurchAllData,document:true})));
 
 export async function fetchAllRows(client: SupabaseClient, table: string, namespace?: string): Promise<any[]> {
@@ -1090,6 +1094,7 @@ export async function pullAllDataFromSupabase(): Promise<{success:boolean;data:P
   const result:Partial<ChurchAllData>={}; const errors:string[]=[];
   await Promise.allSettled(SYNC_TABLES.map(async({table,key,document})=>{
     if(table==='communications'&&!COMMUNICATION_ROLES.includes(syncRole||'')){result.communications=[];return;}
+    if(table==='cell_meeting_reports'&&!['super_admin','senior_pastor','administrator','pastor'].includes(syncRole||'')){result.cellMeetingReports=[];return;}
     try {
       let records:any[];
       if(syncRole==='member' && table==='events'){

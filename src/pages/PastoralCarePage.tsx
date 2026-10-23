@@ -1161,14 +1161,14 @@ export const PastoralCarePage: React.FC = () => {
       />
 
       {/* 2. Schedule Counseling Modal */}
-      <ScheduleCounselingModal
+      {isScheduleCounselingOpen&&<ScheduleCounselingModal
         isOpen={isScheduleCounselingOpen}
         onClose={() => setIsScheduleCounselingOpen(false)}
         onSave={handleSaveCounseling}
         members={members}
         settings={settings}
         editingSession={editingCounseling}
-      />
+      />}
 
       {/* 3. Answered Prayer Testimony Modal */}
       <AnsweredPrayerModal

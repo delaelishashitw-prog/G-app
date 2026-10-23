@@ -228,9 +228,11 @@ export class SyncOutbox {
           throw new Error('The database did not confirm every record. Pending changes were retained for a safe retry.');
         }
         for (const item of data) if (item.record?.updated_at) {
-          this.versions[`${item.table}:${item.record.id}`] = item.record.updated_at;
+          const table=item.table==='pastoral_counseling'&&item.canonical_table==='counseling_sessions'?'counseling_sessions':item.table;
+          this.versions[`${item.table}:${item.record.id}`]=item.record.updated_at;
+          this.versions[`${table}:${item.record.id}`]=item.record.updated_at;
           for (const pending of this.batches.slice(1)) if (pending.attempts === 0) for (const next of pending.changes) {
-            if (next.table === item.table && next.id === item.record.id) next.expected_updated_at = item.record.updated_at;
+            if ((next.table===item.table||next.table===table) && next.id === item.record.id) next.expected_updated_at = item.record.updated_at;
           }
         }
         this.batches.shift();

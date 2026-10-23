@@ -1,12 +1,12 @@
 # GWCC Pastoral AI Agent — Secure Integration Blueprint
 
-Status: **Draft for review — not deployed.** Prepared for the existing `G-app` repository (React/Vite + Supabase + Vercel/Express + Gemini). No production data or secrets are included here.
+Status: **Implemented through aggregate attendance report drafts; draft PR, not deployed.** Prepared for the existing `G-app` repository (React/Vite + Supabase + Vercel/Express + Gemini). No production data or secrets are included here.
 
 ## Objective and boundaries
 
 Extend the existing `src/pages/AiAssistantPage.tsx` and `src/components/AiAssistantModal.tsx` rather than creating a separate application. Reuse `server/ai.js` and `server/security.js` for verified identity, approved staff roles, MFA status, allowed origin, and request quotas. **Never** let model-generated text execute database queries or mutations. The browser never holds a Gemini key, service-role key, or direct privileged database credential.
 
-The current backend already invokes Google Gemini for text drafting. The agent layer will add a bounded set of *server-owned* tools and a proposal/approval workflow. The existing AI endpoint is NOT presently a church-records agent; frontend counts are not an adequate or authoritative data source.
+The current backend already invokes Google Gemini for text drafting. The first integration adds bounded, server-owned attendance summary/report tools. The general drafting endpoint remains separate and does not retrieve church records. Frontend counts are not an authoritative data source. A proposal/approval workflow for delivery remains future work.
 
 ## Trust boundaries
 
@@ -58,7 +58,20 @@ These are proposed capabilities to add to existing roles, not replacements for c
 
 Review external model data-handling, retention, and residency terms before sharing any person-identifiable church records. Prefer deterministic server aggregation rather than LLM inference for numerical reports.
 
-## API proposal (new server-side endpoints)
+## Implemented first integration
+
+- `POST /api/ai/attendance-insights`: accepts only `startDate` and `endDate`, up to 31 inclusive days ending no later than today in Ghana. Reads the caller's RLS-protected `attendance` records; caps at 5,000 rows. Pages by stable row ID, requires exact counts, and refuses missing pages, changing totals or repeated IDs. A paginated read is not a database snapshot: refresh after new check-ins sync.
+- `POST /api/ai/attendance-report`: accepts the same dates only; recalculates totals on the server. The Gemini input contains only dates and numeric totals, including daily counts. It excludes service labels, service IDs, member/visitor IDs, names, phones and all pastoral/finance data. Stored service text cannot inject instructions into this tool's model input.
+- Both routes share `authorizeRequest`: verified Auth user, active reviewed login profile, role, live account security/MFA, origin and persistent `ai` quota. Access is rechecked after reads and after report generation without charging another quota. Existing database policies remain unchanged.
+- The approved attendance roles are super administrator, senior pastor, administrator, pastor and attendance officer. Finance officers, ministry leaders, data entry and members do not receive this agent tool. This is narrower than their existing database/module access; do not replace database RBAC with the AI capability list.
+- The UI shows source period, source/excluded entries, Ghana refresh time, member/visitor check-ins, service totals and explicit empty/error states. Date edits cancel and discard stale requests. Drafts are kept in component memory, cleared on account/role changes, and copied only on request.
+- General drafting and the modal send only the typed/template prompt. Unused browser `churchContext` (including cached counts/staff names) is no longer transmitted. The server supplies the actual model name after a successful response instead of a hardcoded model claim. Templates use placeholders for unconfirmed service times and signatories; model output is escaped text.
+- `server/aiProvider.js` keeps the existing `@google/genai` provider, server-only `GEMINI_API_KEY`, optional `GEMINI_MODEL`, existing default model and 20-second provider timeout. No new provider, subscription, package or credential is introduced. Missing configuration and provider failures are visible errors, not successful drafts.
+- No model-selected SQL, unrestricted database tools, tool loops, sends, tasks, invitations, edits or financial actions are available. Report wording still needs human review; numeric cards are the deterministic source.
+
+No schema migration is required. Tool-level audit history, visitor proposals, feature flags, per-group rollout and delivery approvals are **not implemented** in this change. The existing API quota is not a provider spending cap; configure provider spending controls before broader use. An autonomous agent is not enabled.
+
+## Future API proposal
 
 - `POST /api/ai/insights/attendance`
   - Input: `{ "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD" }`
@@ -90,12 +103,12 @@ All exposed tables must have RLS + explicit grants, least-privilege policies, pr
 - Ensure MFA, role revocation, read scope and allowed origins behave correctly.
 - Confirm provider key is configured only on backend, and rate/cost budgets are active.
 
-**Gate 1: deterministic attendance insights.**
+**Gate 1: deterministic attendance insights — implemented, automated verification complete.**
 - Implement protected server-side aggregation using authenticated user's RLS-scoped client and bounded/paginated reads.
 - Add an attendance tile to existing AI page; show last refresh, selected period, counts and source warnings.
 - Test: unauthenticated 401; member 403; attendance officer 200; disabled staff 403; missing MFA 403; invalid dates 400; excessive range 400; data access errors explicit; no PII in output.
 
-**Gate 2: ministry report drafts.**
+**Gate 2: aggregate attendance report drafts — implemented; real provider test pending.**
 - Feed aggregate statistics only to Gemini to write a reviewable report; never fabricate totals.
 - Add source/period labels and a clear "Draft — not sent" status.
 - Test malicious prompt injection in stored church text and failed provider requests.
@@ -118,3 +131,15 @@ Existing `AiAssistantPage`: add tabs **Overview | Attendance Insights | Visitor 
 Use a draft PR and synthetic test data before touching production. Run `npm run lint`, `npm test`, `npm run test:browser` in CI where configured. Review RLS policies on a nonproduction environment first; do not run schema migrations or enable model access to confidential data without verified guards. Roll out behind a server-controlled feature flag to a small authorised group, then expand after audit and sign-off.
 
 **Decisions before enabling personal-data access:** confirmed role-to-capability map, retention policy, privacy consent and communication rules, service time/date source of truth, recipient-review responsibility, budget and model provider terms.
+
+
+## Verification and activation record — 23 October 2026
+
+- Based on main `4845c4e` (invitation/password corrections) and preserves giving, welfare, portal, MFA and durable sync changes.
+- Local automated validation: 236 tests passed, including the actual request middleware, all allowed/denied roles, verified email, suspension, review, MFA, origin, quota, no-PII model input, stored-text injection exclusion, role revocation and incomplete pagination. PGlite executes the repository migrations with synthetic Auth users/sessions and tests actual attendance RLS, expired sessions and MFA. No production identity is impersonated.
+- Browser coverage (synthetic APIs/provider): phone and desktop layouts, pastor/senior administrator/attendance officer access, finance UI exclusion, period changes and discarded stale results, unavailable records/provider, empty results, safe text rendering, minimal request bodies, draft labels, and no generated-content browser persistence. Runs in the full CI suite as well as `TEST_SCOPE=ai`.
+- Read-only live inspection confirmed attendance RLS and the existing guarded role/security functions; latest migration remains `20261023063007`. No production records, authentication settings or database definitions were changed.
+- Remaining activation checks: review PR/CI; validate approved staff roles and current totals in a nonproduction environment with non-sensitive seeded records; verify the actual configured provider/model with a harmless prompt. Do not claim the real provider works based on mocks. Production activation is separate from this draft PR.
+- Existing leaked-password-protection advisor remains unresolved if unavailable on the plan; it is not silently waived or reported fixed by this integration.
+
+Provider API usage follows the installed `@google/genai` README and the official [Gemini text generation documentation](https://ai.google.dev/gemini-api/docs/text-generation). Supabase reads use the existing authenticated client and [Row Level Security](https://supabase.com/docs/guides/database/postgres/row-level-security). Review model availability and data-handling terms during activation; no personal-record access is enabled for the model.

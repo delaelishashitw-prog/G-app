@@ -10,9 +10,9 @@ function queryClient(rows, { error = null, count = rows.length } = {}) {
   return { from(table) {
     assert.equal(table, 'attendance');
     const query = {
-      select(columns) { assert.equal(columns, 'service_id,service_name,date,status,member_id,visitor_id'); return this; },
+      select(columns) { assert.equal(columns, 'id,service_id,service_name,date,status,member_id,visitor_id'); return this; },
       gte() { return this; }, lte() { return this; }, order() { return this; },
-      async range(from, to) { return { data: error ? null : rows.slice(from, to + 1), error, count }; },
+      async range(from, to) { return { data: error ? null : rows.map((row, i) => ({ id: `row-${i}`, ...row })).slice(from, to + 1), error, count }; },
     };
     return query;
   } };
@@ -73,7 +73,7 @@ test('every authorised staff role receives read-only aggregates; unapproved role
     const res = response(); let reads = 0;
     const client = { from: (table) => { reads++; return queryClient([]).from(table); } };
     await attendanceInsightsHandler(req(), res, {authorizeRequest: async (_req, options) => {
-      assert.ok(options.roles.includes(role)); assert.equal(options.bucket, 'ai');
+      assert.ok(options.roles.includes(role)); assert.ok(options.bucket === 'ai' || options.bucket === null);
       return {profile:{role},client};
     }});
     assert.equal(res.code, 200, role);

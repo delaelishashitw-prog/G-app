@@ -1,3 +1,5 @@
+import {useGivingChannels} from '../../hooks/useGivingChannels';
+import {givingInstructions} from '../../lib/givingChannels';
 import React, { useState } from 'react';
 import {
   X,
@@ -38,6 +40,7 @@ export const PledgeDossierModal: React.FC<PledgeDossierModalProps> = ({
   const [selectedTemplate, setSelectedTemplate] = useState<'friendly' | 'milestone' | 'yearend'>('friendly');
   const [copied, setCopied] = useState(false);
 
+  const {channels}=useGivingChannels(isOpen&&Boolean(pledge&&pledge.balance>0));
   if (!isOpen || !pledge) return null;
 
   const member = members.find((m) => m.id === pledge.member_id);
@@ -89,18 +92,17 @@ export const PledgeDossierModal: React.FC<PledgeDossierModalProps> = ({
     const pledged = formatGHS(pledge.amount_pledged);
     const paid = formatGHS(pledge.amount_paid);
     const balance = formatGHS(pledge.balance);
-    const momoAccount = '024 456 1234 (GWCC Project Acct)';
-    const bankAccount = 'GCB Bank - 1041010098765 (Greater Works City Church)';
+    const instructions=givingInstructions(channels);
 
     if (selectedTemplate === 'friendly') {
-      return `Calvary greetings ${name}! 🙌\n\nOn behalf of ${churchName}, we thank God for your continuous faith and partnership in the Gospel.\n\nThis is a gentle update regarding your kingdom commitment for *${campaign}*:\n• Total Vowed: ${pledged}\n• Total Paid: ${paid}\n• Outstanding Balance: ${balance}\n• Target Due Date: ${pledge.due_date || 'Open'}\n\nYou can remit your installment via:\n📱 *MTN MoMo:* ${momoAccount}\n🏦 *Bank Transfer:* ${bankAccount}\n\nMay the Lord who supplies seed to the sower multiply your seed sown (2 Cor 9:10). Stay blessed!`;
+      return `Calvary greetings ${name}! 🙌\n\nOn behalf of ${churchName}, we thank God for your continuous faith and partnership in the Gospel.\n\nThis is a gentle update regarding your kingdom commitment for *${campaign}*:\n• Total Vowed: ${pledged}\n• Total Paid: ${paid}\n• Outstanding Balance: ${balance}\n• Target Due Date: ${pledge.due_date || 'Open'}\n\nYou can remit your installment via:\n${instructions}\n\nMay the Lord who supplies seed to the sower multiply your seed sown (2 Cor 9:10). Stay blessed!`;
     }
 
     if (selectedTemplate === 'milestone') {
-      return `Shalom ${name}! 🏛️\n\nGlory to God! The work on our *${campaign}* is progressing steadily to the glory of God.\n\nWe are currently mobilizing resources for the upcoming construction milestone. Your recorded commitment:\n• Covenant Amount: ${pledged}\n• Already Contributed: ${paid}\n• Remaining Covenant: ${balance}\n\nThank you for standing in the gap for God's sanctuary. You may redeem via MTN MoMo: ${momoAccount}. God richly bless you and your household!`;
+      return `Shalom ${name}! 🏛️\n\nGlory to God! The work on our *${campaign}* is progressing steadily to the glory of God.\n\nWe are currently mobilizing resources for the upcoming construction milestone. Your recorded commitment:\n• Covenant Amount: ${pledged}\n• Already Contributed: ${paid}\n• Remaining Covenant: ${balance}\n\nThank you for standing in the gap for God's sanctuary. Payment instructions:\n${instructions} God richly bless you and your household!`;
     }
 
-    return `Peace and grace unto you ${name}! 🕊️\n\nAs we review our church stewardship registers for *${churchName}*, we want to express our deepest appreciation for your vow towards *${campaign}*.\n\nStatus Summary:\n• Committed: ${pledged}\n• Redeemed: ${paid}\n• Balance to complete: ${balance}\n\nIf you have already remitted your balance or need assistance, kindly let our Finance Team know. Payments can be made via MoMo: ${momoAccount}. Remain greatly blessed!`;
+    return `Peace and grace unto you ${name}! 🕊️\n\nAs we review our church stewardship registers for *${churchName}*, we want to express our deepest appreciation for your vow towards *${campaign}*.\n\nStatus Summary:\n• Committed: ${pledged}\n• Redeemed: ${paid}\n• Balance to complete: ${balance}\n\nIf you have already remitted your balance or need assistance, kindly let our Finance Team know. Payment instructions:\n${instructions} Remain greatly blessed!`;
   };
 
   const handleCopyMessage = () => {

@@ -6,6 +6,12 @@ const PAGE_SIZE = 500;
 const MAX_ROWS = 5000;
 const MAX_DAYS = 31;
 
+export async function authorizeAttendance(req, dependencies = {}, bucket = 'ai') {
+  const access = await (dependencies.authorizeRequest || authorizeRequest)(req, { roles: ATTENDANCE_ROLES, bucket });
+  if (!ATTENDANCE_ROLES.includes(access.profile?.role)) throw new HttpError(403, 'Not authorised for attendance insights.');
+  return access;
+}
+
 function parseChurchDate(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const timestamp = Date.parse(value + 'T00:00:00.000Z');
@@ -41,7 +47,7 @@ export function buildAttendanceSummary(rows, period) {
     if (row?.status !== 'present') { excludedRecords++; continue; }
     const type = row?.member_id && !row?.visitor_id ? 'member' :
       row?.visitor_id && !row?.member_id ? 'visitor' : null;
-    if (!type || !row.service_id || !row.date) { excludedRecords++; continue; }
+    if (!type || !row.service_id || parseChurchDate(row.date) === null || row.date < period.startDate || row.date > period.endDate) { excludedRecords++; continue; }
     const personId = type === 'member' ? row.member_id : row.visitor_id;
     const fingerprint = JSON.stringify([row.service_id, row.date, type, personId]);
     if (seen.has(fingerprint)) { excludedRecords++; continue; }
@@ -64,6 +70,7 @@ export function buildAttendanceSummary(rows, period) {
     memberCheckins,
     visitorCheckins,
     excludedRecords,
+    sourceRecords: rows.length,
     byService: [...services.values()].sort((a, b) => b.checkins - a.checkins || a.serviceName.localeCompare(b.serviceName)),
     byDay: [...days].sort(([a], [b]) => a.localeCompare(b)).map(([date, checkins]) => ({ date, checkins })),
     metric: 'Verified present check-in entries, deduplicated per person, service, and day. Not total auditorium attendance.',
@@ -71,39 +78,39 @@ export function buildAttendanceSummary(rows, period) {
   };
 }
 
+export async function readAttendanceSummary(client, period) {
+  const records = [], ids = new Set();
+  let expectedCount;
+  for (let offset = 0; offset < MAX_ROWS; offset += PAGE_SIZE) {
+    const { data, error, count } = await client.from('attendance')
+      .select('id,service_id,service_name,date,status,member_id,visitor_id', { count: 'exact' })
+      .gte('date', period.startDate).lte('date', period.endDate)
+      .order('id', { ascending: true }).range(offset, offset + PAGE_SIZE - 1);
+    if (error || !Array.isArray(data) || !Number.isInteger(count) || count < 0) throw new HttpError(503, 'Attendance records could not be read securely.');
+    if (count > MAX_ROWS) throw new HttpError(422, 'Too many records. Select a shorter period.');
+    if (expectedCount !== undefined && expectedCount !== count) throw new HttpError(409, 'Attendance changed while loading. Refresh the summary.');
+    expectedCount = count;
+    for (const row of data) {
+      if (!row.id || ids.has(row.id)) throw new HttpError(409, 'Attendance changed while loading. Refresh the summary.');
+      ids.add(row.id);
+    }
+    records.push(...data);
+    if (records.length > count) throw new HttpError(409, 'Attendance changed while loading. Refresh the summary.');
+    if (data.length < PAGE_SIZE || records.length === count) break;
+  }
+  if (records.length !== expectedCount) throw new HttpError(503, 'A complete attendance summary could not be loaded. Select a shorter period and try again.');
+  return buildAttendanceSummary(records, period);
+}
+
 /** Only approved staff can retrieve aggregate summaries. No raw identities or telephone numbers are returned. */
 export async function attendanceInsightsHandler(req, res, dependencies = {}) {
   if (!requirePost(req, res)) return;
   try {
-    const { client, profile } = await (dependencies.authorizeRequest || authorizeRequest)(
-      req, { roles: ATTENDANCE_ROLES, bucket: 'ai' }
-    );
-    if (!ATTENDANCE_ROLES.includes(profile?.role)) throw new HttpError(403, 'Not authorised for attendance insights.');
+    const { client } = await authorizeAttendance(req, dependencies);
     const period = validateAttendancePeriod(req.body);
-    const records = [];
-    for (let offset = 0; offset <= MAX_ROWS; offset += PAGE_SIZE) {
-      const { data, error, count } = await client.from('attendance')
-        .select('service_id,service_name,date,status,member_id,visitor_id', { count: 'exact' })
-        .gte('date', period.startDate)
-        .lte('date', period.endDate)
-        .order('date', { ascending: true })
-        .order('id', { ascending: true })
-        .range(offset, offset + PAGE_SIZE - 1);
-      if (error || !Array.isArray(data)) throw new HttpError(503, 'Attendance records could not be read securely.');
-      if (typeof count === 'number' && count > MAX_ROWS) {
-        throw new HttpError(422, 'Too many records. Select a shorter period.');
-      }
-      if (records.length + data.length > MAX_ROWS) throw new HttpError(422, 'Too many records. Select a shorter period.');
-      records.push(...data);
-      if (data.length < PAGE_SIZE) break;
-      if (offset + PAGE_SIZE >= MAX_ROWS) {
-        // One additional request is needed when exactly MAX_ROWS rows were returned
-        // and PostgREST did not return an exact count. Fail closed rather than truncate.
-        if (count === null || count === undefined) throw new HttpError(422, 'Select a shorter period to avoid incomplete totals.');
-        break;
-      }
-    }
-    res.status(200).json(buildAttendanceSummary(records, period));
+    const summary = await readAttendanceSummary(client, period);
+    await authorizeAttendance(req, dependencies, null);
+    res.status(200).json(summary);
   } catch (error) {
     sendError(res, error);
   }

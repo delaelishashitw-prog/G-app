@@ -1,3 +1,5 @@
+import {useGivingChannels} from '../hooks/useGivingChannels';
+import {givingInstructions} from '../lib/givingChannels';
 import React, { useState, useMemo } from 'react';
 import {
   Coins,
@@ -35,6 +37,7 @@ import { EditPledgeModal } from '../components/pledges/EditPledgeModal';
 import { PrintPledgesModal } from '../components/pledges/PrintPledgesModal';
 
 export const PledgesPage: React.FC = () => {
+  const {channels:officialGivingChannels}=useGivingChannels();
   const { pledges, campaigns, members, settings } = useChurchData();
 
   // Search & Filter State
@@ -141,7 +144,7 @@ export const PledgesPage: React.FC = () => {
     const phone = cleanGhanaPhone(p.member_phone);
     const name = p.member_name.split(' ')[0] || 'Beloved';
     const text = encodeURIComponent(
-      `Calvary greetings ${name} from ${settings.church_name}! 🙌\n\nGentle update on your kingdom pledge for *${p.campaign_name}*:\n• Total Vowed: ${formatGHS(p.amount_pledged)}\n• Redeemed: ${formatGHS(p.amount_paid)}\n• Current Balance: ${formatGHS(p.balance)}\n\nYou may remit via ${settings.phone ? `MoMo: ${settings.phone} (${settings.short_name || 'Church'} Project Acct)` : 'the church treasury'}. God multiply your seed sown!`
+      `Calvary greetings ${name} from ${settings.church_name}! 🙌\n\nGentle update on your kingdom pledge for *${p.campaign_name}*:\n• Total Vowed: ${formatGHS(p.amount_pledged)}\n• Redeemed: ${formatGHS(p.amount_paid)}\n• Current Balance: ${formatGHS(p.balance)}\n\nPayment instructions:\n${givingInstructions(officialGivingChannels)} God multiply your seed sown!`
     );
     const url = phone ? `https://wa.me/${phone}?text=${text}` : `https://wa.me/?text=${text}`;
     const a = document.createElement('a');

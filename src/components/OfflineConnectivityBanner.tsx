@@ -12,6 +12,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import { useToast } from '../contexts/ToastContext';
+import {useAuth} from '../contexts/AuthContext';
 
 export interface OfflineConnectivityBannerProps {
   /** Optional custom className */
@@ -25,6 +26,7 @@ export interface OfflineConnectivityBannerProps {
  */
 export const OfflineConnectivityBanner: React.FC<OfflineConnectivityBannerProps> = ({ className = '' }) => {
   const { isOnline, offlineSince, checkConnection } = useNetworkStatus();
+  const {connectionNotice,refreshSecurity}=useAuth();
   const { warning, success } = useToast();
 
   const [isDismissed, setIsDismissed] = useState(false);
@@ -111,6 +113,7 @@ export const OfflineConnectivityBanner: React.FC<OfflineConnectivityBannerProps>
   };
 
   // If online and not showing temporary reconnected confirmation, render nothing
+  if(connectionNotice&&isOnline)return <div role="status" className="bg-amber-50 border-b border-amber-300 px-4 py-3 text-sm text-amber-950 flex flex-wrap gap-3 items-center justify-between"><p>{connectionNotice}</p><button type="button" onClick={()=>void refreshSecurity().catch(()=>{})} className="font-semibold underline">Retry account check</button></div>;
   if (isOnline && !showReconnected) {
     return null;
   }

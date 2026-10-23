@@ -187,7 +187,7 @@ export function addCounselingSession(
 
   setCounselingSessions((prev) => [newSession, ...prev]);
   logAction('SCHEDULE_COUNSELING', 'Pastoral Care', `Logged counseling session #${session.session_number} with ${session.member_name}`, newSession.id);
-  dbSyncUpsert('pastoral_counseling', newSession);
+  dbSyncUpsert('counseling_sessions', newSession);
   return newSession;
 }
 
@@ -203,7 +203,7 @@ export function updateCounselingSession(
       if (session.id === id) {
         const updated = { ...session, ...updates };
         logAction('UPDATE_COUNSELING', 'Pastoral Care', `Updated counseling session for ${session.member_name}`, id);
-        dbSyncUpsert('pastoral_counseling', updated);
+        dbSyncUpsert('counseling_sessions', updated);
         return updated;
       }
       return session;
@@ -219,7 +219,7 @@ export function deleteCounselingSession(
 ) {
   setCounselingSessions((prev) => prev.filter((session) => session.id !== id));
   logAction('DELETE_COUNSELING', 'Pastoral Care', `Deleted counseling session`, id);
-  dbSyncDelete('pastoral_counseling', id);
+  dbSyncDelete('counseling_sessions', id);
 }
 
 export function addIntercessorySlot(

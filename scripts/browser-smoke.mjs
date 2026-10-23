@@ -1,3 +1,6 @@
+import {checkAppReviewCorrections} from './app-review-browser-checks.mjs';
+import {checkAuthLinks} from './auth-links-browser-checks.mjs';
+import {checkAiAgent} from './ai-agent-browser-checks.mjs';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {chromium} from 'playwright';
@@ -29,9 +32,18 @@ try{
   }
   assert.ok(ready,'Production server did not start.');
   const unauthenticated=await fetch(`${origin}/api/ai/assistant`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:'Test'})});assert.equal(unauthenticated.status,401);
+  for(const endpoint of ['attendance-insights','attendance-report']) {
+    const result=await fetch(`${origin}/api/ai/${endpoint}`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});assert.equal(result.status,401);
+  }
   const invalidJson=await fetch(`${origin}/api/staff`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{bad'});assert.equal(invalidJson.status,400);
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{channel:'chromium'}),args:['--no-sandbox']});
-  if(process.env.TEST_SCOPE==='duty'){
+  if(process.env.TEST_SCOPE==='ai'){
+    await checkAiAgent(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  }else if(process.env.TEST_SCOPE==='auth-links'){
+    await checkAuthLinks(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  }else if(process.env.TEST_SCOPE==='review'){
+    await checkAppReviewCorrections(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  }else if(process.env.TEST_SCOPE==='duty'){
     await checkDutyRoster(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   }else if(process.env.TEST_SCOPE==='portal'){
     await checkMemberPortal(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
@@ -199,6 +211,7 @@ try{
   }
   await checkMemberAccess(page,{origin,data,profile});
   await checkMemberPasswordSetup(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  await checkAuthLinks(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkMemberPortal(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkDutyRoster(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await page.goto(`${origin}/communication`);
@@ -223,6 +236,8 @@ try{
   await checkBackup(browser,{origin,settings:initialSettings});
   await checkMfa(browser,{origin,settings:initialSettings});
   await checkTasks(browser,{origin,settings:initialSettings});
+  await checkAppReviewCorrections(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  await checkAiAgent(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   console.info(`Browser smoke passed: mobile authorization, ${pages.length} signed-in pages, member invitation/linking/suspension guards/password help/password setup/portal, welfare arrears/defaulter filters/CSV/partial claim approval/member portal, durable draft retry, and logout cache clearing.`);
   }
 }finally{
