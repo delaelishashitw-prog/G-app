@@ -655,6 +655,25 @@ export interface WelfareEventContribution {
   finance_linked?: boolean;
 }
 
+export interface WelfareFundReceipt {
+  id: string;
+  amount: number;
+  date: string;
+  source: 'opening_balance' | 'unallocated_dues' | 'donation' | 'other';
+  reference_no: string;
+  notes: string;
+  status: 'active' | 'voided';
+  recorded_by_id?: string;
+  recorded_by?: string;
+  created_at?: string;
+  updated_at?: string;
+  voided_by_id?: string;
+  voided_by?: string;
+  voided_at?: string;
+  void_reason?: string;
+  _sync_status?: 'pending';
+}
+
 export interface WelfareContribution {
   id: string;
   member_id: string;

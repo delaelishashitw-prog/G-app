@@ -1,3 +1,4 @@
+import {checkWelfareFunds} from './welfare-funds-browser-checks.mjs';
 import {checkAppReviewCorrections} from './app-review-browser-checks.mjs';
 import {checkAuthLinks} from './auth-links-browser-checks.mjs';
 import {checkAiAgent} from './ai-agent-browser-checks.mjs';
@@ -37,7 +38,9 @@ try{
   }
   const invalidJson=await fetch(`${origin}/api/staff`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{bad'});assert.equal(invalidJson.status,400);
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{channel:'chromium'}),args:['--no-sandbox']});
-  if(process.env.TEST_SCOPE==='ai'){
+  if(process.env.TEST_SCOPE==='welfare-funds'){
+    await checkWelfareFunds(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  }else if(process.env.TEST_SCOPE==='ai'){
     await checkAiAgent(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   }else if(process.env.TEST_SCOPE==='auth-links'){
     await checkAuthLinks(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
@@ -128,19 +131,19 @@ try{
     if(path==='/services')await checkServices(page,{origin,data,profile,mutations:mutationRequests,setRejectWrites:value=>{rejectWrites=value;},userId:id,clock:serviceFixture.clock});
     if(path==='/attendance')await checkAttendance(page,{origin,data,profile,mutations:mutationRequests,setRejectWrites:value=>{rejectWrites=value;},userId:id,date:attendanceFixture.date,previous:attendanceFixture.previous});
     if(path==='/welfare'){
-      const balanceCard=()=>page.getByText('Welfare Dues Balance',{exact:true}).locator('..').locator('..');
+      const balanceCard=()=>page.getByText('Welfare Fund Balance',{exact:true}).locator('..').locator('..');
       await balanceCard().getByText('GH₵ 10,895.00',{exact:true}).waitFor();
       assert.equal(await page.getByText('GH₵ 26,295.00',{exact:true}).count(),0);
       await page.getByRole('button',{name:'Audit Report',exact:true}).click();
       const report=()=>page.getByRole('dialog',{name:'GWCC Welfare & Benevolence Mutual Fund Statement'});
-      await report().getByText('Welfare Dues Balance',{exact:true}).locator('..').getByText('GH₵ 10895.00',{exact:true}).waitFor();
+      await report().getByText('Welfare Fund Balance',{exact:true}).locator('..').getByText('GH₵ 10895.00',{exact:true}).waitFor();
       await report().getByRole('button',{name:'Close welfare audit report'}).click();
       data.welfare_claims=[{id:'qa-claim',claim_number:'BEN-QA',member_id:'qa-member',member_name:'QA Member',category:'emergency_relief',title:'QA relief',description:'Synthetic browser check',amount_requested:1500,amount_approved:1000,amount_disbursed:250,status:'approved',emergency_level:'normal',date_submitted:'2026-10-15',created_at:'2026-10-15T00:00:00Z'}];
       await page.reload();
       await balanceCard().getByText('GH₵ 10,645.00',{exact:true}).waitFor();
       await page.getByText('Benevolence Disbursed',{exact:true}).locator('..').locator('..').getByText('GH₵ 250.00',{exact:true}).waitFor();
       await page.getByRole('button',{name:'Audit Report',exact:true}).click();
-      await report().getByText('Welfare Dues Balance',{exact:true}).locator('..').getByText('GH₵ 10645.00',{exact:true}).waitFor();
+      await report().getByText('Welfare Fund Balance',{exact:true}).locator('..').getByText('GH₵ 10645.00',{exact:true}).waitFor();
       await report().getByText('Relief Disbursed',{exact:true}).locator('..').getByText('GH₵ 250.00',{exact:true}).waitFor();
       await report().getByRole('button',{name:'Close welfare audit report'}).click();
 
@@ -238,6 +241,7 @@ try{
   await checkTasks(browser,{origin,settings:initialSettings});
   await checkAppReviewCorrections(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkAiAgent(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  await checkWelfareFunds(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   console.info(`Browser smoke passed: mobile authorization, ${pages.length} signed-in pages, member invitation/linking/suspension guards/password help/password setup/portal, welfare arrears/defaulter filters/CSV/partial claim approval/member portal, durable draft retry, and logout cache clearing.`);
   }
 }finally{
