@@ -1,4 +1,5 @@
 import { authenticatedFetch, apiRequest } from '../lib/apiClient';
+import { useAuth } from '../contexts/AuthContext';
 import React, { useState } from 'react';
 import {
   Sparkles,
@@ -24,6 +25,9 @@ import { useChurchData } from '../contexts/ChurchDataContext';
 
 export const AiAssistantPage: React.FC = () => {
   const { settings, members, visitors, smallGroups, ministries, giving } = useChurchData();
+  const { hasRole } = useAuth();
+  // Only improve discoverability here: the backend remains the authority.
+  const canReadAttendanceInsights = hasRole(['super_admin', 'senior_pastor', 'administrator', 'pastor', 'attendance_officer']);
 
   const [activeCategory, setActiveCategory] = useState<'sermon' | 'pastoral' | 'comms' | 'cells' | 'custom'>('sermon');
   const [promptInput, setPromptInput] = useState('');
@@ -212,7 +216,7 @@ export const AiAssistantPage: React.FC = () => {
         </div>
       </div>
 
-      <section aria-label="Attendance Intelligence" className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+      {canReadAttendanceInsights && <section aria-label="Attendance Intelligence" className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Attendance Intelligence</h2>
           <p className="text-sm text-slate-600">Read-only recorded check-ins. No names, phone numbers or private pastoral notes are sent to the AI model.</p>
@@ -230,7 +234,7 @@ export const AiAssistantPage: React.FC = () => {
           <ul className="divide-y divide-slate-100">{attendanceInsights.byService.map((service: any) => <li className="flex justify-between py-2" key={service.serviceId}><span>{service.serviceName}</span><strong>{service.checkins}</strong></li>)}</ul>
           {attendanceInsights.totalCheckins === 0 && <p>No present check-ins found in the selected period. This does not confirm that no service took place.</p>}
         </div>}
-      </section>
+      </section>}
       {/* Main Categories Selector */}
       <div className="flex border-b border-slate-200 gap-2 overflow-x-auto pb-px">
         <button
