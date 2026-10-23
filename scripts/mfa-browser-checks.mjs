@@ -6,7 +6,7 @@ export async function checkMfa(browser,{origin,settings}){
   const id='18181818-1818-4818-8818-181818181818',operation='19191919-1919-4919-8919-191919191919';
   const profile={id,email:'security@example.test',first_name:'Security',last_name:'QA',role:'finance_officer',is_active:true,has_login_account:true,authorization_reviewed_at:'2026-10-17T00:00:00Z'};
   const user={id,email:profile.email,email_confirmed_at:'2026-10-17T00:00:00Z',aud:'authenticated',role:'authenticated',app_metadata:{provider:'email'},user_metadata:{}};
-  let factors=[],sequence=0,level='aal1',factorId=null,rejectStatus=false;const records=[],attempts=[],mutations=[],actions=[],errors=[];
+  let factors=[],sequence=0,level='aal1',factorId=null,rejectStatus=false,rejectedChecks=0;const records=[],attempts=[],mutations=[],actions=[],errors=[];
   const exp=Math.floor(Date.now()/1000)+3600;
   const session=()=>({user:{...user,factors},access_token:`${Buffer.from('{"alg":"HS256"}').toString('base64url')}.${Buffer.from(JSON.stringify({sub:id,role:'authenticated',session_id:id,aal:level,exp})).toString('base64url')}.test-signature`,refresh_token:'synthetic-security-refresh',expires_at:exp,expires_in:3600,token_type:'bearer'});
   const context=await browser.newContext({viewport:{width,height:1000}});
@@ -37,7 +37,7 @@ export async function checkMfa(browser,{origin,settings}){
     if(f.status==='verified'){assert.equal(level,'aal2');assert.notEqual(target,factorId,'Removal must follow verification of the device being kept.');}
     factors=factors.filter(f=>f.id!==target);actions.push({action:'remove',id:target});result={id:target};
    }else if(url.pathname==='/rest/v1/rpc/gwcc_security_status'){
-    if(rejectStatus){await route.fulfill({status:503,headers,json:{message:'Synthetic security check unavailable'}});return;}
+    if(rejectStatus){rejectedChecks++;await route.fulfill({status:503,headers,json:{message:'Synthetic security check unavailable'}});return;}
     const bearer=request.headers().authorization.split(' ')[1],claims=JSON.parse(Buffer.from(bearer.split('.')[1],'base64url').toString());
     result={role:profile.role,required:true,verified_factors:factors.filter(f=>f.status==='verified').length,satisfied:claims.aal==='aal2'&&level==='aal2'&&factors.some(f=>f.id===factorId&&f.status==='verified')};
    }else if(url.pathname==='/rest/v1/rpc/gwcc_apply_mutations'){mutations.push(request.postDataJSON());throw new Error('Held work must never be sent during MFA tests.');}
@@ -78,7 +78,13 @@ export async function checkMfa(browser,{origin,settings}){
   await panel.getByLabel('Six-digit code',{exact:true}).fill('123456');await panel.getByRole('button',{name:'Verify and continue',exact:true}).click();await panel.getByText('Backup device · Verified').waitFor();
   assert.equal(mutations.length,0);assert.deepEqual(errors,[]);
   await page.getByRole('button',{name:'Sign out',exact:true}).click();await page.waitForURL('**/login');assert.equal((await readSavedOutbox(page,id)).batches[0].id,operation);
-  rejectStatus=true;await page.evaluate(session=>localStorage.setItem('gwcc-church-auth-token',JSON.stringify(session)),session());const before=records.length;await page.goto(origin+'/church-finance');await page.waitForURL('**/login');assert.equal(records.length,before,'Unavailable security check must fail closed.');
+  // Drain requests belonging to the verified session before measuring a new document's cold start.
+  await page.waitForLoadState('networkidle');
+  rejectStatus=true;await page.evaluate(session=>localStorage.setItem('gwcc-church-auth-token',JSON.stringify(session)),session());
+  const before=records.length,rejectedBefore=rejectedChecks;
+  await page.goto(origin+'/church-finance');await page.waitForURL('**/login');
+  assert.ok(rejectedChecks>rejectedBefore,'The cold start must actually attempt its security check.');
+  assert.equal(records.length,before,'Unavailable security check must fail closed. New endpoints: '+JSON.stringify(records.slice(before)));
   await context.close();
  }
  console.info('MFA browser checks passed: mobile/desktop enrollment, interrupted setup, invalid codes, no pre-MFA records, backup enrollment/removal, sign-in challenge, held work preservation and failed security checks.');
