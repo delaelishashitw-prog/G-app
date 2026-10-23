@@ -395,7 +395,7 @@ export const LoginPage: React.FC = () => {
 
             <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
               {activeTab === 'signin' && 'Sign In to Your Workstation'}
-              {activeTab === 'register' && 'Request Church Staff Access'}
+              {activeTab === 'register' && 'Staff Invitations'}
               {activeTab === 'recovery' && 'Staff Password Recovery'}
             </h2>
             <p className="text-xs text-slate-500 mt-1">

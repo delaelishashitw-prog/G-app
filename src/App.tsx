@@ -9,6 +9,7 @@ import { AppLayout } from './layouts/AppLayout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LoadingFallback } from './components/LoadingFallback';
 import { OfflineConnectivityBanner } from './components/OfflineConnectivityBanner';
+import { getInitialAuthLink } from './lib/authLinks';
 
 // Code-split pages with React.lazy for fast initial bundle and optimal performance
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
@@ -98,7 +99,10 @@ function SecurityBoundary({children}:{children:React.ReactNode}){
   const location=useLocation();
   if(session&&!securityStatus&&isAuthLoading)return <main className="p-8 text-center">Verifying your account…</main>;
   // A newly invited user may choose their first password before enrolling.
-  const initialPassword=(location.pathname==='/auth/password'||(location.pathname==='/login'&&new URLSearchParams(location.search).get('recovery')==='1'))&&securityStatus?.verified_factors===0;
+  const passwordPage=location.pathname==='/auth/password'||(location.pathname==='/login'&&new URLSearchParams(location.search).get('recovery')==='1');
+  const link=getInitialAuthLink();
+  // Link errors remain readable when a different signed-in account needs MFA.
+  const initialPassword=passwordPage&&(link.kind!=='password'||securityStatus?.verified_factors===0);
   if(session&&currentUser.id&&securityStatus&&!securityStatus.satisfied&&!initialPassword)return <AccountSecurityPage key={currentUser.id}/>;
   return children;
 }

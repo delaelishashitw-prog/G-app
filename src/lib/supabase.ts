@@ -1,5 +1,6 @@
 import {COMMUNICATION_ROLES} from './communicationUtils';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { routeInitialAuthLink } from './authLinks';
 import { SyncOutbox, type Mutation, type SyncResult } from './syncOutbox';
 import { setCacheOwner, clearScopedCache } from './storageScope';
 import {
@@ -53,6 +54,8 @@ export function getStoredSupabaseConfig(): { url: string; anonKey: string; sourc
 let cachedClient: SupabaseClient | null = null;
 let currentConfigKey = '';
 const GLOBAL_SUPABASE_CLIENT_KEY = '__GWCC_SUPABASE_CLIENT__';
+
+routeInitialAuthLink();
 
 function getGlobalSupabaseClient(): SupabaseClient | null {
   return (globalThis as typeof globalThis & { [GLOBAL_SUPABASE_CLIENT_KEY]?: SupabaseClient })[

@@ -1,4 +1,5 @@
 import {checkAppReviewCorrections} from './app-review-browser-checks.mjs';
+import {checkAuthLinks} from './auth-links-browser-checks.mjs';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {chromium} from 'playwright';
@@ -32,7 +33,9 @@ try{
   const unauthenticated=await fetch(`${origin}/api/ai/assistant`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:'Test'})});assert.equal(unauthenticated.status,401);
   const invalidJson=await fetch(`${origin}/api/staff`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{bad'});assert.equal(invalidJson.status,400);
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{channel:'chromium'}),args:['--no-sandbox']});
-  if(process.env.TEST_SCOPE==='review'){
+  if(process.env.TEST_SCOPE==='auth-links'){
+    await checkAuthLinks(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  }else if(process.env.TEST_SCOPE==='review'){
     await checkAppReviewCorrections(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   }else if(process.env.TEST_SCOPE==='duty'){
     await checkDutyRoster(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
@@ -202,6 +205,7 @@ try{
   }
   await checkMemberAccess(page,{origin,data,profile});
   await checkMemberPasswordSetup(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  await checkAuthLinks(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkMemberPortal(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkDutyRoster(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await page.goto(`${origin}/communication`);
