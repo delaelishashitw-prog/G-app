@@ -1,4 +1,5 @@
 import {COMMUNICATION_ROLES} from './communicationUtils';
+import { WELFARE_FUND_READ_ROLES } from '../features/welfare/welfareFund';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { routeInitialAuthLink } from './authLinks';
 import { SyncOutbox, type Mutation, type SyncResult } from './syncOutbox';
@@ -22,6 +23,7 @@ import {
   ChurchSettings,
   HeadcountRecord,
   WelfareContribution,
+  WelfareFundReceipt,
   WelfareClaim,
   WelfareEvent,
   WelfareEventContribution,
@@ -951,6 +953,7 @@ export interface ChurchAllData {
   communications: CommunicationRecord[];
   auditLogs: AuditLog[];
   welfareContributions?: WelfareContribution[];
+  welfareFundReceipts?: WelfareFundReceipt[];
   welfareClaims?: WelfareClaim[];
   welfareEvents?: WelfareEvent[];
   welfareEventContributions?: WelfareEventContribution[];
@@ -1073,6 +1076,7 @@ export const SYNC_TABLES: Array<{table:string;key:keyof ChurchAllData;document?:
   ['assets','assets'],['department_budgets','departmentBudgets'],['foundation_cohorts','foundationCohorts'],
   ['foundation_students','foundationStudents'],['pastoral_visitations','pastoralVisitations'],
   ['counseling_sessions','counselingSessions'],['intercessory_slots','intercessorySlots'],['cell_meeting_reports','cellMeetingReports'],
+  ['welfare_fund_receipts','welfareFundReceipts'],
 ].map(([table,key])=>({table,key:key as keyof ChurchAllData,document:true})));
 
 export async function fetchAllRows(client: SupabaseClient, table: string, namespace?: string): Promise<any[]> {
@@ -1095,6 +1099,7 @@ export async function pullAllDataFromSupabase(): Promise<{success:boolean;data:P
   await Promise.allSettled(SYNC_TABLES.map(async({table,key,document})=>{
     if(table==='communications'&&!COMMUNICATION_ROLES.includes(syncRole||'')){result.communications=[];return;}
     if(table==='cell_meeting_reports'&&!['super_admin','senior_pastor','administrator','pastor'].includes(syncRole||'')){result.cellMeetingReports=[];return;}
+    if(table==='welfare_fund_receipts'&&!WELFARE_FUND_READ_ROLES.includes(syncRole||'')){result.welfareFundReceipts=[];return;}
     try {
       let records:any[];
       if(syncRole==='member' && table==='events'){

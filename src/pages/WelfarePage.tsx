@@ -59,10 +59,13 @@ import { PrintWelfareEventReportModal } from '../components/welfare/PrintWelfare
 import { paidWelfareAmount, summarizeWelfare } from '../features/welfare/welfareSummary';
 import { assessWelfareStanding, classifyWelfareEligibility, welfareEligibilityLabel, type WelfareEligibility } from '../features/welfare/welfareEligibility';
 import { WelfareStandingNotice } from '../components/welfare/WelfareStandingNotice';
+import { AddWelfareFundsModal, WelfareFundReceiptsPanel } from '../components/welfare/WelfareFundReceipts';
+import { WELFARE_FUND_WRITE_ROLES } from '../features/welfare/welfareFund';
 
 export const WelfarePage: React.FC = () => {
   const {
     welfareContributions,
+    welfareFundReceipts,
     welfareClaims,
     welfareEvents,
     welfareEventContributions,
@@ -80,7 +83,8 @@ export const WelfarePage: React.FC = () => {
   const { canAccess, currentUser } = useAuth();
   const { success, warning } = useToast();
 
-  const [activeTab, setActiveTab] = useState<'events' | 'claims' | 'dues' | 'members' | 'analytics' | 'policy'>('events');
+  const [activeTab, setActiveTab] = useState<'events' | 'claims' | 'dues' | 'fund' | 'members' | 'analytics' | 'policy'>('events');
+  const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
 
   // Search & Filter state for welfare events
   const [eventSearch, setEventSearch] = useState('');
@@ -142,9 +146,9 @@ export const WelfarePage: React.FC = () => {
   const assessmentDate = new Date().toISOString().slice(0, 10);
 
   // Aggregations
-  const { totalDuesCollected, paidClaims, totalDisbursed, fundBalance } = useMemo(
-    () => summarizeWelfare(welfareContributions, welfareClaims),
-    [welfareContributions, welfareClaims],
+  const { totalDuesCollected, totalAdditionalFunds, paidClaims, totalDisbursed, fundBalance } = useMemo(
+    () => summarizeWelfare(welfareContributions, welfareClaims, welfareFundReceipts),
+    [welfareContributions, welfareClaims, welfareFundReceipts],
   );
 
   const pendingClaimsCount = useMemo(() => {
@@ -489,17 +493,17 @@ export const WelfarePage: React.FC = () => {
   }, [calcCategory, calcMonthsContributed, calcArrearsMonths]);
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-              <HeartHandshake className="w-6 h-6 text-emerald-700" />
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <HeartHandshake className="w-6 h-6 shrink-0 text-emerald-700" />
               Welfare & Benevolence Mutual Fund
             </h1>
           </div>
-          <div className="flex items-center gap-2 text-xs text-slate-500 mt-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 mt-1">
             <span>{settings.church_name || 'Greater Works City Church'}</span>
             <span aria-hidden="true">·</span>
             <span>Emergency Relief, Dues Ledger & Member Benevolence</span>
@@ -529,6 +533,10 @@ export const WelfarePage: React.FC = () => {
             <Printer className="w-4 h-4 text-slate-600" />
             Audit Report
           </button>
+          {WELFARE_FUND_WRITE_ROLES.includes(currentUser.role) && <button
+            onClick={() => setIsAddFundsOpen(true)}
+            className="px-3.5 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center gap-1.5"
+          ><Plus className="w-4 h-4" />Add to Fund</button>}
           <button
             onClick={() => {
               setSelectedMemberForDues(undefined);
@@ -564,14 +572,14 @@ export const WelfarePage: React.FC = () => {
         {/* Total Fund Balance */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
           <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-semibold uppercase tracking-wider">Welfare Dues Balance</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">Welfare Fund Balance</span>
             <Wallet className="w-4 h-4 text-emerald-600" />
           </div>
           <div className={`text-2xl font-black ${fundBalance < 0 ? 'text-rose-700' : 'text-slate-900'}`}>
             GH₵ {fundBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className="text-[11px] text-emerald-700 font-semibold mt-1">
-            Recorded dues less recorded payouts
+            Dues + confirmed fund receipts − payouts
           </div>
         </div>
 
@@ -644,6 +652,11 @@ export const WelfarePage: React.FC = () => {
         </div>
       </div>
 
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950" aria-label="Welfare fund balance breakdown">
+        Member dues GH₵ {totalDuesCollected.toFixed(2)} + additional fund receipts GH₵ {totalAdditionalFunds.toFixed(2)} − payouts GH₵ {totalDisbursed.toFixed(2)} = fund balance GH₵ {fundBalance.toFixed(2)}.
+        <button onClick={() => setActiveTab('fund')} className="ml-2 font-semibold underline">View fund receipts</button>
+      </div>
+
       {/* Navigation Segmented Tabs */}
       <div className="flex border-b border-slate-200 space-x-6 text-sm font-bold overflow-x-auto">
         <button
@@ -692,6 +705,8 @@ export const WelfarePage: React.FC = () => {
           Monthly Welfare Dues Ledger
         </button>
 
+        <button onClick={() => setActiveTab('fund')} className={`pb-3 transition flex items-center gap-2 border-b-2 whitespace-nowrap ${activeTab === 'fund' ? 'border-emerald-800 text-emerald-800' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><Wallet className="w-4 h-4" />Fund Receipts</button>
+
         <button
           onClick={() => setActiveTab('members')}
           className={`pb-3 transition flex items-center gap-2 border-b-2 whitespace-nowrap ${
@@ -728,6 +743,8 @@ export const WelfarePage: React.FC = () => {
           Constitution & Eligibility Calculator
         </button>
       </div>
+
+      {activeTab === 'fund' && <WelfareFundReceiptsPanel key={`${currentUser.id}:${currentUser.role}`} />}
 
       {/* TAB 0: WELFARE EVENT CONTRIBUTIONS */}
       {activeTab === 'events' && (
@@ -1681,13 +1698,13 @@ export const WelfarePage: React.FC = () => {
 
                 <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 space-y-1">
                   <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider block">
-                    Recorded Dues Balance
+                    Recorded Fund Balance
                   </span>
                   <div className="text-xl font-black text-emerald-900">
                     GH₵ {fundBalance.toFixed(2)}
                   </div>
                   <p className="text-[11px] text-emerald-700">
-                    Dues receipts less recorded relief payouts. Reconcile with Church Finance before further payments.
+                    Member dues plus confirmed fund receipts, less relief payouts. Reconcile with Church Finance before further payments.
                   </p>
                 </div>
               </div>
@@ -1909,6 +1926,11 @@ export const WelfarePage: React.FC = () => {
         onClose={() => setIsApplyModalOpen(false)}
       />
 
+      {isAddFundsOpen && WELFARE_FUND_WRITE_ROLES.includes(currentUser.role) && <AddWelfareFundsModal
+        key={`${currentUser.id}:${currentUser.role}`}
+        onClose={() => setIsAddFundsOpen(false)}
+        onSaved={() => { setIsAddFundsOpen(false); setActiveTab('fund'); }}
+      />}
       <RecordWelfareDuesModal
         isOpen={isRecordDuesModalOpen}
         onClose={() => {

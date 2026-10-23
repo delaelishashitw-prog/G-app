@@ -26,3 +26,17 @@ test('welfare reconciliation retains a deficit and sums decimal receipts in pese
   assert.equal(summary.totalDuesCollected, 0.3);
   assert.equal(summary.fundBalance, -0.7);
 });
+
+test('unnamed welfare receipts add to the fund, keep member dues separate, and exclude voids and unconfirmed receipts', () => {
+  const receipt = (id, amount, status = 'active', extra = {}) => ({ id, amount, status, ...extra });
+  const summary = summarizeWelfare([{ amount: 10895 }], [{ amount_disbursed: 250 }], [
+    receipt('carry-forward', 15400), receipt('anonymous', 50.25), receipt('decimal', 0.1), receipt('decimal-2', 0.2),
+    receipt('voided', 500, 'voided'), receipt('pending', 1000, 'active', { _sync_status: 'pending' }),
+    receipt('pending-void', 200, 'voided', { _sync_status: 'pending', updated_at: '2026-10-22T12:00:00Z' }),
+    receipt('unconfirmed-void', 100, 'voided', { _sync_status: 'pending' }),
+  ]);
+  assert.equal(summary.totalDuesCollected, 10895);
+  assert.equal(summary.totalAdditionalFunds, 15650.55);
+  assert.equal(summary.totalDisbursed, 250);
+  assert.equal(summary.fundBalance, 26295.55);
+});

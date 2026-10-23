@@ -1,4 +1,5 @@
 import {validateCellReport,type CellMeetingReport} from '../lib/cellReports';
+import { validateWelfareFundReceipt, WELFARE_FUND_READ_ROLES, WELFARE_FUND_WRITE_ROLES, WELFARE_FUND_VOID_ROLES, type WelfareFundInput } from '../features/welfare/welfareFund';
 import { withSyncTransaction, hasPendingChanges } from '../lib/supabase';
 import { createPickupToken, findPickup } from '../lib/childSafety';
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
@@ -23,6 +24,7 @@ import {
   ChurchSettings,
   PaymentMethod,
   WelfareContribution,
+  WelfareFundReceipt,
   WelfareClaim,
   WelfareEvent,
   WelfareEventContribution,
@@ -350,6 +352,9 @@ interface ChurchDataContextType {
 
   // Welfare & Benevolence
   welfareContributions: WelfareContribution[];
+  welfareFundReceipts: WelfareFundReceipt[];
+  recordWelfareFundReceipt: (record: WelfareFundInput) => Promise<void>;
+  voidWelfareFundReceipt: (id: string, reason: string) => Promise<void>;
   recordWelfareContribution: (record: Omit<WelfareContribution, 'id' | 'created_at'>) => WelfareContribution;
   deleteWelfareContribution: (id: string) => void;
   welfareClaims: WelfareClaim[];
@@ -455,6 +460,9 @@ const ChurchDataContext = createContext<ChurchDataContextType | undefined>(undef
 
 export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser, isAuthenticated, canAccess } = useAuth();
+  const fundIdentity = `${isAuthenticated}:${currentUser.id}:${currentUser.role}`;
+  const fundIdentityRef = React.useRef(fundIdentity); fundIdentityRef.current = fundIdentity;
+  const fundSavesInFlight = React.useRef(new Set<string>());
   const isInitialMount = React.useRef(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(() => new Date());
@@ -485,6 +493,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
   const [welfareContributions, setWelfareContributions] = useState<WelfareContribution[]>([]);
+  const [welfareFundReceipts, setWelfareFundReceipts] = useState<WelfareFundReceipt[]>([]);
 
   const [welfareClaims, setWelfareClaims] = useState<WelfareClaim[]>([]);
 
@@ -554,6 +563,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     communications: setCommunications,
     auditLogs: setAuditLogs,
     welfareContributions: setWelfareContributions,
+    welfareFundReceipts: setWelfareFundReceipts,
     welfareClaims: setWelfareClaims,
     welfareEvents: setWelfareEvents,
     welfareEventContributions: setWelfareEventContributions,
@@ -566,7 +576,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     counselingSessions: setCounselingSessions,
     intercessorySlots: setIntercessorySlots
   };
-  const currentData = { members, visitors, services, attendance, headcounts, giving, campaigns, pledges, expenses, churchAccounts, churchFinances, departmentBudgets, ministries, smallGroups, cellMeetingReports, events, pastoralCare, prayerRequests, communications, auditLogs, welfareContributions, welfareClaims, welfareEvents, welfareEventContributions, childCheckIns, assets, rosterAssignments, foundationCohorts, foundationStudents, pastoralVisitations, counselingSessions, intercessorySlots };
+  const currentData = { members, visitors, services, attendance, headcounts, giving, campaigns, pledges, expenses, churchAccounts, churchFinances, departmentBudgets, ministries, smallGroups, cellMeetingReports, events, pastoralCare, prayerRequests, communications, auditLogs, welfareContributions, welfareFundReceipts, welfareClaims, welfareEvents, welfareEventContributions, childCheckIns, assets, rosterAssignments, foundationCohorts, foundationStudents, pastoralVisitations, counselingSessions, intercessorySlots };
   const currentDataRef=React.useRef(currentData); currentDataRef.current=currentData;
   const documentBaseline=React.useRef<Record<string,any[]>>({});
   const incomingDocuments=React.useRef<Record<string,any[]>>({});
@@ -626,6 +636,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if(key==='settings') {local.settings=mergePendingRecords('settings',[{id:'gwcc_global_settings',...loadFromStorage('settings',initialSettings)}])[0];continue;}
       if(currentUser.role==='member' && table==='events'){local.events=[];continue;}
       if(table==='cell_meeting_reports'&&!['super_admin','senior_pastor','administrator','pastor'].includes(currentUser.role)){local.cellMeetingReports=[];continue;}
+      if(table==='welfare_fund_receipts'&&!WELFARE_FUND_READ_ROLES.includes(currentUser.role)){local.welfareFundReceipts=[];continue;}
       (local as any)[key]=table==='communications'&&!canAccess('communication')?[]:mergePendingRecords(table,loadFromStorage(key,[]));
     }
     applyData(local);setDataOwner(`${currentUser.id}:${currentUser.role}`);
@@ -670,7 +681,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if(!isAuthenticated || dataOwner!==`${currentUser.id}:${currentUser.role}`) return;
     saveToStorage('settings',settings);
     for(const [key,rows] of Object.entries(currentData)) saveToStorage(key,rows);
-  },[isAuthenticated,currentUser.id,currentUser.role,dataOwner,settings,members, visitors, services, attendance, headcounts, giving, campaigns, pledges, expenses, churchAccounts, churchFinances, departmentBudgets, ministries, smallGroups, cellMeetingReports, events, pastoralCare, prayerRequests, communications, auditLogs, welfareContributions, welfareClaims, welfareEvents, welfareEventContributions, childCheckIns, assets, rosterAssignments, foundationCohorts, foundationStudents, pastoralVisitations, counselingSessions, intercessorySlots]);
+  },[isAuthenticated,currentUser.id,currentUser.role,dataOwner,settings,members, visitors, services, attendance, headcounts, giving, campaigns, pledges, expenses, churchAccounts, churchFinances, departmentBudgets, ministries, smallGroups, cellMeetingReports, events, pastoralCare, prayerRequests, communications, auditLogs, welfareContributions, welfareFundReceipts, welfareClaims, welfareEvents, welfareEventContributions, childCheckIns, assets, rosterAssignments, foundationCohorts, foundationStudents, pastoralVisitations, counselingSessions, intercessorySlots]);
 
   // Modules previously stored only on one device now use the same durable outbox.
   useEffect(()=>{
@@ -1197,6 +1208,42 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   // WELFARE & BENEVOLENCE
+  const saveFundReceipt = async (record: WelfareFundReceipt, expected?: string) => {
+    const identity = fundIdentity, key = `${identity}:${record.id}`;
+    if (fundSavesInFlight.current.has(key)) throw new Error('This receipt is already being saved.');
+    fundSavesInFlight.current.add(key);
+    try {
+      const result = await dbSyncUpsert('welfare_fund_receipts', { ...record, ...(expected ? { _expected_updated_at: expected } : {}) });
+      if (!result.durable) throw new Error(result.error || 'This device could not preserve the receipt. Keep the form open and retry.');
+      if (fundIdentityRef.current !== identity) throw new Error('The signed-in account changed. The pending receipt remains with its original account.');
+      const rows = [{ ...record, _sync_status: 'pending' as const }, ...currentDataRef.current.welfareFundReceipts.filter(row => row.id !== record.id)];
+      currentDataRef.current.welfareFundReceipts = rows;
+      setWelfareFundReceipts(rows);
+    } finally { fundSavesInFlight.current.delete(key); }
+  };
+  const recordWelfareFundReceipt = async (input: WelfareFundInput) => {
+    if (!isAuthenticated || !WELFARE_FUND_WRITE_ROLES.includes(currentUser.role)) throw new Error('Finance staff access is required to add welfare funds.');
+    validateWelfareFundReceipt(input);
+    const existing = currentDataRef.current.welfareFundReceipts.find(row => row.id === input.id);
+    if (existing) {
+      if (existing.status !== 'active' || (['amount', 'date', 'source', 'reference_no', 'notes'] as const).some(field => existing[field] !== (typeof input[field] === 'string' ? (input[field] as string).trim() : input[field]))) {
+        throw new Error('This receipt ID already has different data. Check Fund Receipts and pending changes.');
+      }
+      return;
+    }
+    if (currentDataRef.current.welfareFundReceipts.some(row => row.reference_no.toLowerCase() === input.reference_no.trim().toLowerCase())) throw new Error('This reference already has a receipt. Check Fund Receipts before adding it again.');
+    await saveFundReceipt({ ...input, reference_no: input.reference_no.trim(), notes: input.notes.trim(), status: 'active' });
+  };
+  const voidWelfareFundReceipt = async (id: string, reason: string) => {
+    if (!isAuthenticated || !WELFARE_FUND_VOID_ROLES.includes(currentUser.role)) throw new Error('A senior pastor or super administrator must void welfare fund receipts.');
+    const row = currentDataRef.current.welfareFundReceipts.find(receipt => receipt.id === id);
+    if (!row) throw new Error('This receipt is unavailable. Refresh the welfare page.');
+    if (row.status === 'voided') return;
+    if (row._sync_status === 'pending' || !row.updated_at) throw new Error('Wait for cloud confirmation before voiding this receipt.');
+    if (reason.trim().length < 5 || reason.trim().length > 1000) throw new Error('Enter a void reason in 5–1,000 characters.');
+    await saveFundReceipt({ ...row, status: 'voided', void_reason: reason.trim() }, row.updated_at);
+  };
+
   const recordWelfareContribution = (
     data: Omit<WelfareContribution, 'id' | 'created_at'>
   ): WelfareContribution =>
@@ -1552,6 +1599,9 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       auditLogs,
       logAction,
       welfareContributions,
+      welfareFundReceipts,
+      recordWelfareFundReceipt,
+      voidWelfareFundReceipt,
       recordWelfareContribution,
       deleteWelfareContribution,
       welfareClaims,
@@ -1632,6 +1682,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       communications,
       auditLogs,
       welfareContributions,
+      welfareFundReceipts,
       welfareClaims,
       welfareEvents,
       welfareEventContributions,

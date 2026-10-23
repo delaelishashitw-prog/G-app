@@ -1353,3 +1353,93 @@ test('removing ministry or cell assignments persists explicit nulls through JSON
   assert.deepEqual(actual,{ministry_id:null,ministry_name:null,small_group_id:null,small_group_name:null});
  });}finally{await db.close();}
 });
+
+test('unnamed welfare fund receipts preserve named dues, treasury balances, server identity and exactly-once retries',async()=>{
+  const db=await setupDatabase();
+  const receipt={id:'wfr-ledger',amount:15400,date:'2026-10-22',source:'opening_balance',reference_no:'WFR-LEDGER',notes:'Previous welfare fund ledger carried forward',status:'active',recorded_by_id:member,recorded_by:'Forged name',created_at:'1900-01-01T00:00:00Z'};
+  try {
+    await db.exec("INSERT INTO public.church_accounts(id,name,current_balance,opening_balance,currency) VALUES('wfr-cash','Synthetic cash',10895,10895,'GHS')");
+    const before=(await db.query('SELECT to_jsonb(a) doc FROM public.church_accounts a')).rows;
+    await asUser(db,root,async()=>{
+      const changes=[upsert('welfare_fund_receipts',receipt)],id=operation();
+      const first=(await apply(db,changes,id)).rows[0].result;
+      const saved=first[0].record;
+      assert.equal(saved.amount,15400);assert.equal(saved.status,'active');
+      assert.equal(saved.recorded_by_id,root);assert.notEqual(saved.recorded_by,'Forged name');assert.notEqual(saved.created_at,receipt.created_at);
+      assert.equal(first[0].canonical_table,'welfare_fund_receipts');
+      assert.deepEqual((await apply(db,changes,id)).rows[0].result,first);
+      await assert.rejects(apply(db,[upsert('welfare_fund_receipts',{...receipt,amount:1})],id),/Operation ID was reused/);
+      assert.equal((await db.query("SELECT count(*)::int n FROM public.gwcc_documents WHERE namespace='welfare_fund_receipts'")).rows[0].n,1);
+      await assert.rejects(apply(db,[upsert('welfare_fund_receipts',{...receipt,id:'wfr-duplicate',reference_no:' wfr-ledger '})]),/reference already/);
+      await assert.rejects(db.query("INSERT INTO public.gwcc_documents(namespace,id,data) VALUES('welfare_fund_receipts','bypass','{}')"),/permission denied/);
+      await assert.rejects(db.query('SELECT gwcc_private.prepare_welfare_fund_receipt($1,NULL)',[JSON.stringify(receipt)]),/permission denied/);
+    });
+    assert.deepEqual((await db.query('SELECT to_jsonb(a) doc FROM public.church_accounts a')).rows,before);
+    assert.equal((await db.query('SELECT count(*)::int n FROM public.welfare_contributions')).rows[0].n,0);
+    assert.equal((await db.query("SELECT count(*)::int n FROM public.audit_logs WHERE module='welfare_fund_receipts' AND actor_id=$1",[root])).rows[0].n,1);
+    assert.equal((await db.query("SELECT 'public.gwcc_documents'=ANY(gwcc_private.backup_tables()) covered")).rows[0].covered,true);
+  }finally{await db.close();}
+});
+
+test('welfare fund receipts reject invalid money, dates, unknown fields and changes; voids require a senior role, version and reason',async()=>{
+  const db=await setupDatabase();
+  const receipt={id:'wfr-controlled',amount:80.25,date:'2026-10-22',source:'donation',reference_no:'WFR-CONTROLLED',notes:'Anonymous welfare donation received',status:'active'};
+  try {
+    let saved,voided;
+    await asUser(db,root,async()=>{
+      for(const patch of [{amount:0},{amount:-1},{amount:0.001},{amount:'NaN'},{amount:'Infinity'},{amount:null},{amount:1e9+1},{date:'2099-01-01'},{date:'2026-02-30'},{date:'bad'},{source:null},{source:'constructor'},{notes:'x'},{reference_no:' '},{member_id:'some-member'},{member_name:'Anonymous'},{account_id:'cash'},{status:'voided'},{void_reason:'fake void'}])await assert.rejects(apply(db,[upsert('welfare_fund_receipts',{...receipt,...patch})]));
+      saved=(await apply(db,[upsert('welfare_fund_receipts',receipt)])).rows[0].result[0].record;
+      await assert.rejects(apply(db,[{table:'welfare_fund_receipts',id:receipt.id,operation:'delete'}]),/voided, not deleted/);
+      await assert.rejects(apply(db,[upsert('welfare_fund_receipts',{...saved,status:'voided',void_reason:'Duplicate receipt'})]),/version is required/);
+      await assert.rejects(apply(db,[upsert('welfare_fund_receipts',{...saved,amount:100},saved.updated_at)]),/cannot be edited/);
+      await assert.rejects(apply(db,[upsert('welfare_fund_receipts',{...saved,source:'other'},saved.updated_at)]),/cannot be edited/);
+      await assert.rejects(apply(db,[upsert('welfare_fund_receipts',{...saved,status:'voided',void_reason:'x'},saved.updated_at)]),/void reason/);
+      await assert.rejects(apply(db,[upsert('welfare_fund_receipts',{...saved,status:'voided',void_reason:'Duplicate receipt'},'2020-01-01T00:00:00Z')]),/changed on another device/);
+    });
+    await db.query("UPDATE public.profiles SET role='finance_officer',authorization_reviewed_at=now() WHERE id=$1",[other]);
+    await asUser(db,other,async()=>{
+      await assert.rejects(apply(db,[upsert('welfare_fund_receipts',{...saved,status:'voided',void_reason:'Duplicate receipt'},saved.updated_at)]),/senior pastor/);
+      const own=(await apply(db,[upsert('welfare_fund_receipts',{...receipt,id:'wfr-finance',reference_no:'WFR-FINANCE',source:'unallocated_dues'})])).rows[0].result[0].record;
+      assert.equal(own.recorded_by_id,other);
+    });
+    await asUser(db,root,async()=>{
+      const changes=[upsert('welfare_fund_receipts',{...saved,status:'voided',void_reason:'Receipt entered twice',voided_by_id:member,voided_at:'1900-01-01T00:00:00Z'},saved.updated_at)],id=operation();
+      const response=(await apply(db,changes,id)).rows[0].result;voided=response[0].record;
+      assert.equal(voided.status,'voided');assert.equal(voided.amount,80.25);assert.equal(voided.recorded_by_id,root);assert.equal(voided.created_at,saved.created_at);
+      assert.equal(voided.voided_by_id,root);assert.notEqual(voided.voided_at,'1900-01-01T00:00:00Z');assert.equal(voided.void_reason,'Receipt entered twice');
+      assert.deepEqual((await apply(db,changes,id)).rows[0].result,response);
+      await assert.rejects(apply(db,[upsert('welfare_fund_receipts',{...voided,status:'active'},voided.updated_at)]),/cannot be reopened/);
+      await assert.rejects(apply(db,[upsert('welfare_fund_receipts',{...voided,void_reason:'Changed reason'},voided.updated_at)]),/cannot be reopened/);
+      assert.equal((await db.query("SELECT data FROM public.gwcc_documents WHERE namespace='welfare_fund_receipts' AND id='wfr-controlled'")).rows[0].data.void_reason,'Receipt entered twice');
+    });
+  }finally{await db.close();}
+});
+
+test('welfare fund permissions deny members, unreviewed and disabled accounts, and staff without finance or welfare access',async()=>{
+  const db=await setupDatabase();
+  const receipt={id:'wfr-access',amount:25,date:'2026-10-22',source:'other',reference_no:'WFR-ACCESS',notes:'Synthetic additional welfare funds',status:'active'};
+  try {
+    await asUser(db,root,()=>apply(db,[upsert('welfare_fund_receipts',receipt)]));
+    const select=()=>db.query("SELECT data FROM public.gwcc_documents WHERE namespace='welfare_fund_receipts'");
+    for(const role of ['member','administrator','pastor','ministry_leader','attendance_officer','data_entry']){
+      await db.query('UPDATE public.profiles SET role=$1,authorization_reviewed_at=now() WHERE id=$2',[role,other]);
+      await asUser(db,other,async()=>{
+        assert.equal((await select()).rows.length,['administrator','pastor'].includes(role)?1:0,role);
+        await assert.rejects(apply(db,[upsert('welfare_fund_receipts',{...receipt,id:`wfr-${role}`,reference_no:`WFR-${role}`})]),/authorization|authorized/);
+      });
+    }
+    for(const role of ['super_admin','senior_pastor','finance_officer']){
+      await db.query('UPDATE public.profiles SET role=$1,authorization_reviewed_at=now() WHERE id=$2',[role,other]);
+      await asUser(db,other,async()=>{assert.equal((await select()).rows.length,1);assert.equal((await db.query("SELECT public.gwcc_can_write('welfare_fund_receipts') ok")).rows[0].ok,true);});
+    }
+    for(const update of ["authorization_reviewed_at=NULL","authorization_reviewed_at=now(),is_active=false"]){
+      await db.exec(`UPDATE public.profiles SET ${update} WHERE id='${other}'`);
+      await asUser(db,other,async()=>{assert.equal((await select()).rows.length,0);await assert.rejects(apply(db,[upsert('welfare_fund_receipts',receipt)]),/authorization/);});
+    }
+    await db.query("UPDATE public.profiles SET role='finance_officer',authorization_reviewed_at=now(),is_active=true WHERE id=$1",[other]);
+    await asUser(db,other,async()=>{assert.equal((await select()).rows.length,0);await assert.rejects(apply(db,[upsert('welfare_fund_receipts',receipt)]),/authorization/);},{aal:'aal1',session_id:other,role:'authenticated'});
+    await db.query("UPDATE auth.sessions SET not_after=now()-interval '1 minute' WHERE user_id=$1",[other]);
+    await asUser(db,other,async()=>{assert.equal((await select()).rows.length,0);await assert.rejects(apply(db,[upsert('welfare_fund_receipts',receipt)]),/authorization/);});
+    await db.exec('SET ROLE anon');await assert.rejects(select(),/permission denied/);
+  }finally{await db.close();}
+});

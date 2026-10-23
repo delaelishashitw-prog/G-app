@@ -3,6 +3,7 @@ import { X, Printer, HeartHandshake, ShieldCheck, Download, Calendar, TrendingUp
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { WelfareClaim, WelfareContribution } from '../../types/database.types';
 import { paidWelfareAmount, summarizeWelfare } from '../../features/welfare/welfareSummary';
+import { welfareFundSources, welfareFundReceiptStatus } from '../../features/welfare/welfareFund';
 
 interface WelfareAuditReportModalProps {
   isOpen: boolean;
@@ -10,11 +11,11 @@ interface WelfareAuditReportModalProps {
 }
 
 export const WelfareAuditReportModal: React.FC<WelfareAuditReportModalProps> = ({ isOpen, onClose }) => {
-  const { settings, welfareContributions, welfareClaims, members } = useChurchData();
+  const { settings, welfareContributions, welfareFundReceipts, welfareClaims, members } = useChurchData();
 
   if (!isOpen) return null;
 
-  const { totalDuesCollected, paidClaims, totalDisbursed, fundBalance } = summarizeWelfare(welfareContributions, welfareClaims);
+  const { totalDuesCollected, totalAdditionalFunds, paidClaims, totalDisbursed, fundBalance } = summarizeWelfare(welfareContributions, welfareClaims, welfareFundReceipts);
   const pendingClaims = welfareClaims.filter((c) => c.status === 'pending' || c.status === 'under_review');
   const pendingLiabilities = pendingClaims.reduce((sum, c) => sum + c.amount_requested, 0);
 
@@ -110,9 +111,9 @@ export const WelfareAuditReportModal: React.FC<WelfareAuditReportModalProps> = (
               <span className="text-[11px] text-slate-500">{paidClaims.length} claims with payouts</span>
             </div>
             <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Welfare Dues Balance</span>
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Welfare Fund Balance</span>
               <span className={`text-lg font-black block mt-1 ${fundBalance < 0 ? 'text-rose-700' : 'text-emerald-700'}`}>GH₵ {fundBalance.toFixed(2)}</span>
-              <span className="text-[11px] text-slate-500">Recorded dues less recorded payouts</span>
+              <span className="text-[11px] text-slate-500">Dues + confirmed fund receipts − payouts</span>
             </div>
             <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Pending Requests</span>
@@ -120,6 +121,12 @@ export const WelfareAuditReportModal: React.FC<WelfareAuditReportModalProps> = (
               <span className="text-[11px] text-slate-500">{pendingClaims.length} awaiting review</span>
             </div>
           </div>
+
+          <section className="space-y-3" aria-label="Additional welfare fund receipts">
+            <h3 className="text-xs font-bold uppercase tracking-wider">Additional Fund Receipts · GH₵ {totalAdditionalFunds.toFixed(2)}</h3>
+            <p className="text-xs text-slate-600">GH₵ {totalDuesCollected.toFixed(2)} member dues + GH₵ {totalAdditionalFunds.toFixed(2)} additional receipts − GH₵ {totalDisbursed.toFixed(2)} payouts = GH₵ {fundBalance.toFixed(2)} fund balance. New receipts awaiting confirmation and confirmed voids are excluded. Pending voids retain their confirmed amount.</p>
+            <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-slate-100"><tr><th className="p-2">Date / Reference</th><th className="p-2">Source / Note</th><th className="p-2 text-right">Amount</th><th className="p-2">Status / Recorded by</th></tr></thead><tbody>{welfareFundReceipts.length === 0 ? <tr><td colSpan={4} className="p-3 text-slate-500">No additional fund receipts recorded.</td></tr> : [...welfareFundReceipts].sort((a,b) => a.date.localeCompare(b.date) || a.reference_no.localeCompare(b.reference_no)).map(receipt => <tr key={receipt.id} className="border-b border-slate-100"><td className="p-2 align-top">{receipt.date}<div className="break-all">{receipt.reference_no}</div></td><td className="p-2 align-top">{welfareFundSources[receipt.source]}<p className="whitespace-pre-wrap break-words">{receipt.notes}</p>{receipt.void_reason && <p className="text-rose-700">Void reason: {receipt.void_reason} · {receipt.voided_by || 'Awaiting confirmation'}</p>}</td><td className="whitespace-nowrap p-2 text-right align-top">GH₵ {receipt.amount.toFixed(2)}</td><td className="p-2 align-top">{welfareFundReceiptStatus(receipt)}<div>{receipt.recorded_by || 'Awaiting confirmation'}</div></td></tr>)}</tbody></table></div>
+          </section>
 
           {/* Aid Category Distribution Breakdown */}
           <div className="space-y-3">
