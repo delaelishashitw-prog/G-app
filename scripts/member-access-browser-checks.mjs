@@ -130,7 +130,8 @@ export async function checkMemberPasswordSetup(browser, { origin, settings, samp
   });
   try {
     const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
-    await page.goto(`${origin}/auth/password`);
+    const invitation = new URLSearchParams({ access_token: token, refresh_token: session.refresh_token, expires_in: '3600', token_type: 'bearer', type: 'invite' });
+    await page.goto(`${origin}/auth/password#${invitation}`);
     await page.getByLabel('New password', { exact: true }).fill('a-long-member-password');
     await page.getByLabel('Confirm password', { exact: true }).fill('a-long-member-password');
     await page.getByRole('button', { name: 'Save password', exact: true }).click();
