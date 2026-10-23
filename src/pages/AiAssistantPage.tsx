@@ -1,4 +1,4 @@
-import { authenticatedFetch } from '../lib/apiClient';
+import { authenticatedFetch, apiRequest } from '../lib/apiClient';
 import React, { useState } from 'react';
 import {
   Sparkles,
@@ -30,6 +30,21 @@ export const AiAssistantPage: React.FC = () => {
   const [responseOutput, setResponseOutput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [attendanceInsights, setAttendanceInsights] = useState<any>(null);
+  const [attendanceError, setAttendanceError] = useState('');
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [attendanceStart, setAttendanceStart] = useState('');
+  const [attendanceEnd, setAttendanceEnd] = useState('');
+  const loadAttendanceInsights = async () => {
+    if (attendanceLoading) return;
+    setAttendanceError(''); setAttendanceLoading(true);
+    try {
+      const result = await apiRequest('/api/ai/attendance-insights', { startDate: attendanceStart, endDate: attendanceEnd });
+      setAttendanceInsights(result);
+    } catch (error) { setAttendanceInsights(null); setAttendanceError(error instanceof Error ? error.message : 'Unable to load attendance insights.'); }
+    finally { setAttendanceLoading(false); }
+  };
+
 
   // Pre-configured Studio Templates
   const templates = {
@@ -197,6 +212,25 @@ export const AiAssistantPage: React.FC = () => {
         </div>
       </div>
 
+      <section aria-label="Attendance Intelligence" className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Attendance Intelligence</h2>
+          <p className="text-sm text-slate-600">Read-only recorded check-ins. No names, phone numbers or private pastoral notes are sent to the AI model.</p>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-sm text-slate-700">Start date <input type="date" aria-label="Attendance start date" value={attendanceStart} onChange={e => setAttendanceStart(e.target.value)} className="block rounded-lg border border-slate-300 px-3 py-2" /></label>
+          <label className="text-sm text-slate-700">End date <input type="date" aria-label="Attendance end date" value={attendanceEnd} onChange={e => setAttendanceEnd(e.target.value)} className="block rounded-lg border border-slate-300 px-3 py-2" /></label>
+          <button type="button" disabled={attendanceLoading || !attendanceStart || !attendanceEnd} onClick={loadAttendanceInsights} className="rounded-lg bg-emerald-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{attendanceLoading ? 'Loading...' : 'View attendance summary'}</button>
+        </div>
+        {attendanceError && <p role="alert" className="text-sm text-red-700">{attendanceError}</p>}
+        {attendanceInsights && <div aria-live="polite" className="space-y-3 text-sm text-slate-700">
+          <p className="font-semibold">{attendanceInsights.totalCheckins} recorded check-ins ({attendanceInsights.memberCheckins} member; {attendanceInsights.visitorCheckins} visitor)</p>
+          <p>Period: {attendanceInsights.period.startDate} to {attendanceInsights.period.endDate}. Excluded duplicate, absent or incomplete entries: {attendanceInsights.excludedRecords}.</p>
+          <p className="text-xs text-slate-500">{attendanceInsights.metric}</p>
+          <ul className="divide-y divide-slate-100">{attendanceInsights.byService.map((service: any) => <li className="flex justify-between py-2" key={service.serviceId}><span>{service.serviceName}</span><strong>{service.checkins}</strong></li>)}</ul>
+          {attendanceInsights.totalCheckins === 0 && <p>No present check-ins found in the selected period. This does not confirm that no service took place.</p>}
+        </div>}
+      </section>
       {/* Main Categories Selector */}
       <div className="flex border-b border-slate-200 gap-2 overflow-x-auto pb-px">
         <button
