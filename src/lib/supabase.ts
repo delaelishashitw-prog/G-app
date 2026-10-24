@@ -593,21 +593,8 @@ export function sanitizeRecordForSupabase(table: string, record: any): any {
         end_date: cleanDate(record.end_date) || new Date().toISOString().split('T')[0],
       };
 
-    case 'pledges': {
-      const memId = record.member_id && typeof record.member_id === 'string' && record.member_id.trim() !== '' ? record.member_id.trim() : null;
-      const pledged = Number(record.amount_pledged) || 0;
-      const paid = Number(record.amount_paid) || 0;
-      return {
-        ...record,
-        member_id: memId,
-        amount_pledged: pledged,
-        amount_paid: paid,
-        balance: Math.max(0, pledged - paid),
-        status: record.status || 'active',
-        pledge_date: cleanDate(record.pledge_date) || new Date().toISOString().split('T')[0],
-        due_date: cleanDate(record.due_date) || new Date().toISOString().split('T')[0],
-      };
-    }
+    case 'pledges':
+      return { ...record, start_date: cleanDate(record.start_date), due_date: cleanDate(record.due_date) };
 
     case 'events': {
       const now = new Date().toISOString();
@@ -1013,7 +1000,17 @@ export function withSyncTransaction<T>(work:()=>T):T {
   try {const value=work();const changes=atomicChanges;atomicChanges=null;if(changes.length)void queueMany(changes);return value;}
   catch(error){atomicChanges=null;throw error;}
 }
-export const mergePendingRecords = (table: string, rows: any[]) => syncRole==='member'&&table==='events'?rows:outbox?.merge(table,rows) || rows;
+export const mergePendingRecords = (table: string, rows: any[]) => {
+  if(syncRole==='member'&&table==='events')return rows;
+  const merged=outbox?.merge(table,rows) || rows;
+  // A pledge-linked Giving entry is confirmed only when its whole payment batch succeeds.
+  if(table==='giving')return merged.flatMap(row=>{
+    if(!row.pledge_id || row._sync_status!=='pending')return [row];
+    const confirmed=rows.find(item=>item.id===row.id && item._sync_status!=='pending');
+    return confirmed?[confirmed]:[];
+  });
+  return merged;
+};
 
 export async function flushSyncOutbox({approveRestored=false}:{approveRestored?:boolean}={}): Promise<SyncResult> {
   const client=getSupabaseClient(); const active=outbox; const owner=syncOwner;
@@ -1060,8 +1057,12 @@ export async function dbSyncUpsert(table: string, record: any): Promise<SyncResu
   if(!record) return {success:false,pending:getSyncStatus().pending,error:'A record is required.'};
   try{return queue(upsertMutation(table,record));}catch(error){return {success:false,pending:getSyncStatus().pending,error:(error as Error).message};}
 }
-export async function dbSyncDelete(table: string, id: string): Promise<SyncResult> {
-  return queue({table,operation:'delete',id});
+export async function dbSyncUpsertBatch(records: Array<{table: string; record: unknown}>): Promise<SyncResult> {
+  try { return await queueMany(records.map(({table, record}) => upsertMutation(table, record))); }
+  catch(error) { return {success:false,pending:getSyncStatus().pending,error:(error as Error).message}; }
+}
+export async function dbSyncDelete(table: string, id: string, expected_updated_at?: string): Promise<SyncResult> {
+  return queue({table,operation:'delete',id,expected_updated_at});
 }
 
 export const SYNC_TABLES: Array<{table:string;key:keyof ChurchAllData;document?:boolean}> = [

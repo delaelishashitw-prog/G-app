@@ -1,394 +1,253 @@
-import React, { useState } from 'react';
-import { X, Coins, User, Calendar, FileText, CheckCircle2, Phone, CreditCard } from 'lucide-react';
-import { useChurchData } from '../../contexts/ChurchDataContext';
-import { formatGHS, numberToCedisWords } from '../../lib/currencyUtils';
-import { PaymentMethod } from '../../types/database.types';
+import React, { useState } from "react";
+import { useChurchData } from "../../contexts/ChurchDataContext";
+import { ghanaToday } from "../../lib/financeViewUtils";
+import type { PledgePaymentInput } from "../../features/pledges/pledgeStore";
+import {
+  PledgeDialog,
+  pledgeFieldClass as field,
+  pledgeButtonClass as button,
+} from "./PledgeDialog";
+import { PledgePaymentFields } from "./PledgePaymentFields";
 
-interface AddPledgeModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  preselectedCampaignId?: string;
-  preselectedMemberId?: string;
-}
-
-export const AddPledgeModal: React.FC<AddPledgeModalProps> = ({
+export function AddPledgeModal({
   isOpen,
   onClose,
   preselectedCampaignId,
   preselectedMemberId,
-}) => {
-  const { members, campaigns, createPledge, recordPledgePayment } = useChurchData();
-
-  const [memberSearch, setMemberSearch] = useState('');
-  const [selectedMemberId, setSelectedMemberId] = useState(
-    preselectedMemberId || (members[0]?.id ?? '')
-  );
-  const [campaignId, setCampaignId] = useState(
-    preselectedCampaignId || campaigns[0]?.id || 'custom'
-  );
-  const [customCampaignName, setCustomCampaignName] = useState('');
-  const [amountPledged, setAmountPledged] = useState('');
-  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
-  const [dueDate, setDueDate] = useState('2026-12-31');
-  const [notes, setNotes] = useState('');
-
-  // Initial deposit option
-  const [hasInitialDeposit, setHasInitialDeposit] = useState(false);
-  const [initialAmount, setInitialAmount] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('mobile_money');
-  const [paymentChannel, setPaymentChannel] = useState('MTN MoMo');
-  const [referenceNumber, setReferenceNumber] = useState('');
-  const [syncWithGiving, setSyncWithGiving] = useState(true);
-
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  preselectedCampaignId?: string;
+  preselectedMemberId?: string;
+}) {
+  const { members, campaigns, createPledge } = useChurchData();
+  const [id] = useState(() => crypto.randomUUID()),
+    [search, setSearch] = useState(""),
+    [memberId, setMember] = useState(preselectedMemberId || ""),
+    [campaignId, setCampaign] = useState(preselectedCampaignId || "");
+  const [amount, setAmount] = useState(""),
+    [start, setStart] = useState(ghanaToday),
+    [due, setDue] = useState(""),
+    [notes, setNotes] = useState("");
+  const [deposit, setDeposit] = useState(false),
+    [depositAmount, setDepositAmount] = useState(""),
+    [details, setDetails] = useState<PledgePaymentInput>(() => ({
+      id: crypto.randomUUID(),
+      date: ghanaToday(),
+      method: "cash",
+      syncWithGiving: true,
+    }));
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
   if (!isOpen) return null;
-
-  const selectedMember = members.find((m) => m.id === selectedMemberId);
-  const activeCampaigns = campaigns.filter((c) => c.is_active);
-
-  const filteredMembers = members.filter((m) => {
-    if (!memberSearch) return true;
-    const term = (memberSearch || '').toLowerCase();
-    return (
-      (m.first_name || '').toLowerCase().includes(term) ||
-      (m.last_name || '').toLowerCase().includes(term) ||
-      (m.member_id || '').toLowerCase().includes(term) ||
-      (m.phone && m.phone.includes(term))
+  const activeCampaigns = campaigns.filter(
+      (row) => row.is_active && !row._sync_status,
+    ),
+    people = members.filter(
+      (row) =>
+        !row.is_archived && !["deceased", "transferred"].includes(row.status),
     );
-  });
-
-  const numericPledged = parseFloat(amountPledged) || 0;
-  const numericInitial = parseFloat(initialAmount) || 0;
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const visiblePeople = people.filter((row) =>
+    `${row.first_name} ${row.last_name} ${row.member_id} ${row.phone || ""}`
+      .toLowerCase()
+      .includes(search.toLowerCase()),
+  );
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedMember) return;
-    if (numericPledged <= 0) return;
-
-    let targetCampaignName = '';
-    if (campaignId === 'custom') {
-      targetCampaignName = customCampaignName.trim() || 'General Kingdom Building Fund';
-    } else {
-      const cmp = campaigns.find((c) => c.id === campaignId);
-      targetCampaignName = cmp ? cmp.name : 'Capital Project Campaign';
+    if (busy) return;
+    setError("");
+    setBusy(true);
+    try {
+      const person = people.find((row) => row.id === memberId),
+        campaign = activeCampaigns.find((row) => row.id === campaignId);
+      if (!person || !campaign)
+        throw new Error("Choose an active saved member and campaign.");
+      await createPledge(
+        {
+          id,
+          campaign_id: campaign.id,
+          campaign_name: campaign.name,
+          member_id: person.id,
+          member_name: `${person.first_name} ${person.last_name}`,
+          amount_pledged: Number(amount),
+          amount_paid: 0,
+          start_date: start,
+          due_date: due,
+          notes: notes.trim(),
+        },
+        deposit ? { amount: Number(depositAmount), details } : undefined,
+      );
+      onClose();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
     }
-
-    const memberFullName = `${selectedMember.first_name} ${selectedMember.last_name}`.trim();
-
-    const created = createPledge({
-      campaign_id: campaignId !== 'custom' ? campaignId : undefined,
-      campaign_name: targetCampaignName,
-      member_id: selectedMember.id,
-      member_name: memberFullName,
-      member_phone: selectedMember.phone,
-      amount_pledged: numericPledged,
-      amount_paid: 0,
-      start_date: startDate,
-      due_date: dueDate,
-      notes: notes.trim() || undefined,
-    });
-
-    // If an initial deposit was made right upon pledging
-    if (hasInitialDeposit && numericInitial > 0 && created) {
-      recordPledgePayment(created.id, numericInitial, {
-        method: paymentMethod,
-        channel: paymentChannel,
-        reference: referenceNumber.trim() || undefined,
-        syncWithGiving,
-      });
-    }
-
-    onClose();
   };
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden max-h-[92vh] flex flex-col">
-        {/* Header */}
-        <div className="px-6 py-4 bg-gradient-to-r from-purple-900 to-indigo-900 text-white flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-purple-700/50 flex items-center justify-center border border-purple-400/30">
-              <Coins className="w-5 h-5 text-amber-300" />
-            </div>
-            <div>
-              <h2 className="text-base font-bold tracking-tight">Record Kingdom Pledge Commitment</h2>
-              <p className="text-xs text-purple-200">
-                Faith covenant for sanctuary expansion & capital projects
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-purple-200 hover:text-white hover:bg-white/10 transition"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 text-xs overflow-y-auto flex-1">
-          {/* Member Selection */}
-          <div className="space-y-1.5">
-            <label className="block font-semibold text-slate-800">
-              Church Member <span className="text-rose-500">*</span>
-            </label>
-            <div className="relative mb-1.5">
-              <input
-                type="text"
-                value={memberSearch}
-                onChange={(e) => setMemberSearch(e.target.value)}
-                placeholder="Search member by name, phone or ID (e.g. Kwame, 024...)"
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:bg-white focus:border-purple-600 focus:outline-hidden"
-              />
-            </div>
+    <PledgeDialog
+      title="Record New Pledge"
+      onClose={onClose}
+      busy={busy}
+      error={error}
+    >
+      <form onSubmit={submit}>
+        <fieldset disabled={busy} className="space-y-4">
+          {!activeCampaigns.length && (
+            <p className="rounded-lg bg-amber-50 p-3">
+              Create a campaign with New Campaign, then wait for cloud
+              confirmation before adding pledges.
+            </p>
+          )}
+          <label className="block">
+            Find member
+            <input
+              className={field}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Name, membership number or phone"
+            />
+          </label>
+          <div className="block">
+            <label htmlFor="addpledgemodal-member">Member</label>
             <select
+              id="addpledgemodal-member"
+              className={field}
               required
-              value={selectedMemberId}
-              onChange={(e) => setSelectedMemberId(e.target.value)}
-              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-medium text-slate-900 focus:border-purple-600 focus:outline-hidden"
+              value={memberId}
+              onChange={(e) => setMember(e.target.value)}
             >
-              {filteredMembers.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.first_name} {m.last_name} ({m.member_id}) {m.phone ? `— ${m.phone}` : ''}
-                </option>
-              ))}
+              <option value="">Select member</option>
+              {people
+                .filter(
+                  (row) => row.id === memberId || visiblePeople.includes(row),
+                )
+                .map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.first_name} {row.last_name} ({row.member_id})
+                  </option>
+                ))}
             </select>
-            {selectedMember && (
-              <div className="p-2.5 bg-purple-50/70 border border-purple-100 rounded-lg flex items-center justify-between text-[11px] text-purple-900">
-                <div className="flex items-center gap-2">
-                  <User className="w-4 h-4 text-purple-700" />
-                  <span className="font-semibold">
-                    {selectedMember.first_name} {selectedMember.last_name}
-                  </span>
-                  <span className="text-purple-600">({selectedMember.member_id})</span>
-                </div>
-                {selectedMember.phone && (
-                  <div className="flex items-center gap-1 text-slate-600">
-                    <Phone className="w-3.5 h-3.5" />
-                    <span>{selectedMember.phone}</span>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
-
-          {/* Campaign Selection */}
-          <div className="space-y-1.5">
-            <label className="block font-semibold text-slate-800">
-              Capital Project Campaign <span className="text-rose-500">*</span>
-            </label>
+          <div className="block">
+            <label htmlFor="addpledgemodal-campaign">Campaign</label>
             <select
+              id="addpledgemodal-campaign"
+              className={field}
+              required
               value={campaignId}
-              onChange={(e) => setCampaignId(e.target.value)}
-              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-medium text-slate-900 focus:border-purple-600 focus:outline-hidden"
+              onChange={(e) => {
+                setCampaign(e.target.value);
+                setDue(
+                  activeCampaigns.find((row) => row.id === e.target.value)
+                    ?.end_date || "",
+                );
+              }}
             >
-              {activeCampaigns.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} (Target: {formatGHS(c.target_amount)})
+              <option value="">Select campaign</option>
+              {activeCampaigns.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.name}
                 </option>
               ))}
-              <option value="custom">+ Custom / New Special Project</option>
             </select>
-
-            {campaignId === 'custom' && (
-              <div className="pt-1.5">
-                <input
-                  type="text"
-                  required
-                  value={customCampaignName}
-                  onChange={(e) => setCustomCampaignName(e.target.value)}
-                  placeholder="Enter custom project name (e.g. Choir Robes & Sound Board)"
-                  className="w-full px-3 py-2 bg-white border border-purple-300 rounded-lg text-xs font-semibold text-purple-950 focus:border-purple-600 focus:outline-hidden"
-                />
-              </div>
-            )}
           </div>
-
-          {/* Amount & Currency */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="block font-semibold text-slate-800">
-                Pledged Amount (GH₵) <span className="text-rose-500">*</span>
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 font-bold font-mono">
-                  GH₵
-                </div>
+          <label className="block">
+            Pledged amount (GH₵)
+            <input
+              className={field}
+              type="number"
+              step="0.01"
+              min="0.01"
+              max="1000000000"
+              required
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+          </label>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label>
+              Start date
+              <input
+                className={field}
+                type="date"
+                required
+                value={start}
+                onChange={(e) => setStart(e.target.value)}
+              />
+            </label>
+            <label>
+              Due date
+              <input
+                className={field}
+                type="date"
+                required
+                min={start}
+                value={due}
+                onChange={(e) => setDue(e.target.value)}
+              />
+            </label>
+          </div>
+          <div className="block">
+            <label htmlFor="addpledgemodal-pledge-notes">Pledge notes</label>
+            <textarea
+              id="addpledgemodal-pledge-notes"
+              className={field}
+              maxLength={1000}
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </div>
+          <label className="flex gap-2">
+            <input
+              type="checkbox"
+              checked={deposit}
+              onChange={(e) => setDeposit(e.target.checked)}
+            />
+            Record an initial payment
+          </label>
+          {deposit && (
+            <div className="space-y-3 rounded-xl border p-3">
+              <label className="block">
+                Initial payment (GH₵)
                 <input
+                  className={field}
                   type="number"
                   step="0.01"
-                  min="1"
+                  min="0.01"
+                  max={amount || undefined}
                   required
-                  value={amountPledged}
-                  onChange={(e) => setAmountPledged(e.target.value)}
-                  placeholder="0.00"
-                  className="w-full pl-13 pr-3 py-2 bg-white border border-slate-300 rounded-lg text-sm font-mono font-bold text-slate-900 focus:border-purple-600 focus:outline-hidden"
+                  value={depositAmount}
+                  onChange={(e) => setDepositAmount(e.target.value)}
                 />
-              </div>
-              {numericPledged > 0 && (
-                <p className="text-[10px] text-purple-800 italic leading-tight">
-                  {numberToCedisWords(numericPledged)}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="block font-semibold text-slate-800">
-                Target Due Date <span className="text-rose-500">*</span>
               </label>
-              <div className="relative">
-                <input
-                  type="date"
-                  required
-                  value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs text-slate-900 focus:border-purple-600 focus:outline-hidden font-mono"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Start Date & Notes */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="block font-semibold text-slate-800">Commitment Date</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs text-slate-900 focus:border-purple-600 focus:outline-hidden font-mono"
+              <PledgePaymentFields
+                value={details}
+                onChange={setDetails}
+                minDate={start}
+                maxDate={ghanaToday()}
               />
             </div>
-
-            <div className="space-y-1.5">
-              <label className="block font-semibold text-slate-800">Sacrificial Arrangement / Notes</label>
-              <input
-                type="text"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="e.g. GH₵ 500 monthly installment until December"
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs text-slate-900 focus:border-purple-600 focus:outline-hidden"
-              />
-            </div>
-          </div>
-
-          {/* Optional: Immediate Initial Deposit */}
-          <div className="pt-2 border-t border-slate-200">
-            <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="hasInitialDeposit"
-                  checked={hasInitialDeposit}
-                  onChange={(e) => setHasInitialDeposit(e.target.checked)}
-                  className="w-4 h-4 text-purple-700 rounded border-slate-300 focus:ring-purple-500"
-                />
-                <label htmlFor="hasInitialDeposit" className="font-semibold text-slate-800 cursor-pointer">
-                  Member is making an initial payment right now
-                </label>
-              </div>
-              <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                Optional
-              </span>
-            </div>
-
-            {hasInitialDeposit && (
-              <div className="mt-3 p-3.5 bg-purple-50/50 rounded-xl border border-purple-200 space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block font-semibold text-purple-950 mb-1">
-                      Initial Deposit Amount (GH₵)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      max={numericPledged > 0 ? numericPledged : undefined}
-                      value={initialAmount}
-                      onChange={(e) => setInitialAmount(e.target.value)}
-                      placeholder="e.g. 500.00"
-                      className="w-full px-3 py-1.5 bg-white border border-purple-300 rounded-lg text-xs font-mono font-bold text-purple-900 focus:outline-hidden"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-semibold text-purple-950 mb-1">Payment Method</label>
-                    <select
-                      value={paymentMethod}
-                      onChange={(e) => {
-                        const m = e.target.value as PaymentMethod;
-                        setPaymentMethod(m);
-                        if (m === 'mobile_money') setPaymentChannel('MTN MoMo');
-                        else if (m === 'cash') setPaymentChannel('Cash at Counter');
-                        else if (m === 'bank_transfer') setPaymentChannel('GCB Bank Deposit');
-                        else setPaymentChannel('Cheque');
-                      }}
-                      className="w-full px-3 py-1.5 bg-white border border-purple-300 rounded-lg text-xs text-slate-900"
-                    >
-                      <option value="mobile_money">Mobile Money (MoMo)</option>
-                      <option value="cash">Cash</option>
-                      <option value="bank_transfer">Bank Transfer / Deposit</option>
-                      <option value="cheque">Cheque</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block font-semibold text-purple-950 mb-1">Channel / Telco</label>
-                    <input
-                      type="text"
-                      value={paymentChannel}
-                      onChange={(e) => setPaymentChannel(e.target.value)}
-                      placeholder="e.g. MTN MoMo, Telecel Cash"
-                      className="w-full px-3 py-1.5 bg-white border border-purple-300 rounded-lg text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold text-purple-950 mb-1">Tx Reference / MoMo ID</label>
-                    <input
-                      type="text"
-                      value={referenceNumber}
-                      onChange={(e) => setReferenceNumber(e.target.value)}
-                      placeholder="e.g. MM-4820129"
-                      className="w-full px-3 py-1.5 bg-white border border-purple-300 rounded-lg text-xs font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 pt-1 text-[11px] text-purple-900">
-                  <input
-                    type="checkbox"
-                    id="syncWithGiving"
-                    checked={syncWithGiving}
-                    onChange={(e) => setSyncWithGiving(e.target.checked)}
-                    className="w-3.5 h-3.5 text-purple-700 rounded border-purple-300"
-                  />
-                  <label htmlFor="syncWithGiving" className="cursor-pointer">
-                    Automatically record this deposit in the Church Giving & Offerings ledger
-                  </label>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Modal Footer */}
-          <div className="pt-4 border-t border-slate-200 flex items-center justify-end gap-2.5">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 font-semibold transition"
-            >
+          )}
+          <p className="text-xs text-slate-500">
+            Changes are saved on this device first. Collected totals update
+            after cloud confirmation.
+          </p>
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={onClose}>
               Cancel
             </button>
             <button
+              className={button}
               type="submit"
-              className="px-5 py-2 bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-800 hover:to-indigo-800 text-white rounded-xl font-bold shadow-md flex items-center gap-1.5 transition"
+              disabled={busy || !activeCampaigns.length}
             >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Confirm & Register Pledge</span>
+              {busy ? "Saving…" : "Save pledge"}
             </button>
           </div>
-        </form>
-      </div>
-    </div>
+        </fieldset>
+      </form>
+    </PledgeDialog>
   );
-};
+}

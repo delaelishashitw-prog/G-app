@@ -280,12 +280,35 @@ export interface GivingRecord {
   service_name?: string;
   pledge_id?: string;
   pledge_campaign_name?: string;
+  updated_at?: string;
+  _sync_status?: 'pending';
   status?: 'completed' | 'voided';
   voided_by?: string;
   void_reason?: string;
   notes?: string;
   recorded_by?: string;
   created_at: string;
+}
+
+export interface PledgePayment {
+  id: string;
+  amount: number;
+  date: string;
+  payment_method: PaymentMethod;
+  payment_channel?: string;
+  transaction_reference?: string;
+  notes?: string;
+  sync_with_giving: boolean;
+  giving_id?: string;
+  status: 'completed' | 'voided';
+  receipt_no?: string;
+  recorded_at?: string;
+  recorded_by_id?: string;
+  recorded_by?: string;
+  void_reason?: string;
+  voided_at?: string;
+  voided_by_id?: string;
+  voided_by?: string;
 }
 
 export interface PledgeCampaign {
@@ -296,9 +319,15 @@ export interface PledgeCampaign {
   end_date: string;
   description?: string;
   is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+  _sync_status?: 'pending';
 }
 
 export interface PledgeRecord {
+  payments?: PledgePayment[];
+  legacy_paid_amount?: number;
+  _sync_status?: 'pending';
   id: string;
   campaign_id?: string;
   campaign_name: string;

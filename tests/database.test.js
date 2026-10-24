@@ -7,7 +7,7 @@ const root='11111111-1111-4111-8111-111111111111';
 const member='22222222-2222-4222-8222-222222222222';
 const other='33333333-3333-4333-8333-333333333333';
 
-export async function setupDatabase({beforeSecurityUpgrade,beforeFinanceControls,beforeCommunicationControls,beforeApprovalControls}={}) {
+export async function setupDatabase({beforeSecurityUpgrade,beforeFinanceControls,beforeCommunicationControls,beforeApprovalControls,beforePledgeControls}={}) {
   const db=new PGlite();
   await db.exec(`CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role;
     CREATE SCHEMA auth;CREATE SCHEMA storage;
@@ -25,6 +25,7 @@ export async function setupDatabase({beforeSecurityUpgrade,beforeFinanceControls
     if(file.endsWith('_finance_receipt_controls.sql') && beforeFinanceControls) await beforeFinanceControls(db);
     if(file.endsWith('_communication_draft_controls.sql') && beforeCommunicationControls) await beforeCommunicationControls(db);
     if(file.endsWith('_financial_payment_approvals.sql') && beforeApprovalControls) await beforeApprovalControls(db);
+    if(file.endsWith('_pledge_payment_receipts.sql') && beforePledgeControls)await beforePledgeControls(db);
     const sql=fs.readFileSync(`supabase/migrations/${file}`,'utf8').replace(/CREATE EXTENSION IF NOT EXISTS [^;]+;/g,'');
     try {await db.exec(sql);} catch(error) {await db.close();throw new Error(`${file}: ${error.message} ${error.where || ''}`);}
   }
@@ -1502,4 +1503,81 @@ test('staff event registration canonicalizes members, prevents alias duplicates,
    assert.equal(audit.length,1);assert.match(audit[0].details,/Canonical Member/);
   });
  }finally{await db.close();}
+});
+
+test('pledges preserve historical balances and enforce versioned receipt-backed collections, atomic Giving, voids and protected history',async()=>{
+  let legacyBefore;
+  const db=await setupDatabase({beforePledgeControls:async db=>{
+    await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,phone) VALUES('pledge-member','PLG-MEMBER','Synthetic','Partner','0240000001');
+      INSERT INTO public.pledge_campaigns(id,name,target_amount,start_date,end_date,is_active) VALUES('pledge-campaign','Synthetic campaign',1000,'2026-01-01','2099-12-31',true);
+      INSERT INTO public.pledges(id,campaign_id,member_id,member_name,campaign_name,amount_pledged,amount_paid,start_date,due_date) VALUES('legacy-pledge','pledge-campaign','pledge-member','Synthetic Partner','Synthetic campaign',100,20,'2026-01-01','2099-12-31');`);
+    legacyBefore=(await db.query("SELECT amount_pledged,amount_paid,balance,status FROM public.pledges WHERE id='legacy-pledge'")).rows[0];
+  }});
+  const read=async(table,id)=>(await db.query(`SELECT to_jsonb(p) doc FROM public.${table} p WHERE id=$1`,[id])).rows[0]?.doc;
+  const receipt=(id,amount=10,extra={})=>({id,amount,date:'2026-10-01',payment_method:'cash',payment_channel:'Cash counter',transaction_reference:'SYNTHETIC',notes:'Synthetic payment note',sync_with_giving:false,status:'completed',...extra});
+  const receiptId='bbbbbbbb-bbbb-4bbb-8bbb-000000000001',linkedId='bbbbbbbb-bbbb-4bbb-8bbb-000000000002';
+  try {
+    assert.deepEqual((await db.query("SELECT amount_pledged,amount_paid,balance,status FROM public.pledges WHERE id='legacy-pledge'")).rows[0],legacyBefore);
+    await asUser(db,root,async()=>{
+      let row=await read('pledges','legacy-pledge');
+      await assert.rejects(apply(db,[upsert('pledges',{...row,amount_paid:30},row.updated_at)]),/payment receipts/);
+      await assert.rejects(apply(db,[upsert('pledges',{...row,notes:'stale unversioned edit'})]),/version is required/);
+      await assert.rejects(apply(db,[upsert('pledges',{...row,payments:[receipt(receiptId,81)]},row.updated_at)]),/remaining pledge balance/);
+      await assert.rejects(apply(db,[upsert('pledges',{...row,payments:[receipt(receiptId,1.001)]},row.updated_at)]),/two decimals/);
+      await assert.rejects(apply(db,[upsert('pledges',{...row,payments:[receipt(receiptId,10,{notes:{unsafe:'object'}})]},row.updated_at)]),/must be text/);
+      const beforePayment=row,operationId=operation(),change=upsert('pledges',{...row,legacy_paid_amount:999,payments:[receipt(receiptId)]},row.updated_at);
+      const first=(await apply(db,[change],operationId)).rows[0].result;
+      assert.deepEqual((await apply(db,[change],operationId)).rows[0].result,first,'same operation retries once');
+      row=await read('pledges',row.id);
+      assert.equal(row.legacy_paid_amount,20);assert.equal(row.amount_paid,30);assert.equal(row.balance,70);
+      assert.equal(row.payments[0].recorded_by_id,root);assert.match(row.payments[0].receipt_no,/^PLG-/);assert.ok(row.payments[0].recorded_at);
+      await assert.rejects(apply(db,[upsert('pledges',{...beforePayment,notes:'stale edit'},beforePayment.updated_at)]),/changed on another device/);
+      await assert.rejects(apply(db,[upsert('pledges',{...row,payments:[]},row.updated_at)]),/history cannot be removed/);
+      await assert.rejects(apply(db,[upsert('pledges',{...row,payments:[{...row.payments[0],amount:9}]},row.updated_at)]),/cannot be rewritten/);
+      await assert.rejects(apply(db,[upsert('pledges',{...row,amount_pledged:29},row.updated_at)]),/remaining pledge balance/);
+      const linked=receipt(linkedId,15,{sync_with_giving:true,giving_id:'pledge-gift'});
+      const gift={id:'pledge-gift',member_id:'forged',member_name:'Forged',category:'Other',amount:15,currency:'GHS',date:linked.date,payment_method:'cash',payment_channel:linked.payment_channel,reference_number:linked.transaction_reference,notes:linked.notes,pledge_id:row.id,status:'completed'};
+      const parent=upsert('pledges',{...row,payments:[...row.payments,linked]},row.updated_at);
+      await assert.rejects(apply(db,[parent]),/saved together/);
+      assert.equal((await read('pledges',row.id)).amount_paid,30,'failed linked batch rolls back balance');
+      await assert.rejects(apply(db,[parent,upsert('giving',{...gift,amount:16})]),/matching details/);
+      assert.equal(await read('giving',gift.id),undefined,'failed linked batch rolls back receipt');
+      await apply(db,[parent,upsert('giving',gift)]);
+      row=await read('pledges',row.id);let savedGift=await read('giving',gift.id);
+      assert.equal(row.amount_paid,45);assert.equal(row.balance,55);assert.equal(savedGift.pledge_id,row.id);assert.equal(savedGift.member_id,'pledge-member');assert.equal(savedGift.category,'Building Fund');
+      await assert.rejects(apply(db,[upsert('giving',{...savedGift,status:'voided',void_reason:'Independent void'},savedGift.updated_at)]),/linked pledge payment/);
+      await assert.rejects(apply(db,[upsert('giving',{...savedGift,amount:14},savedGift.updated_at)]),/through the pledge/);
+      const voided={...row,payments:row.payments.map(r=>r.id===linkedId?{...r,status:'voided',void_reason:'Duplicate receipt correction'}:r)};
+      await assert.rejects(apply(db,[upsert('pledges',voided,row.updated_at)]),/saved together/);
+      await assert.rejects(apply(db,[upsert('pledges',voided,row.updated_at),upsert('giving',{...savedGift,status:'voided',void_reason:'Different correction reason'},savedGift.updated_at)]),/matching details/);
+      await apply(db,[upsert('pledges',voided,row.updated_at),upsert('giving',{...savedGift,status:'voided',void_reason:'Duplicate receipt correction',voided_by:'forged actor'},savedGift.updated_at)]);
+      row=await read('pledges',row.id);savedGift=await read('giving',gift.id);
+      assert.equal(row.amount_paid,30);assert.equal(row.payments.length,2);assert.equal(savedGift.status,'voided');assert.equal(savedGift.voided_by,root);assert.equal(row.payments[1].voided_by_id,root);
+      await assert.rejects(apply(db,[upsert('pledges',{...row,payments:row.payments.map(r=>r.id===linkedId?{...r,status:'completed'}:r)},row.updated_at)]),/cannot be reopened/);
+      await assert.rejects(apply(db,[{table:'pledges',id:row.id,operation:'delete',expected_updated_at:row.updated_at}]),/payment history/);
+      const campaign=await read('pledge_campaigns','pledge-campaign');
+      await assert.rejects(apply(db,[upsert('pledge_campaigns',{...campaign,name:'unversioned'})]),/version is required/);
+      await assert.rejects(apply(db,[{table:'pledge_campaigns',id:campaign.id,operation:'delete',expected_updated_at:campaign.updated_at}]),/archived/);
+      await apply(db,[upsert('pledge_campaigns',{...campaign,is_active:false},campaign.updated_at)]);
+      assert.equal((await read('pledges',row.id)).amount_paid,30);
+      const base={id:'new-pledge',campaign_id:campaign.id,member_id:'pledge-member',amount_pledged:100,amount_paid:0,start_date:'2026-01-01',due_date:'2099-12-31',status:'active'};
+      await assert.rejects(apply(db,[upsert('pledges',base)]),/active saved campaign/);
+      const archived=await read('pledge_campaigns',campaign.id);await apply(db,[upsert('pledge_campaigns',{...archived,is_active:true},archived.updated_at)]);
+      await assert.rejects(apply(db,[upsert('pledges',{...base,amount_paid:20})]),/payment receipts/);
+      await assert.rejects(apply(db,[upsert('pledges',{...base,member_id:'missing'})]),/active saved member/);
+      await assert.rejects(apply(db,[upsert('pledges',{...base,payments:[receipt(receiptId)]})]),/already in use/);
+      await apply(db,[upsert('pledges',{...base,payments:[receipt('bbbbbbbb-bbbb-4bbb-8bbb-000000000003',5)]})]);
+      assert.equal((await read('pledges',base.id)).amount_paid,5,'initial payment is atomic with pledge creation');
+      await apply(db,[upsert('giving',{id:'unlinked-gift',category:'Building Fund',amount:1,currency:'GHS',date:'2026-10-01',payment_method:'cash'})]);
+      const unlinked=await read('giving','unlinked-gift');await assert.rejects(apply(db,[upsert('giving',{...unlinked,pledge_id:row.id},unlinked.updated_at)]),/cannot be reassigned/);
+      await assert.rejects(db.query("UPDATE public.pledges SET amount_paid=999 WHERE id='legacy-pledge'"),/permission denied/);
+    });
+    await db.query("UPDATE public.members SET auth_user_id=$1 WHERE id='pledge-member'",[member]);
+    await asUser(db,member,async()=>{
+      assert.equal((await db.query("SELECT payments FROM public.pledges WHERE id='legacy-pledge'")).rows[0].payments.length,2);
+      await assert.rejects(apply(db,[upsert('pledges',{id:'forbidden'})]),/Staff authorization/);
+      await assert.rejects(db.query('SELECT gwcc_private.prepare_pledge($1,NULL)',[JSON.stringify({})]),/permission denied/);
+    });
+    assert.equal((await db.query("SELECT count(*)::int n FROM public.audit_logs WHERE action='VOID_PLEDGE_PAYMENT'")).rows[0].n,1);
+  } finally {await db.close();}
 });

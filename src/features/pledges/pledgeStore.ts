@@ -1,166 +1,204 @@
-import type { Dispatch, SetStateAction } from 'react';
-import type { Member, PaymentMethod, PledgeCampaign, PledgeRecord, PledgeStatus } from '../../types/database.types';
+import type {
+  GivingRecord,
+  PaymentMethod,
+  PledgeCampaign,
+  PledgePayment,
+  PledgeRecord,
+} from "../../types/database.types";
+import { ghanaToday } from "../../lib/financeViewUtils";
 
-export function addCampaign(
-  data: Omit<PledgeCampaign, 'id'>,
-  setCampaigns: Dispatch<SetStateAction<PledgeCampaign[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void
-): PledgeCampaign {
-  const newCampaign: PledgeCampaign = {
-    ...data,
-    id: `cmp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-  };
-
-  setCampaigns((prev) => [newCampaign, ...prev]);
-  logAction('CREATE_CAMPAIGN', 'Pledges', `Created campaign "${newCampaign.name}" with target GH₵ ${newCampaign.target_amount.toLocaleString()}`, newCampaign.id);
-  dbSyncUpsert('pledge_campaigns', newCampaign);
-  return newCampaign;
+export const PLEDGE_WRITE_ROLES = [
+  "super_admin",
+  "senior_pastor",
+  "finance_officer",
+];
+export type PledgeInput = Omit<
+  PledgeRecord,
+  | "balance"
+  | "status"
+  | "created_at"
+  | "updated_at"
+  | "payments"
+  | "legacy_paid_amount"
+  | "_sync_status"
+>;
+export interface PledgePaymentInput {
+  id: string;
+  date?: string;
+  method?: PaymentMethod;
+  channel?: string;
+  reference?: string;
+  notes?: string;
+  syncWithGiving?: boolean;
+  expectedVersion?: string;
+  service_id?: string;
+  service_name?: string;
+}
+export interface PledgePaymentResult {
+  pledge: PledgeRecord;
+  payment: PledgePayment;
+  giving?: GivingRecord;
 }
 
-export function updateCampaign(
-  id: string,
-  updates: Partial<PledgeCampaign>,
-  setCampaigns: Dispatch<SetStateAction<PledgeCampaign[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void
-) {
-  setCampaigns((prev) =>
-    prev.map((c) => {
-      if (c.id === id) {
-        const updated = { ...c, ...updates };
-        logAction('UPDATE_CAMPAIGN', 'Pledges', `Updated campaign "${updated.name}"`, id);
-        dbSyncUpsert('pledge_campaigns', updated);
-        return updated;
-      }
-      return c;
-    })
+export function requireConfirmedPledge<
+  T extends { updated_at?: string; _sync_status?: string },
+>(row: T | undefined, expected?: string): T {
+  if (!row)
+    throw new Error("This record was not found. Refresh and try again.");
+  if (row._sync_status === "pending")
+    throw new Error(
+      "This record is awaiting cloud confirmation. Sync before making another change.",
+    );
+  if (!row.updated_at)
+    throw new Error("Refresh to load the current record version.");
+  if (expected && row.updated_at !== expected)
+    throw new Error(
+      "This record changed while the form was open. Close and reopen the form.",
+    );
+  return row;
+}
+export function validatePledgeMoney(amount: number): void {
+  if (
+    !Number.isFinite(amount) ||
+    amount <= 0 ||
+    amount > 1e9 ||
+    amount !== Math.round(amount * 100) / 100
+  )
+    throw new Error(
+      "Enter an amount above zero with at most two decimal places.",
+    );
+}
+export function validPledgeDate(date: string): boolean {
+  return (
+    /^\d{4}-\d{2}-\d{2}$/.test(date) &&
+    Number.isFinite(Date.parse(date)) &&
+    new Date(date).toISOString().slice(0, 10) === date
   );
 }
-
-export function deleteCampaign(
-  id: string,
-  campaigns: PledgeCampaign[],
-  setCampaigns: Dispatch<SetStateAction<PledgeCampaign[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncDelete: (table: string, id: string) => void
-) {
-  const cmp = campaigns.find((c) => c.id === id);
-  setCampaigns((prev) => prev.filter((c) => c.id !== id));
-  logAction('DELETE_CAMPAIGN', 'Pledges', `Deleted campaign "${cmp?.name || id}"`, id);
-  dbSyncDelete('pledge_campaigns', id);
+export function validateCampaign(row: PledgeCampaign): void {
+  if (!row.name.trim() || row.name.trim().length > 300)
+    throw new Error("Enter a campaign name of up to 300 characters.");
+  validatePledgeMoney(row.target_amount);
+  if (
+    !validPledgeDate(row.start_date) ||
+    !validPledgeDate(row.end_date) ||
+    row.end_date < row.start_date
+  )
+    throw new Error("Campaign end date must be on or after its start.");
 }
-
-export function createPledge(
-  data: Omit<PledgeRecord, 'id' | 'balance' | 'status' | 'created_at'>,
-  members: Member[],
-  setPledges: Dispatch<SetStateAction<PledgeRecord[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void
-): PledgeRecord {
-  const balance = Math.max(0, data.amount_pledged - data.amount_paid);
-  const status: PledgeStatus = balance <= 0 ? 'completed' : data.amount_paid > 0 ? 'partially_paid' : 'active';
-  const newRecord: PledgeRecord = {
-    ...data,
-    id: `plg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    balance,
-    status,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-
-  setPledges((prev) => [newRecord, ...prev]);
-  const member = members.find((m) => m.id === data.member_id);
-  const mName = member ? `${member.first_name} ${member.last_name}` : data.member_name || 'Member';
-  logAction(
-    'CREATE_PLEDGE',
-    'Pledges',
-    `Recorded pledge of GH₵ ${data.amount_pledged.toFixed(2)} by ${mName} for "${data.campaign_name}"`,
-    newRecord.id
-  );
-  dbSyncUpsert('pledges', newRecord);
-  return newRecord;
+export function validatePledge(row: PledgeRecord): void {
+  validatePledgeMoney(row.amount_pledged);
+  if (row.amount_pledged < row.amount_paid)
+    throw new Error(
+      "The commitment cannot be lower than the amount already collected.",
+    );
+  if (
+    !validPledgeDate(row.start_date || "") ||
+    !validPledgeDate(row.due_date) ||
+    row.due_date < row.start_date!
+  )
+    throw new Error("Pledge due date must be on or after its start.");
 }
-
-export function updatePledge(
-  id: string,
-  updates: Partial<PledgeRecord>,
-  setPledges: Dispatch<SetStateAction<PledgeRecord[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void
-) {
-  setPledges((prev) =>
-    prev.map((p) => {
-      if (p.id === id) {
-        const updatedPledge = { ...p, ...updates, updated_at: new Date().toISOString() };
-        if (updates.amount_pledged !== undefined || updates.amount_paid !== undefined) {
-          const pledged = updates.amount_pledged ?? p.amount_pledged;
-          const paid = updates.amount_paid ?? p.amount_paid;
-          const newBal = Math.max(0, pledged - paid);
-          updatedPledge.balance = newBal;
-          updatedPledge.status = newBal <= 0 ? 'completed' : paid > 0 ? 'partially_paid' : 'active';
-        }
-        logAction('UPDATE_PLEDGE', 'Pledges', `Updated pledge record for ${updatedPledge.member_name}`, id);
-        dbSyncUpsert('pledges', updatedPledge);
-        return updatedPledge;
-      }
-      return p;
-    })
-  );
-}
-
-export function deletePledge(
-  id: string,
-  pledges: PledgeRecord[],
-  setPledges: Dispatch<SetStateAction<PledgeRecord[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncDelete: (table: string, id: string) => void
-) {
-  const p = pledges.find((item) => item.id === id);
-  setPledges((prev) => prev.filter((item) => item.id !== id));
-  logAction('DELETE_PLEDGE', 'Pledges', `Deleted pledge record of ${p?.member_name || id}`, id);
-  dbSyncDelete('pledges', id);
-}
-
-export function recordPledgePayment(
-  pledgeId: string,
+export function buildPledgePayment(
+  pledge: PledgeRecord,
   amount: number,
-  pledges: PledgeRecord[],
-  setPledges: Dispatch<SetStateAction<PledgeRecord[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void,
-  recordGiving: (data: Omit<any, 'id' | 'created_at'>) => any,
-  paymentDetails?: {
-    method?: PaymentMethod;
-    channel?: string;
-    reference?: string;
-    syncWithGiving?: boolean;
-  }
-) {
-  const existing=pledges.find(row=>row.id===pledgeId);
-  if(!existing)throw new Error('Pledge not found. Refresh and try again.');
-  if(!Number.isFinite(amount)||amount<=0||amount>existing.balance)throw new Error('Enter a payment within the remaining pledge balance.');
-  const paid=Math.round((existing.amount_paid+amount)*100)/100;
-  const affectedPledge:PledgeRecord={...existing,amount_paid:paid,balance:Math.max(0,existing.amount_pledged-paid),
-    status:paid>=existing.amount_pledged?'completed':'partially_paid',updated_at:new Date().toISOString()};
-  setPledges(pledges.map(row=>row.id===pledgeId?affectedPledge:row));
-  logAction('PLEDGE_PAYMENT','Pledges',`Recorded GH₵ ${amount.toFixed(2)} on pledge by ${existing.member_name}`,pledgeId);
-  dbSyncUpsert('pledges',affectedPledge);
-
-  if (paymentDetails?.syncWithGiving && affectedPledge) {
-    const plg = affectedPledge as PledgeRecord;
-    recordGiving({
-      member_id: plg.member_id,
-      member_name: plg.member_name,
-      donor_name: plg.member_name,
-      category: 'Building Fund',
-      amount,
-      currency: 'GHS',
-      date: new Date().toISOString().split('T')[0],
-      payment_method: paymentDetails.method || 'cash',
-      payment_channel: paymentDetails.channel || 'Cash Deposit',
-      reference_number: paymentDetails.reference || `PLG-${Date.now().toString().slice(-6)}`,
-      notes: `Pledge installment for ${plg.campaign_name}`,
-    });
-  }
+  input: PledgePaymentInput,
+  today = ghanaToday(),
+): PledgePaymentResult {
+  validatePledgeMoney(amount);
+  if (
+    !/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(
+      input.id,
+    )
+  )
+    throw new Error("Reopen the payment form to create a receipt ID.");
+  if (pledge.status === "cancelled")
+    throw new Error("Payments are closed for a cancelled pledge.");
+  if (amount > pledge.balance)
+    throw new Error("The payment exceeds the remaining pledge balance.");
+  const date = input.date || today;
+  if (
+    !validPledgeDate(date) ||
+    date > today ||
+    date < (pledge.start_date || "")
+  )
+    throw new Error("Payment date must be between the pledge start and today.");
+  if (
+    (input.notes?.length || 0) > 1000 ||
+    (input.reference?.length || 0) > 200 ||
+    (input.channel?.length || 0) > 200
+  )
+    throw new Error("Payment reference, channel or notes are too long.");
+  const sync = Boolean(input.syncWithGiving),
+    givingId = sync ? `pledge-${input.id}` : undefined;
+  const payment: PledgePayment = {
+    id: input.id,
+    amount,
+    date,
+    payment_method: input.method || "cash",
+    payment_channel: input.channel || "",
+    transaction_reference: input.reference || "",
+    notes: input.notes || "",
+    sync_with_giving: sync,
+    ...(givingId ? { giving_id: givingId } : {}),
+    status: "completed",
+  };
+  const giving: GivingRecord | undefined = givingId
+    ? {
+        id: givingId,
+        member_id: pledge.member_id,
+        member_name: pledge.member_name,
+        donor_name: pledge.member_name,
+        category: "Building Fund",
+        amount,
+        currency: "GHS",
+        date,
+        payment_method: payment.payment_method,
+        payment_channel: payment.payment_channel,
+        reference_number: payment.transaction_reference,
+        notes: payment.notes,
+        pledge_id: pledge.id,
+        pledge_campaign_name: pledge.campaign_name,
+        status: "completed",
+        created_at: new Date().toISOString(),
+        ...(input.service_id
+          ? { service_id: input.service_id, service_name: input.service_name }
+          : {}),
+      }
+    : undefined;
+  // Financial totals retain their last cloud-confirmed values until the atomic batch is acknowledged.
+  return {
+    pledge: { ...pledge, payments: [...(pledge.payments || []), payment] },
+    payment,
+    giving,
+  };
+}
+export function pledgeOverdue(
+  pledge: Pick<PledgeRecord, "balance" | "due_date" | "status">,
+  today = ghanaToday(),
+): boolean {
+  return (
+    pledge.status !== "cancelled" &&
+    pledge.balance > 0 &&
+    Boolean(pledge.due_date) &&
+    pledge.due_date < today
+  );
+}
+export function pledgeDisplayStatus(
+  pledge: PledgeRecord,
+  today = ghanaToday(),
+): string {
+  return pledgeOverdue(pledge, today) ? "overdue" : pledge.status;
+}
+export function pledgeLegacyPaid(pledge: PledgeRecord): number {
+  return (
+    pledge.legacy_paid_amount ??
+    Math.max(
+      0,
+      pledge.amount_paid -
+        (pledge.payments || [])
+          .filter((p) => p.status === "completed" && p.recorded_at)
+          .reduce((sum, p) => sum + p.amount, 0),
+    )
+  );
 }

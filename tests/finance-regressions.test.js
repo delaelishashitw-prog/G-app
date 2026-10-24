@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import {create,act} from 'react-test-renderer';
 import {transferBetweenAccounts,voidChurchFinance} from '../src/features/finance/financeStore.ts';
-import {recordPledgePayment} from '../src/features/pledges/pledgeStore.ts';
+import {buildPledgePayment} from '../src/features/pledges/pledgeStore.ts';
 import {recordEventContribution,updateEventContribution,deleteEventContribution} from '../src/features/welfare/welfareStore.ts';
 import {isActiveTransaction,sumActive} from '../src/lib/ledgerUtils.ts';
 import {reportExpenses} from '../src/lib/reportData.ts';
@@ -29,12 +29,13 @@ test('a transfer request scheduled alongside a React state update preserves bala
     assert.throws(()=>reverse(),/Approvals & Payments/);assert.equal(synced.length,1);
   }finally{await act(async()=>tree.unmount());}
 });
-test('pledge payments create the requested giving receipt before deferred React setters execute',()=>{
-  const pledge={id:'pledge',member_id:'member',member_name:'Member',amount_pledged:100,amount_paid:0,balance:100};
-  let scheduled,receipt;const writes=[];
-  recordPledgePayment('pledge',20,[pledge],action=>scheduled=action,noop,(...args)=>writes.push(args),data=>receipt=data,{syncWithGiving:true,reference:'BANK-1'});
-  assert.equal(receipt.amount,20);assert.equal(scheduled[0].amount_paid,20);assert.equal(writes[0][1].balance,80);
-  assert.throws(()=>recordPledgePayment('pledge',101,[pledge],noop,noop,noop,noop),/remaining/);
+test('pledge payment planning creates matching receipts without mutating confirmed React state',()=>{
+  const pledge={id:'pledge',campaign_name:'Synthetic',member_id:'member',member_name:'Member',amount_pledged:100,amount_paid:0,balance:100,status:'active',start_date:'2026-01-01'};
+  const input={id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',syncWithGiving:true,reference:'BANK-1',date:'2026-10-24'};
+  const planned=buildPledgePayment(pledge,20,input,'2026-10-24');
+  assert.equal(planned.giving.amount,20);assert.equal(planned.payment.giving_id,planned.giving.id);
+  assert.equal(planned.pledge.amount_paid,0);assert.equal(planned.pledge.balance,100);assert.equal(pledge.payments,undefined);
+  assert.throws(()=>buildPledgePayment(pledge,101,input,'2026-10-24'),/remaining/);
 });
 test('linked welfare receipt creation, correction, and void adjust the same treasury account and preserve history',()=>{
   const event={id:'event',title:'Aid',minimum_contribution:20,status:'open'};
