@@ -1,6 +1,6 @@
-import { isActiveTransaction } from './ledgerUtils';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import {buildReportSnapshot, reportPeriodLabel, reportFilterLabel, reportSum, type ReportFilters, type ReportSources} from './reportSnapshot';
+import {jsPDF} from 'jspdf';
+import {autoTable} from 'jspdf-autotable';
 import {
   ChurchSettings,
   GivingRecord,
@@ -24,7 +24,7 @@ export type ReportTemplateType =
   | 'small_groups'
   | 'pledges_audit';
 
-export interface PdfExportOptions {
+export interface PdfExportOptions extends ReportFilters {
   template: ReportTemplateType;
   startDate: string;
   endDate: string;
@@ -37,7 +37,7 @@ export interface PdfExportOptions {
   notes?: string;
 }
 
-export interface ChurchReportData {
+export interface ChurchReportData extends ReportSources {
   settings: ChurchSettings;
   members: Member[];
   visitors: Visitor[];
@@ -53,6 +53,9 @@ export interface ChurchReportData {
 export function formatGHS(amount: number): string {
   return `GH₵ ${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+
+// Standard PDF fonts do not contain the cedi glyph; use its unambiguous ISO code.
+const formatPdfGHS = (amount: number) => `GHS ${amount.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
 
 // Generate the complete PDF document
 export function generateChurchReportPdf(
@@ -96,59 +99,15 @@ export function generateChurchReportPdf(
   const textMuted: [number, number, number] = [100, 116, 139]; // #64748b
   const borderLight: [number, number, number] = [226, 232, 240]; // #e2e8f0
 
-  // Filter data by dates
-  const filteredGiving = data.giving.filter((g) => {
-    if(!isActiveTransaction(g))return false;
-    if (!startDate && !endDate) return true;
-    if (startDate && g.date < startDate) return false;
-    if (endDate && g.date > endDate) return false;
-    return true;
-  });
-
-  const filteredExpenses = data.expenses.filter((e) => {
-    if (!startDate && !endDate) return true;
-    if (startDate && e.date < startDate) return false;
-    if (endDate && e.date > endDate) return false;
-    return true;
-  });
-
-  const filteredAttendance = data.attendance.filter((a) => {
-    if (!startDate && !endDate) return true;
-    if (startDate && a.date < startDate) return false;
-    if (endDate && a.date > endDate) return false;
-    return true;
-  });
-
-  const filteredVisitors = data.visitors.filter((v) => {
-    if (!startDate && !endDate) return true;
-    if (startDate && v.visit_date < startDate) return false;
-    if (endDate && v.visit_date > endDate) return false;
-    return true;
-  });
-
-  const filteredMembers = data.members.filter((m) => !m.is_archived);
-
-  // Financial aggregates
-  const totalIncome = filteredGiving.reduce((sum, item) => sum + item.amount, 0);
-  const totalExpense = filteredExpenses.reduce((sum, item) => sum + item.amount, 0);
-  const netSurplus = totalIncome - totalExpense;
-
-  // Tithes & Offerings Breakdown
-  const tithesTotal = filteredGiving
-    .filter((g) => (g.category || '').toLowerCase().includes('tithe'))
-    .reduce((s, g) => s + g.amount, 0);
-  const offeringsTotal = filteredGiving
-    .filter((g) => (g.category || '').toLowerCase().includes('offering'))
-    .reduce((s, g) => s + g.amount, 0);
-  const buildingFundTotal = filteredGiving
-    .filter((g) => (g.category || '').toLowerCase().includes('building'))
-    .reduce((s, g) => s + g.amount, 0);
-  const otherGivingTotal = totalIncome - (tithesTotal + offeringsTotal + buildingFundTotal);
-
-  // Pledges summary
-  const totalPledged = data.pledges.reduce((s, p) => s + p.amount_pledged, 0);
-  const totalPledgePaid = data.pledges.reduce((s, p) => s + p.amount_paid, 0);
-  const totalPledgeBalance = data.pledges.reduce((s, p) => s + p.balance, 0);
+  const snapshot = buildReportSnapshot(data, options);
+  if (snapshot.error) throw new Error(snapshot.error);
+  const filteredGiving = snapshot.giving, filteredReceipts = snapshot.receipts, filteredExpenses = snapshot.expenses;
+  const filteredAttendance = snapshot.attendance, filteredVisitors = snapshot.visitors, filteredMembers = snapshot.members;
+  const {income: totalIncome, expenditure: totalExpense, surplus: netSurplus, tithes: tithesTotal,
+    offerings: offeringsTotal, building: buildingFundTotal, otherGiving: otherGivingTotal} = snapshot.totals;
+  const totalPledged = reportSum(snapshot.pledges.map(row => ({amount: row.amount_pledged})));
+  const totalPledgePaid = reportSum(snapshot.pledges.map(row => ({amount: row.amount_paid})));
+  const totalPledgeBalance = reportSum(snapshot.pledges.map(row => ({amount: row.balance})));
 
   // Template titles & headers
   let reportTitle = 'CHURCH FINANCIAL LEDGER & AUDIT RECORD';
@@ -257,7 +216,7 @@ export function generateChurchReportPdf(
   doc.setFontSize(8.5);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...textDark);
-  const periodText = startDate && endDate ? `${startDate} to ${endDate}` : 'Complete Historical Record';
+  const periodText = template === 'membership_roster' || template === 'small_groups' ? 'Current directory' : reportPeriodLabel(options);
   doc.text(periodText, margin + colWidth + 4, metaY + 5);
 
   // Col 3: Generation Date
@@ -274,6 +233,7 @@ export function generateChurchReportPdf(
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Africa/Accra',
   });
   doc.text(nowStr, margin + colWidth * 2 + 4, metaY + 5);
 
@@ -289,6 +249,13 @@ export function generateChurchReportPdf(
   doc.text(prepText, margin + colWidth * 3 + 4, metaY + 5);
 
   currentY += 21;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...textMuted);
+  const scope = doc.splitTextToSize(`Confirmed GHS records. ${reportFilterLabel(options)}. Pending changes, voided entries and transfers excluded.${snapshot.excludedCurrencyCount ? ` ${snapshot.excludedCurrencyCount} records in other currencies excluded.` : ''}`, contentWidth);
+  doc.text(scope, margin, currentY); currentY += scope.length * 3.5 + 3;
+  if (template === 'pledges_audit' || template === 'financial_executive_summary' || template === 'comprehensive_executive') {
+    const note = doc.splitTextToSize('Pledge dates select commitments created in the period; paid amounts and balances are current cumulative totals.', contentWidth);
+    doc.text(note, margin, currentY); currentY += note.length * 3.5 + 3;
+  }
 
   // KPI Summary Cards
   if (includeSummaryKpis) {
@@ -305,7 +272,7 @@ export function generateChurchReportPdf(
       doc.setTextColor(22, 101, 52);
       doc.text('TOTAL REVENUE / INFLOW', margin + 3, currentY + 4.5);
       doc.setFontSize(11);
-      doc.text(formatGHS(totalIncome), margin + 3, currentY + 11.5);
+      doc.text(formatPdfGHS(totalIncome), margin + 3, currentY + 11.5);
 
       // Card 2: Total Expenses
       doc.setFillColor(255, 241, 242); // rose-50
@@ -316,7 +283,7 @@ export function generateChurchReportPdf(
       doc.setTextColor(159, 18, 57);
       doc.text('EXPENDITURES & DISBURSEMENTS', margin + kpiWidth + 6, currentY + 4.5);
       doc.setFontSize(11);
-      doc.text(formatGHS(totalExpense), margin + kpiWidth + 6, currentY + 11.5);
+      doc.text(formatPdfGHS(totalExpense), margin + kpiWidth + 6, currentY + 11.5);
 
       // Card 3: Net Surplus
       doc.setFillColor(248, 250, 252); // slate-50
@@ -325,10 +292,10 @@ export function generateChurchReportPdf(
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7);
       doc.setTextColor(...textDark);
-      doc.text('NET TREASURY BALANCE', margin + (kpiWidth + 3) * 2 + 3, currentY + 4.5);
+      doc.text('NET SURPLUS / DEFICIT', margin + (kpiWidth + 3) * 2 + 3, currentY + 4.5);
       doc.setFontSize(11);
       doc.setTextColor(netSurplus >= 0 ? 6 : 190, netSurplus >= 0 ? 78 : 18, netSurplus >= 0 ? 59 : 57);
-      doc.text(formatGHS(netSurplus), margin + (kpiWidth + 3) * 2 + 3, currentY + 11.5);
+      doc.text(formatPdfGHS(netSurplus), margin + (kpiWidth + 3) * 2 + 3, currentY + 11.5);
 
       currentY += 21;
     } else if (template === 'membership_roster') {
@@ -450,8 +417,8 @@ export function generateChurchReportPdf(
     } else if (template === 'small_groups') {
       const kpiWidth = (contentWidth - 6) / 3;
       const kpiHeight = 16;
-      const groupsCount = (data.smallGroups || []).length;
-      const distinctZones = new Set((data.smallGroups || []).map((g) => g.zone).filter(Boolean)).size;
+      const groupsCount = snapshot.smallGroups.length;
+      const distinctZones = new Set(snapshot.smallGroups.map((g) => g.zone).filter(Boolean)).size;
 
       doc.setFillColor(240, 253, 244);
       doc.setDrawColor(187, 247, 208);
@@ -497,7 +464,7 @@ export function generateChurchReportPdf(
       doc.setTextColor(146, 64, 14);
       doc.text('TOTAL CAPITAL COMMITTED', margin + 3, currentY + 4.5);
       doc.setFontSize(11);
-      doc.text(formatGHS(totalPledged), margin + 3, currentY + 11.5);
+      doc.text(formatPdfGHS(totalPledged), margin + 3, currentY + 11.5);
 
       doc.setFillColor(240, 253, 244);
       doc.setDrawColor(187, 247, 208);
@@ -507,7 +474,7 @@ export function generateChurchReportPdf(
       doc.setTextColor(22, 101, 52);
       doc.text('REDEEMED FUNDS TO DATE', margin + kpiWidth + 6, currentY + 4.5);
       doc.setFontSize(11);
-      doc.text(formatGHS(totalPledgePaid), margin + kpiWidth + 6, currentY + 11.5);
+      doc.text(formatPdfGHS(totalPledgePaid), margin + kpiWidth + 6, currentY + 11.5);
 
       doc.setFillColor(248, 250, 252);
       doc.setDrawColor(...borderLight);
@@ -518,7 +485,7 @@ export function generateChurchReportPdf(
       doc.text('OUTSTANDING BALANCE', margin + (kpiWidth + 3) * 2 + 3, currentY + 4.5);
       doc.setFontSize(11);
       doc.setTextColor(190, 18, 57);
-      doc.text(formatGHS(totalPledgeBalance), margin + (kpiWidth + 3) * 2 + 3, currentY + 11.5);
+      doc.text(formatPdfGHS(totalPledgeBalance), margin + (kpiWidth + 3) * 2 + 3, currentY + 11.5);
 
       currentY += 21;
     }
@@ -526,23 +493,23 @@ export function generateChurchReportPdf(
 
   // BUILD DATA TABLES
   if (template === 'financial_ledger') {
-    const tableBody = filteredGiving.map((g, idx) => [
+    const tableBody = filteredReceipts.map((g, idx) => [
       (idx + 1).toString(),
       g.date,
-      g.category,
+      `${g.source === 'church' ? 'Church income' : 'Member giving'}: ${g.category}`,
       g.member_name || g.donor_name || 'Anonymous Contributor',
       g.payment_method.replace(/_/g, ' ').toUpperCase(),
       g.reference_number || '-',
-      `GH₵ ${g.amount.toFixed(2)}`,
+      `GHS ${g.amount.toFixed(2)}`,
     ]);
 
     autoTable(doc, {
       startY: currentY,
       margin: { left: margin, right: margin, bottom: 25 },
-      head: [['#', 'Date', 'Giving Category', 'Contributor / Member', 'Payment Method', 'Ref No.', 'Amount (GH₵)']],
+      head: [['#', 'Date', 'Source / Category', 'Payer / Contributor', 'Payment Method', 'Ref No.', 'Amount (GHS)']],
       body: tableBody,
       foot: [
-        ['', '', 'TOTAL REVENUE', '', '', '', `GH₵ ${totalIncome.toFixed(2)}`],
+        ['', '', 'TOTAL REVENUE', '', '', '', `GHS ${totalIncome.toFixed(2)}`],
       ],
       theme: 'grid',
       styles: {
@@ -580,10 +547,11 @@ export function generateChurchReportPdf(
   } else if (template === 'financial_executive_summary') {
     // 1. Inflow Categories Breakdown
     const categoryRows = [
-      ['Tithes & Pastoral Support', formatGHS(tithesTotal), `${Math.round((tithesTotal / (totalIncome || 1)) * 100)}%`],
-      ['General & Sunday Offerings', formatGHS(offeringsTotal), `${Math.round((offeringsTotal / (totalIncome || 1)) * 100)}%`],
-      ['Church Building & Infrastructure Fund', formatGHS(buildingFundTotal), `${Math.round((buildingFundTotal / (totalIncome || 1)) * 100)}%`],
-      ['Missions, Seeds & Special Sacrifices', formatGHS(otherGivingTotal), `${Math.round((otherGivingTotal / (totalIncome || 1)) * 100)}%`],
+      ['Tithes & Pastoral Support', formatPdfGHS(tithesTotal), `${Math.round((tithesTotal / (totalIncome || 1)) * 100)}%`],
+      ['General & Sunday Offerings', formatPdfGHS(offeringsTotal), `${Math.round((offeringsTotal / (totalIncome || 1)) * 100)}%`],
+      ['Church Building & Infrastructure Fund', formatPdfGHS(buildingFundTotal), `${Math.round((buildingFundTotal / (totalIncome || 1)) * 100)}%`],
+      ['Other Member Giving', formatPdfGHS(otherGivingTotal), `${Math.round((otherGivingTotal / (totalIncome || 1)) * 100)}%`],
+      ['Church Institutional Income & Grants', formatPdfGHS(snapshot.totals.churchIncome), `${Math.round(snapshot.totals.churchIncome / (totalIncome || 1) * 100)}%`],
     ];
 
     autoTable(doc, {
@@ -591,7 +559,7 @@ export function generateChurchReportPdf(
       margin: { left: margin, right: margin, bottom: 25 },
       head: [['Revenue Inflow Classification', 'Total Amount Collected', 'Percentage of Treasury']],
       body: categoryRows,
-      foot: [['TOTAL REVENUE RECORDED', formatGHS(totalIncome), '100%']],
+      foot: [['TOTAL REVENUE RECORDED', formatPdfGHS(totalIncome), totalIncome ? '100%' : '0%']],
       theme: 'grid',
       styles: { fontSize: 8, cellPadding: 2.5 },
       headStyles: { fillColor: primaryGreen, textColor: [255, 255, 255], fontStyle: 'bold' },
@@ -613,12 +581,12 @@ export function generateChurchReportPdf(
 
     const expenseRows = Object.entries(expenseByCategory).map(([cat, amt]) => [
       cat,
-      formatGHS(amt),
+      formatPdfGHS(amt),
       `${Math.round((amt / (totalExpense || 1)) * 100)}%`,
     ]);
 
     if (expenseRows.length === 0) {
-      expenseRows.push(['Operational & Facility Maintenance', formatGHS(0), '0%']);
+      expenseRows.push(['Operational & Facility Maintenance', formatPdfGHS(0), '0%']);
     }
 
     autoTable(doc, {
@@ -626,7 +594,7 @@ export function generateChurchReportPdf(
       margin: { left: margin, right: margin, bottom: 25 },
       head: [['Expenditure & Operating Disbursal', 'Total Disbursed', 'Percentage of Outflow']],
       body: expenseRows,
-      foot: [['TOTAL EXPENDITURES RECORDED', formatGHS(totalExpense), '100%']],
+      foot: [['TOTAL EXPENDITURES RECORDED', formatPdfGHS(totalExpense), totalExpense ? '100%' : '0%']],
       theme: 'grid',
       styles: { fontSize: 8, cellPadding: 2.5 },
       headStyles: { fillColor: [159, 18, 57], textColor: [255, 255, 255], fontStyle: 'bold' },
@@ -642,9 +610,9 @@ export function generateChurchReportPdf(
 
     // 3. Pledges & Capital Campaigns Table
     const pledgeRows = [
-      ['Capital Pledges Committed', formatGHS(totalPledged)],
-      ['Pledges Redeemed to Date', formatGHS(totalPledgePaid)],
-      ['Outstanding Pledge Balance to Collect', formatGHS(totalPledgeBalance)],
+      ['Capital Pledges Committed', formatPdfGHS(totalPledged)],
+      ['Pledges Redeemed to Date', formatPdfGHS(totalPledgePaid)],
+      ['Outstanding Pledge Balance to Collect', formatPdfGHS(totalPledgeBalance)],
     ];
 
     autoTable(doc, {
@@ -799,11 +767,11 @@ export function generateChurchReportPdf(
       ['Total Active Congregation (Enrolled)', `${filteredMembers.length} Members`],
       ['Total Recorded Sunday & Weekly Attendance', `${filteredAttendance.length} Check-ins`],
       ['Total New First-Time Visiting Souls', `${filteredVisitors.length} Visitors`],
-      ['Total Church Revenue & Tithes', formatGHS(totalIncome)],
-      ['Total Operating Disbursements', formatGHS(totalExpense)],
-      ['Treasury Net Surplus (GH₵)', formatGHS(netSurplus)],
-      ['Active Capital Pledges Committed', formatGHS(totalPledged)],
-      ['Total Redeemed Project Funds', formatGHS(totalPledgePaid)],
+      ['Total Church Revenue & Tithes', formatPdfGHS(totalIncome)],
+      ['Total Operating Disbursements', formatPdfGHS(totalExpense)],
+      ['Treasury Net Surplus (GHS)', formatPdfGHS(netSurplus)],
+      ['Active Capital Pledges Committed', formatPdfGHS(totalPledged)],
+      ['Total Redeemed Project Funds', formatPdfGHS(totalPledgePaid)],
     ];
 
     autoTable(doc, {
@@ -820,7 +788,7 @@ export function generateChurchReportPdf(
       },
     });
   } else if (template === 'small_groups') {
-    const tableBody = (data.smallGroups || []).map((g, idx) => {
+    const tableBody = snapshot.smallGroups.map((g, idx) => {
       const disciples = filteredMembers.filter(
         (m) => m.small_group_id === g.id || m.small_group_name === g.name
       ).length;
@@ -870,15 +838,15 @@ export function generateChurchReportPdf(
       },
     });
   } else if (template === 'pledges_audit') {
-    const tableBody = data.pledges.map((p, idx) => {
+    const tableBody = snapshot.pledges.map((p, idx) => {
       const percent = p.amount_pledged > 0 ? Math.round((p.amount_paid / p.amount_pledged) * 100) : 0;
       return [
         (idx + 1).toString(),
         p.member_name || 'Anonymous Contributor',
         p.campaign_name || 'General Expansion',
-        `GH₵ ${p.amount_pledged.toFixed(2)}`,
-        `GH₵ ${p.amount_paid.toFixed(2)}`,
-        `GH₵ ${p.balance.toFixed(2)}`,
+        `GHS ${p.amount_pledged.toFixed(2)}`,
+        `GHS ${p.amount_paid.toFixed(2)}`,
+        `GHS ${p.balance.toFixed(2)}`,
         `${percent}%`,
         p.status.toUpperCase(),
       ];
@@ -887,10 +855,10 @@ export function generateChurchReportPdf(
     autoTable(doc, {
       startY: currentY,
       margin: { left: margin, right: margin, bottom: 25 },
-      head: [['#', 'Contributor / Member', 'Campaign Project', 'Pledged (GH₵)', 'Paid (GH₵)', 'Balance (GH₵)', 'Fulfillment', 'Status']],
+      head: [['#', 'Contributor / Member', 'Campaign Project', 'Pledged (GHS)', 'Paid (GHS)', 'Balance (GHS)', 'Fulfillment', 'Status']],
       body: tableBody,
       foot: [
-        ['', 'TOTAL CAPITAL AUDITED', '', `GH₵ ${totalPledged.toFixed(2)}`, `GH₵ ${totalPledgePaid.toFixed(2)}`, `GH₵ ${totalPledgeBalance.toFixed(2)}`, '', ''],
+        ['', 'TOTAL CAPITAL AUDITED', '', `GHS ${totalPledged.toFixed(2)}`, `GHS ${totalPledgePaid.toFixed(2)}`, `GHS ${totalPledgeBalance.toFixed(2)}`, '', ''],
       ],
       theme: 'grid',
       styles: {

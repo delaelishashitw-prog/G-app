@@ -21,6 +21,7 @@ import {checkTasks} from './tasks-browser-checks.mjs';
 import {checkDutyRoster} from './duty-roster-browser-checks.mjs';
 import {checkMemberPortal} from './member-portal-browser-checks.mjs';
 import {checkMemberDirectory} from './member-directory-browser-checks.mjs';
+import {checkReportsAndRecovery} from './reports-browser-checks.mjs';
 import {checkBackup} from './backup-browser-checks.mjs';
 
 const port=Number(process.env.TEST_PORT||3401),origin=`http://127.0.0.1:${port}`;
@@ -41,7 +42,9 @@ try{
   }
   const invalidJson=await fetch(`${origin}/api/staff`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{bad'});assert.equal(invalidJson.status,400);
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{channel:'chromium'}),args:['--no-sandbox']});
-  if(process.env.TEST_SCOPE==='member-directory'){
+  if(process.env.TEST_SCOPE==='reports'){
+    await checkReportsAndRecovery(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  }else if(process.env.TEST_SCOPE==='member-directory'){
     await checkMemberDirectory(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   }else if(process.env.TEST_SCOPE==='pledges'){
     await checkPledges(browser,{origin});
@@ -226,6 +229,7 @@ try{
   await checkAuthLinks(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkMemberPortal(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkMemberDirectory(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  await checkReportsAndRecovery(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkDutyRoster(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await page.goto(`${origin}/communication`);
   await page.getByLabel('Title',{exact:true}).fill('QA saved draft');

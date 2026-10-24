@@ -52,7 +52,7 @@ export const ReportsSummaryCards: React.FC<ReportsSummaryCardsProps> = ({
   return (
     <div className={`space-y-2 no-print ${className}`}>
       {/* Small Section Sub-Header */}
-      <div className="flex items-center justify-between px-1">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1">
         <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
           <Sparkles className="w-3.5 h-3.5 text-amber-500" />
           High-Level Church Performance Metrics ({periodLabel})
@@ -108,7 +108,7 @@ export const ReportsSummaryCards: React.FC<ReportsSummaryCardsProps> = ({
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-500 flex items-center gap-1">
                 <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-                Net Quarterly Growth
+                New Members in Period
               </span>
               <span className="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md text-[11px]">
                 {netQuarterlyGrowth !== undefined && netQuarterlyGrowth > 0
@@ -222,7 +222,7 @@ export const ReportsSummaryCards: React.FC<ReportsSummaryCardsProps> = ({
                 <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
                 Worship Services
               </span>
-              <span className="font-bold text-slate-700">1st, 2nd & Midweek</span>
+              <span className="font-bold text-slate-700">Recorded service sessions</span>
             </div>
           </div>
         </div>
