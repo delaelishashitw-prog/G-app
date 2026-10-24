@@ -33,7 +33,7 @@ import { PrintEventFlyerModal } from './PrintEventFlyerModal';
 import { RegisterAttendeeModal } from './RegisterAttendeeModal';
 
 import { useModalFocus } from '../../hooks/useModalFocus';
-import { effectiveEventStatus, EVENT_SAVE_NOTICE } from '../../features/events/eventRules';
+import { effectiveEventStatus, requireEventPublication, EVENT_SAVE_NOTICE } from '../../features/events/eventRules';
 
 interface EventDetailModalProps {
   isOpen: boolean;
@@ -85,6 +85,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
 
   const handleCopyAnnouncement = async () => {
     try {
+      requireEventPublication(event);
       await navigator.clipboard.writeText(generateWhatsAppAnnouncement(event, settings.church_name));
       setCopiedAnnouncement(true); clearTimeout(copiedTimer.current);
       copiedTimer.current = setTimeout(() => setCopiedAnnouncement(false), 2500);
@@ -92,7 +93,8 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
   };
 
   const handleDownloadIcs = () => {
-    downloadEventIcs(event, settings.church_name);
+    try { requireEventPublication(event); downloadEventIcs(event, settings.church_name); }
+    catch (error) { toastError('Calendar Not Ready', error instanceof Error ? error.message : 'Unable to download the calendar.'); }
   };
 
   const handleDelete = () => run(async () => {
@@ -165,7 +167,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
             )}
           </div>
 
-          {pending && <p role="status" className="p-3 text-xs bg-amber-50 text-amber-900">{EVENT_SAVE_NOTICE} Further changes are available after confirmation.</p>}
+          {pending && <p role="status" className="p-3 text-xs bg-amber-50 text-amber-900">{EVENT_SAVE_NOTICE} Further changes are available after confirmation. Close this window to review pending changes or retry sync.</p>}
           {errorMessage && <p role="alert" className="p-3 text-xs bg-red-50 text-red-800">{errorMessage}</p>}
           {removeId && <div className="p-3 bg-red-50 text-xs">Remove this person from the roster? The removal is recorded in the audit history.
             <button disabled={blocked} onClick={() => void run(async () => { await removeEventAttendee(event.id, removeId); setRemoveId(null); })} className="ml-2 font-bold">Confirm removal</button>
@@ -215,7 +217,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
             {/* Quick Actions */}
             <div className="flex items-center gap-1.5 py-2">
               <button
-                onClick={handleDownloadIcs}
+                disabled={blocked} onClick={handleDownloadIcs}
                 title="Add to Google / Apple Calendar (.ics)"
                 className="p-1.5 text-slate-600 hover:text-rose-800 hover:bg-slate-100 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
               >
@@ -223,7 +225,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                 <span className="hidden sm:inline">iCal (.ics)</span>
               </button>
               <button
-                onClick={() => setIsPrintFlyerOpen(true)}
+                disabled={blocked} onClick={() => setIsPrintFlyerOpen(true)}
                 title="Print Official Program Bulletin"
                 className="p-1.5 text-slate-600 hover:text-rose-800 hover:bg-slate-100 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
               >
@@ -316,19 +318,19 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                   <div className="space-y-0.5">
                     <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
                       <Users className="w-3.5 h-3.5 text-rose-800" />
-                      Attendance Integration
+                      Service Attendance Register
                     </span>
                     <p className="text-[11px] text-slate-600">
-                      Take live headcount or record check-ins on this event's date ({event.start_date}) in the Attendance terminal.
+                      Event check-ins are recorded under Volunteers & RSVPs. To record service attendance, choose the correct service and date in the service register.
                     </p>
                   </div>
-                  <a
+                  {canAccess('attendance') && <a
                     href={`/attendance?date=${event.start_date}`}
                     className="shrink-0 px-3 py-1.5 bg-white border border-rose-200 hover:border-rose-400 text-rose-900 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs hover:bg-rose-50 transition"
                   >
                     <span>Open Attendance</span>
                     <ExternalLink className="w-3 h-3 text-rose-700" />
-                  </a>
+                  </a>}
                 </div>
 
                 {/* Description & Order of Program */}
@@ -403,7 +405,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                       <span className="font-semibold text-slate-700">Status:</span>
                       <span className="capitalize font-mono font-bold text-slate-900">{event.status}</span>
                     </span>
-                    <span className="text-[11px] italic text-slate-400">View-only role (Admin privileges required to edit or delete)</span>
+                    <span className="text-[11px] italic text-slate-400">View-only role (event management privileges required to edit or cancel)</span>
                   </div>
                 )}
               </div>
@@ -520,10 +522,10 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
 
                 <div className="relative">
                   <pre className="p-4 bg-slate-900 text-rose-100 rounded-xl text-[11px] leading-relaxed overflow-x-auto font-mono whitespace-pre-wrap max-h-64 border border-slate-800">
-                    {generateWhatsAppAnnouncement(event, settings.church_name || 'Greater Works City Church, Joma')}
+                    {pending ? EVENT_SAVE_NOTICE : generateWhatsAppAnnouncement(event, settings.church_name || 'Greater Works City Church, Joma')}
                   </pre>
                   <button
-                    onClick={handleCopyAnnouncement}
+                    disabled={blocked} onClick={handleCopyAnnouncement}
                     className="absolute top-3 right-3 px-3 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-md transition"
                   >
                     {copiedAnnouncement ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
@@ -533,7 +535,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                   <button
-                    onClick={handleDownloadIcs}
+                    disabled={blocked} onClick={handleDownloadIcs}
                     className="p-3.5 rounded-xl border border-slate-200 bg-white hover:border-rose-300 hover:bg-rose-50/30 text-left transition flex items-start gap-3"
                   >
                     <Download className="w-5 h-5 text-rose-700 shrink-0 mt-0.5" />
@@ -544,7 +546,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                   </button>
 
                   <button
-                    onClick={() => setIsPrintFlyerOpen(true)}
+                    disabled={blocked} onClick={() => setIsPrintFlyerOpen(true)}
                     className="p-3.5 rounded-xl border border-slate-200 bg-white hover:border-rose-300 hover:bg-rose-50/30 text-left transition flex items-start gap-3"
                   >
                     <Printer className="w-5 h-5 text-rose-700 shrink-0 mt-0.5" />

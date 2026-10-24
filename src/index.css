@@ -128,3 +128,30 @@
     break-inside: avoid !important;
   }
 }
+
+/* Event bulletins print on their own, with no modal viewport clipping. */
+@media print {
+  body.event-print-open > :not([data-event-print-root]) {
+    display: none !important;
+  }
+  [data-event-print-content] { overflow-wrap: anywhere; }
+  [data-event-print-root],
+  [data-event-print-root] [role="dialog"],
+  [data-event-print-content] {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: white !important;
+    backdrop-filter: none !important;
+    transform: none !important;
+  }
+}

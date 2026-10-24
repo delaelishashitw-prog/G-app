@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { effectiveEventStatus, EVENT_SAVE_NOTICE } from '../../features/events/eventRules';
 import { X, Printer, Calendar, Clock, MapPin, Sparkles, User, HeartHandshake, BookOpen } from 'lucide-react';
 import { ChurchEvent } from '../../types/database.types';
 import { useChurchData } from '../../contexts/ChurchDataContext';
@@ -19,10 +21,15 @@ export const PrintEventFlyerModal: React.FC<PrintEventFlyerModalProps> = ({
   const { settings } = useChurchData();
 
   const panel = useModalFocus(isOpen, onClose);
+  useEffect(() => {
+    if (!isOpen) return;
+    document.body.classList.add('event-print-open');
+    return () => document.body.classList.remove('event-print-open');
+  }, [isOpen]);
   if (!isOpen) return null;
 
   const handlePrint = () => {
-    window.print();
+    if (event._sync_status !== 'pending') window.print();
   };
 
   const formatDate = (dateStr: string) => {
@@ -38,10 +45,17 @@ export const PrintEventFlyerModal: React.FC<PrintEventFlyerModalProps> = ({
     }
   };
 
+  const status = effectiveEventStatus(event);
+  const pending = event._sync_status === 'pending';
+  const footer = pending ? 'Awaiting cloud confirmation. Do not circulate this bulletin yet.'
+    : status === 'cancelled' ? 'This event has been cancelled. Check with the organizers for updates.'
+    : status === 'completed' ? 'This event has ended. This bulletin is kept for reference.'
+    : status === 'draft' ? 'Draft program. Details are subject to confirmation.'
+    : 'Contact the organizers for admission, transport and other arrangements.';
   const isMultiDay = event.start_date !== event.end_date;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-150">
+  return createPortal(
+    <div data-event-print-root className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-150">
       <div ref={panel} role="dialog" aria-modal="true" aria-label="Event flyer" className="relative w-full min-w-0 max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
         {/* Screen Header Bar */}
         <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between shrink-0 print:hidden">
@@ -54,7 +68,7 @@ export const PrintEventFlyerModal: React.FC<PrintEventFlyerModalProps> = ({
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={handlePrint}
+              disabled={pending} onClick={handlePrint}
               className="px-3.5 py-1.5 bg-rose-700 hover:bg-rose-800 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-sm transition"
             >
               <Printer className="w-4 h-4" />
@@ -71,9 +85,10 @@ export const PrintEventFlyerModal: React.FC<PrintEventFlyerModalProps> = ({
         </div>
 
         {/* PRINTABLE CANVAS */}
-        <div className="p-6 sm:p-10 overflow-y-auto print:p-0 print:m-0 space-y-6 text-slate-800 bg-white">
+        <div data-event-print-content className="p-6 sm:p-10 overflow-y-auto print:p-0 print:m-0 space-y-6 text-slate-800 bg-white">
           {/* Church Crest & Header */}
-          {['draft','cancelled'].includes(event.status) && <p className="text-center font-bold uppercase p-2">{event.status}</p>}
+          {pending && <p role="status" className="text-center font-bold p-2">{EVENT_SAVE_NOTICE}</p>}
+          {['draft','cancelled','completed'].includes(status) && <p className="text-center font-bold uppercase p-2">{status}</p>}
           <div className="text-center pb-5 border-b-2 border-rose-900/20 space-y-1">
             <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-rose-950 text-white font-serif font-black text-xl shadow-md mb-2">
               GW
@@ -92,7 +107,7 @@ export const PrintEventFlyerModal: React.FC<PrintEventFlyerModalProps> = ({
           {/* Program Notice Pill / Header */}
           <div className="text-center space-y-2">
             <span className="text-[11px] font-bold uppercase tracking-widest px-3 py-1 rounded-full bg-rose-50 text-rose-800 border border-rose-200 inline-block">
-              Official Program Announcement · {event.event_type.replace('_', ' ').toUpperCase()}
+              Official Program Announcement · {(event.event_type || 'special').replaceAll('_', ' ').toUpperCase()}
             </span>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight leading-tight">
               {event.title}
@@ -153,7 +168,7 @@ export const PrintEventFlyerModal: React.FC<PrintEventFlyerModalProps> = ({
               <User className="w-4 h-4 text-rose-700 mt-0.5 shrink-0" />
               <div>
                 <span className="font-bold text-slate-900 block">Guest Minister / Speaker</span>
-                <span className="text-slate-600">{event.speaker || 'Pastoral Ministerial Team'}</span>
+                <span className="text-slate-600">{event.speaker || 'To be confirmed'}</span>
               </div>
             </div>
           </div>
@@ -174,21 +189,20 @@ export const PrintEventFlyerModal: React.FC<PrintEventFlyerModalProps> = ({
           <div className="pt-4 border-t border-slate-200 grid grid-cols-2 gap-4 text-xs">
             <div>
               <span className="font-semibold text-slate-500 block text-[10px] uppercase">Organizing Ministry</span>
-              <span className="font-bold text-slate-800">{event.ministry_name || event.organizer || 'Pastoral Board'}</span>
+              <span className="font-bold text-slate-800">{event.ministry_name || event.organizer || 'To be confirmed'}</span>
             </div>
             <div className="text-right">
-              <span className="font-semibold text-slate-500 block text-[10px] uppercase">General Overseer / Presiding Minister</span>
-              <span className="font-bold text-slate-800">Prophet Elisha K. Richard</span>
+              <span className="font-semibold text-slate-500 block text-[10px] uppercase">Senior Pastor</span>
+              <span className="font-bold text-slate-800">{settings.senior_pastor || 'To be confirmed'}</span>
             </div>
           </div>
 
           {/* Footer Callout */}
           <div className="p-3 bg-rose-950 text-rose-100 rounded-lg text-center text-xs space-y-0.5">
-            <p className="font-bold">All church members, families, cell fellowships, and the entire Joma municipality are cordially invited.</p>
-            <p className="text-[11px] text-rose-300">Admission is Free · Free Transportation available at designated cell stations</p>
+            <p className="font-bold">{footer}</p>
           </div>
         </div>
       </div>
-    </div>
+    </div>, document.body
   );
 };

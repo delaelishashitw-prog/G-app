@@ -30,7 +30,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { ChurchEvent } from '../types/database.types';
 import { EventDetailModal } from '../components/events/EventDetailModal';
 import { ScheduleEventModal } from '../components/events/ScheduleEventModal';
-import { PrintEventFlyerModal } from '../components/events/PrintEventFlyerModal';
 import { downloadEventIcs, generateWhatsAppAnnouncement } from '../components/events/eventCalendarExport';
 
 import { useModalFocus } from '../hooks/useModalFocus';
@@ -79,9 +78,8 @@ export const EventsPage: React.FC = () => {
   const [eventToEdit, setEventToEdit] = useState<ChurchEvent | null>(null);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [scheduleDefaultDate, setScheduleDefaultDate] = useState<string | undefined>(undefined);
-  const [selectedEventForFlyer, setSelectedEventForFlyer] = useState<ChurchEvent | null>(null);
 
-  useEffect(() => { setSelectedEventForDetail(null); setEventToEdit(null); setIsScheduleModalOpen(false); setSelectedEventForFlyer(null); }, [currentUser.id]);
+  useEffect(() => { setSelectedEventForDetail(null); setEventToEdit(null); setIsScheduleModalOpen(false); }, [currentUser.id]);
 
   // Day inspection drawer/modal
   const [inspectedDate, setInspectedDate] = useState<string | null>(null);
@@ -137,7 +135,7 @@ export const EventsPage: React.FC = () => {
   // Spotlight Next Event
   const spotlightEvent = useMemo(() => {
     const upcoming = events
-      .filter((e) => e.status === 'upcoming' || e.status === 'ongoing')
+      .filter((e) => e._sync_status !== 'pending' && (e.status === 'upcoming' || e.status === 'ongoing'))
       .sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime());
     return upcoming[0];
   }, [events]);

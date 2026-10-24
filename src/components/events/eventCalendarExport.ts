@@ -1,3 +1,4 @@
+import { effectiveEventStatus, requireEventPublication } from '../../features/events/eventRules';
 import { ChurchEvent } from '../../types/database.types';
 
 /** Escape iCalendar TEXT and fold by UTF-8 octets, without splitting a code point. */
@@ -12,6 +13,7 @@ function foldLine(line: string) {
   lines.push(part); return lines.join('\r\n');
 }
 export function buildEventIcs(event: ChurchEvent, churchName = 'Greater Works City Church', now = new Date()) {
+  requireEventPublication(event);
   const instant = (date: string, time: string) => `${date.replaceAll('-', '')}T${time.slice(0, 5).replace(':', '')}00Z`;
   const description = [event.theme, event.theme_scripture, event.description, event.speaker ? `Speaker: ${event.speaker}` : '', `Host: ${event.ministry_name || event.organizer || churchName}`].filter(Boolean).join('\n');
   return [
@@ -34,7 +36,9 @@ export function downloadEventIcs(event: ChurchEvent, churchName = 'Greater Works
 /**
  * Generates formatted WhatsApp announcement copy ready to broadcast to church members
  */
-export function generateWhatsAppAnnouncement(event: ChurchEvent, churchName: string = 'Greater Works City Church, Joma'): string {
+export function generateWhatsAppAnnouncement(event: ChurchEvent, churchName: string = 'Greater Works City Church, Joma', now = Date.now()): string {
+  requireEventPublication(event);
+  const status = effectiveEventStatus(event, now);
   const dateFormatted = event.start_date === event.end_date
     ? new Date(event.start_date).toLocaleDateString('en-GB', { timeZone: 'Africa/Accra', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
     : `${new Date(event.start_date).toLocaleDateString('en-GB', { timeZone: 'Africa/Accra', day: 'numeric', month: 'short' })} - ${new Date(event.end_date).toLocaleDateString('en-GB', { timeZone: 'Africa/Accra', day: 'numeric', month: 'short', year: 'numeric' })}`;
@@ -45,7 +49,7 @@ export function generateWhatsAppAnnouncement(event: ChurchEvent, churchName: str
     `--------------------------------------`,
   ];
 
-  if (['draft', 'cancelled', 'completed'].includes(event.status)) lines.push(`*Status: ${event.status.toUpperCase()}*`);
+  if (['draft', 'cancelled', 'completed'].includes(status)) lines.push(`*Status: ${status.toUpperCase()}*`);
   if (event.theme) {
     lines.push(`🔥 *Theme:* "${event.theme}"`);
     if (event.theme_scripture) {
@@ -72,7 +76,7 @@ export function generateWhatsAppAnnouncement(event: ChurchEvent, churchName: str
     lines.push(``);
   }
 
-  if (['upcoming','ongoing'].includes(event.status)) lines.push('You are warmly invited.');
+  if (['upcoming','ongoing'].includes(status)) lines.push('You are warmly invited.');
   lines.push(`--------------------------------------`);
   lines.push(`Jesus Christ the same yesterday, and to day, and for ever. (Hebrews 13:8)`);
 

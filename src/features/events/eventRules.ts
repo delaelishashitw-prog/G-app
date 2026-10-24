@@ -2,6 +2,9 @@ import type { ChurchEvent, UserRole } from '../../types/database.types';
 
 export const EVENT_WRITE_ROLES: UserRole[] = ['super_admin', 'senior_pastor', 'administrator', 'pastor', 'ministry_leader'];
 export const EVENT_SAVE_NOTICE = 'Saved on this device. Awaiting cloud confirmation.';
+export function requireEventPublication(event: ChurchEvent) {
+  if (event._sync_status === 'pending') throw new Error('Wait for cloud confirmation before sharing, printing or downloading this program.');
+}
 export const ghanaToday = () => new Date().toISOString().slice(0, 10);
 export const eventInstant = (date: string, time: string) => Date.parse(`${date}T${time?.slice(0, 5)}:00Z`);
 
