@@ -1,4 +1,4 @@
-import { canMemberRsvp, effectiveEventStatus } from '../features/events/eventRules';
+import {MemberEventsPanel} from '../components/portal/MemberEventsPanel';
 import {GivingInstructions} from '../components/finance/GivingChannels';
 import {rosterDate,rosterToday,isUpcomingDuty,type RosterSubstituteRequest} from '../lib/rosterUtils';
 import { isActiveTransaction } from '../lib/ledgerUtils';
@@ -249,9 +249,6 @@ export const MemberPortalPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const requiresCloudMemberAuth = true;
-
-  const [eventClock, setEventClock] = useState(Date.now);
-  React.useEffect(() => { const timer = setInterval(() => setEventClock(Date.now()), 30000); return () => clearInterval(timer); }, []);
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<PortalTab>(() => {
@@ -894,31 +891,6 @@ export const MemberPortalPage: React.FC = () => {
     setEditEmergencyPhone(activeMember?.emergency_phone || '');
     setNewPortalPin(''); setConfirmPortalPin('');
   }, [activeMember]);
-
-  const [savingRsvp, setSavingRsvp] = useState<string | null>(null);
-  const [rsvpErrors, setRsvpErrors] = useState<Record<string, string>>({});
-  const [savedRsvps, setSavedRsvps] = useState<Set<string>>(() => new Set());
-  const rsvpInFlight = React.useRef(false);
-  const handleRsvp = async (eventId: string) => {
-    if (!activeMember || currentRole !== 'member' || rsvpInFlight.current) return;
-    const key = `${activeMember.id}:${eventId}`;
-    rsvpInFlight.current = true; setSavingRsvp(eventId);
-    setRsvpErrors(previous => ({...previous, [key]: ''}));
-    try {
-      const client = getSupabaseClient();
-      if (!client) throw new Error('Secure member sign-in is unavailable.');
-      const {data, error} = await client.rpc('gwcc_member_rsvp', {p_event_id: eventId});
-      if (error) throw error;
-      if (!data?.attendees?.some((a: {member_id?: string}) => a.member_id === activeMember.id || a.member_id === activeMember.member_id)) {
-        throw new Error('Registration was not confirmed. Try again to check its status.');
-      }
-      setSavedRsvps(previous => new Set(previous).add(key));
-      toastSuccess('RSVP Confirmed', 'Your event registration has been saved.');
-      await refreshData();
-    } catch (error) {
-      setRsvpErrors(previous => ({...previous, [key]: (error as Error).message || 'Registration could not be confirmed. Try again.'}));
-    } finally { rsvpInFlight.current = false; setSavingRsvp(null); }
-  };
 
   // Handle Member Sign-In
   const handleMemberSignIn = async (e: React.FormEvent) => {
@@ -3548,76 +3520,7 @@ export const MemberPortalPage: React.FC = () => {
 
         {/* TAB 7: CHURCH EVENTS */}
         {activeTab === 'events' && (
-          <div className="space-y-6">
-            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs">
-              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-indigo-700" />
-                Upcoming Greater Works Church Events
-              </h2>
-              <p className="text-xs text-slate-500">
-                Special conventions, youth revivals, all-night vigils, and church celebrations.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {events.filter(event => event.status !== 'draft').map((ev) => {
-                const rsvpKey = `${activeMember.id}:${ev.id}`;
-                const lifecycle = effectiveEventStatus(ev, eventClock);
-                const isRsvp = savedRsvps.has(rsvpKey) || ev.attendees?.some(
-                  (a) =>
-                    a.member_id === activeMember.id ||
-                    a.member_id === activeMember.member_id
-                );
-
-                return (
-                  <div key={ev.id} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200">
-                        {(ev.event_type || 'special').replaceAll('_', ' ') || 'Special Gathering'}
-                      </span>
-                      <span className="text-xs text-slate-500 font-mono font-semibold">
-                        {ev.start_date}
-                      </span>
-                    </div>
-
-                    <h3 className="font-extrabold text-base text-slate-900">
-                      {ev.title}
-                    </h3>
-                    <p className="text-xs text-slate-600">{ev.description}</p>
-
-                    <div className="space-y-1 text-xs text-slate-500 pt-2 border-t border-slate-100">
-                      <p>
-                        <strong>Time:</strong> {ev.start_time || '18:30 GMT'}
-                      </p>
-                      <p>
-                        <strong>Venue:</strong> {ev.venue || 'Main Cathedral Sanctuary, Joma'}
-                      </p>
-                    </div>
-
-                    <div className="pt-2">
-                      {rsvpErrors[rsvpKey] && <p role="alert" className="text-xs text-red-700 mb-2">{rsvpErrors[rsvpKey]}</p>}
-                      {isRsvp ? (
-                        <div className="w-full py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                          <span>{lifecycle === 'cancelled' ? 'Event cancelled — registration kept for reference' : lifecycle === 'completed' ? 'Registration recorded — event ended' : 'RSVP Confirmed (See You There!)'}</span>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={currentRole !== 'member' || savingRsvp !== null || !canMemberRsvp(ev, eventClock)}
-                          onClick={() => void handleRsvp(ev.id)}
-                          className="w-full py-2 bg-indigo-800 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition shadow-xs flex items-center justify-center gap-1.5"
-                        >
-                          <CalendarCheck className="w-4 h-4" />
-                          <span>{savingRsvp === ev.id ? 'Saving registration...' : currentRole !== 'member' ? 'Member sign-in required to register' : !canMemberRsvp(ev, eventClock) ? (ev.requires_registration ? 'Registration closed' : 'RSVP not enabled') : '1-Click RSVP for Event'}</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <MemberEventsPanel key={`${currentUser.id}:${currentRole}:${activeMember.id}`} member={activeMember} role={currentRole} churchName={settings.church_name} previewEvents={events}/>
         )}
 
         {/* TAB 8: PROFILE & PIN SETTINGS */}
