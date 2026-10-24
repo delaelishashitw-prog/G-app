@@ -119,5 +119,54 @@ async function setup(role='super_admin',width=1440,timeZone='Africa/Accra'){
   const cell=await pill.evaluate(element=>element.parentElement.parentElement.parentElement.innerText);
   assert.equal(cell.split('\n').find(text=>/^\d+$/.test(text)),String(Number(today.slice(-2))));
  }finally{await remote.context.close();}
- console.log('Events: private drafts, versioned admission, current rosters, zero budget, storage retry, cloud replay, Ghana dates and mobile layout passed.');
+ const publication=await setup();
+ try{
+  const {page}=publication,detail=()=>page.getByRole('dialog',{name:'Event details',exact:true});
+  const originalPeople=structuredClone(publication.data.events[0].attendees);
+  publication.data.events[0].description=Array.from({length:60},(_,index)=>`Synthetic program section ${index+1}. This paragraph verifies that long event bulletins print completely across pages.`).join('\n\n')+'\nSYNTHETIC PROGRAM END';
+  await page.reload();await page.getByRole('button',{name:'View Details & Roster',exact:true}).click();
+  await detail().getByTitle('Print Official Program Bulletin',{exact:true}).click();
+  const flyer=()=>page.getByRole('dialog',{name:'Event flyer',exact:true});
+  await flyer().waitFor();
+  assert.equal(await flyer().getByText(/Admission is Free|Free Transportation/).count(),0);
+  await page.emulateMedia({media:'print'});
+  assert.equal(await page.getByRole('heading',{name:'Events & Ecclesiastical Calendar',exact:true}).isVisible(),false,'The background page must not print');
+  assert.equal(await detail().isVisible(),false,'Underlying event details must not print');
+  const printStyle=await flyer().evaluate(element=>({height:getComputedStyle(element).maxHeight,overflow:getComputedStyle(element).overflow,position:getComputedStyle(element).position}));
+  assert.deepEqual(printStyle,{height:'none',overflow:'visible',position:'static'});
+  const canvas=page.locator('[data-event-print-content]');
+  assert.ok(await canvas.evaluate(element=>element.clientHeight>=element.scrollHeight-2),'The printable content must not be clipped');
+  const pdf=await page.pdf({preferCSSPageSize:true,printBackground:true,...(process.env.TEST_EVENT_FLYER_PDF?{path:process.env.TEST_EVENT_FLYER_PDF}:{})});
+  assert.equal(pdf.subarray(0,4).toString(),'%PDF');
+  await page.emulateMedia({media:'screen'});await flyer().getByTitle('Close',{exact:true}).click();
+  assert.equal(await page.evaluate(()=>document.body.classList.contains('event-print-open')),false);
+  assert.equal(await page.getByRole('heading',{name:'Events & Ecclesiastical Calendar',exact:true}).isVisible(),true);
+  publication.rejectWrites(true);
+  await detail().getByTitle('Cancel event and keep history',{exact:true}).click();
+  await detail().getByRole('button',{name:'Confirm',exact:true}).click();
+  await detail().getByText(/Further changes are available after confirmation/).waitFor();
+  assert.equal(await detail().getByTitle('Add to Google / Apple Calendar (.ics)',{exact:true}).isDisabled(),true);
+  assert.equal(await detail().getByTitle('Print Official Program Bulletin',{exact:true}).isDisabled(),true);
+  await detail().getByRole('button',{name:'Share & Promotion',exact:true}).click();
+  assert.equal(await detail().getByRole('button',{name:'Copy Announcement',exact:true}).isDisabled(),true);
+  assert.equal(await detail().getByText(/warmly invited/).count(),0);
+  await page.getByText('Synthetic event cloud unavailable; change was not saved',{exact:true}).waitFor();
+  publication.rejectWrites(false);await detail().getByTitle('Close',{exact:true}).click();
+  await page.getByRole('button',{name:'Retry sync',exact:true}).click();await waitForSync(page);
+  await page.locator('[title="Synthetic Conference Alpha (18:00)"]').click();
+  await detail().getByRole('button',{name:'Share & Promotion',exact:true}).click();
+  const saved=publication.data.events.find(event=>event.id==='alpha');
+  assert.equal(saved.status,'cancelled');assert.deepEqual(saved.attendees,originalPeople);
+  await detail().getByText(/Status: CANCELLED/).waitFor();
+  const [download]=await Promise.all([page.waitForEvent('download'),detail().getByTitle('Add to Google / Apple Calendar (.ics)',{exact:true}).click()]);
+  const stream=await download.createReadStream();let ics='';for await(const part of stream)ics+=part.toString();
+  assert.match(ics,/STATUS:CANCELLED/);assert.doesNotMatch(ics,/Synthetic Volunteer/);
+  await detail().getByTitle('Print Official Program Bulletin',{exact:true}).click();
+  await flyer().getByText('This event has been cancelled. Check with the organizers for updates.',{exact:true}).waitFor();
+  assert.equal(await flyer().getByText(/cordially invited|Admission is Free|Free Transportation/).count(),0);
+  await flyer().getByTitle('Close',{exact:true}).click();await detail().getByTitle('Close',{exact:true}).click();
+  assert.ok(await page.getByRole('button',{name:'View Details & Roster',exact:true}).isVisible(),'Other published events remain available');
+  assert.deepEqual(publication.errors,[]);
+ }finally{await publication.context.close();}
+ console.log('Events: private drafts, versioned admission, current rosters, storage retry, Ghana dates, cancellation history, confirmed exports, isolated long printouts and mobile layout passed.');
 }
