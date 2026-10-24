@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Calendar, Clock, MapPin, Sparkles, BookOpen, Users, DollarSign, Plus, Check, AlertCircle } from 'lucide-react';
 import { ChurchEvent } from '../../types/database.types';
 import { useChurchData } from '../../contexts/ChurchDataContext';
+import { useModalFocus } from '../../hooks/useModalFocus';
+import { EVENT_SAVE_NOTICE } from '../../features/events/eventRules';
 import { useToast } from '../../contexts/ToastContext';
 
 interface ScheduleEventModalProps {
@@ -41,21 +43,26 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
     start_time: '18:00',
     end_time: '21:00',
     venue: VENUE_PRESETS[0],
-    organizer: 'GWCC Pastoral Board',
-    ministry_name: 'Pastoral & Ministerial Council',
-    speaker: 'Prophet Elisha K. Richard',
-    expected_attendance: '250',
-    budget: '5000',
+    organizer: '',
+    ministry_name: '',
+    speaker: '',
+    expected_attendance: '0',
+    budget: '0',
     status: 'upcoming' as ChurchEvent['status'],
     requires_registration: false,
     banner_color: 'rose',
   });
 
   const [validationError, setValidationError] = useState<string | null>(null);
-  const [syncAsService, setSyncAsService] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const draftId = useRef(crypto.randomUUID());
+  const close = () => { if (!savingRef.current) onClose(); };
+  const panel = useModalFocus(isOpen, close);
 
   useEffect(() => {
     setValidationError(null);
+    draftId.current = crypto.randomUUID();
     if (eventToEdit) {
       setFormData({
         title: eventToEdit.title,
@@ -71,13 +78,12 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
         organizer: eventToEdit.organizer || '',
         ministry_name: eventToEdit.ministry_name || '',
         speaker: eventToEdit.speaker || '',
-        expected_attendance: eventToEdit.expected_attendance?.toString() || '250',
+        expected_attendance: eventToEdit.expected_attendance?.toString() || '0',
         budget: eventToEdit.budget?.toString() || '0',
         status: eventToEdit.status,
         requires_registration: eventToEdit.requires_registration || false,
         banner_color: eventToEdit.banner_color || 'rose',
       });
-      setSyncAsService(false);
     } else {
       setFormData({
         title: '',
@@ -90,23 +96,23 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
         start_time: '18:00',
         end_time: '21:00',
         venue: VENUE_PRESETS[0],
-        organizer: 'GWCC Pastoral Board',
-        ministry_name: 'Pastoral & Ministerial Council',
-        speaker: 'Prophet Elisha K. Richard',
-        expected_attendance: '250',
-        budget: '5000',
+        organizer: '',
+        ministry_name: '',
+        speaker: '',
+        expected_attendance: '0',
+        budget: '0',
         status: 'upcoming',
         requires_registration: false,
         banner_color: 'rose',
       });
-      setSyncAsService(false);
     }
   }, [eventToEdit, defaultDate, isOpen]);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingRef.current) return;
     setValidationError(null);
 
     if (!formData.title.trim()) {
@@ -141,42 +147,38 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
     const payload = {
       title: formData.title.trim(),
       event_type: formData.event_type,
-      theme: formData.theme.trim() || undefined,
-      theme_scripture: formData.theme_scripture.trim() || undefined,
-      description: formData.description.trim() || undefined,
+      theme: formData.theme.trim(),
+      theme_scripture: formData.theme_scripture.trim(),
+      description: formData.description.trim(),
       start_date: formData.start_date,
       end_date: effectiveEndDate,
       start_time: formData.start_time,
       end_time: formData.end_time,
       venue: formData.venue.trim(),
-      organizer: formData.organizer.trim() || undefined,
-      ministry_name: formData.ministry_name.trim() || undefined,
-      speaker: formData.speaker.trim() || undefined,
-      expected_attendance: Math.max(0, parseInt(formData.expected_attendance, 10) || 100),
-      budget: Math.max(0, parseFloat(formData.budget) || 0),
+      organizer: formData.organizer.trim(),
+      ministry_name: formData.ministry_name.trim(),
+      speaker: formData.speaker.trim(),
+      expected_attendance: Number(formData.expected_attendance || '0'),
+      budget: Number(formData.budget || '0'),
       status: formData.status,
       requires_registration: formData.requires_registration,
       banner_color: formData.banner_color,
     };
 
-    if (eventToEdit) {
-      updateEvent(eventToEdit.id, payload);
-      success('Program Updated', `"${payload.title}" has been updated.`);
-    } else {
-      createEvent({
-        ...payload,
-        attendees: [],
-        registration_count: 0,
-      });
-      success('Program Scheduled', `"${payload.title}" has been scheduled successfully.`);
-    }
+    savingRef.current = true; setSaving(true);
+    try {
+      if (eventToEdit) await updateEvent(eventToEdit.id, payload, eventToEdit.updated_at);
+      else await createEvent({ ...payload, id: draftId.current, attendees: [], registration_count: 0 });
+      success('Program Saved', EVENT_SAVE_NOTICE);
+      onClose();
+    } catch (error) { setValidationError(error instanceof Error ? error.message : 'Unable to save this program.'); }
+    finally { savingRef.current = false; setSaving(false); }
 
-    onClose();
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-150">
-      <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+      <div ref={panel} role="dialog" aria-modal="true" aria-label={eventToEdit ? 'Edit Church Program' : 'Schedule Church Program'} className="relative w-full min-w-0 max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="px-6 py-4 bg-gradient-to-r from-rose-950 via-rose-900 to-slate-900 text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
@@ -191,7 +193,7 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            aria-label="Close form" onClick={close} disabled={saving}
             className="p-1 text-white/70 hover:text-white rounded-lg transition"
           >
             <X className="w-5 h-5" />
@@ -200,6 +202,7 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-4 text-xs">
+          <fieldset disabled={saving} className="contents">
           {validationError && (
             <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl flex items-center gap-2 font-medium">
               <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
@@ -483,18 +486,19 @@ export const ScheduleEventModal: React.FC<ScheduleEventModalProps> = ({
           <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0">
             <button
               type="button"
-              onClick={onClose}
+              onClick={close} disabled={saving}
               className="px-4 py-2 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 font-semibold"
             >
               Cancel
             </button>
             <button
-              type="submit"
+              type="submit" disabled={saving}
               className="px-5 py-2 bg-rose-800 hover:bg-rose-900 text-white rounded-xl font-bold shadow-sm transition"
             >
-              {eventToEdit ? 'Save Changes' : 'Schedule Program'}
+              {saving ? 'Saving...' : eventToEdit ? 'Save Changes' : 'Schedule Program'}
             </button>
           </div>
+          </fieldset>
         </form>
       </div>
     </div>

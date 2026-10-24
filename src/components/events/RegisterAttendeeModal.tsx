@@ -1,7 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { X, UserPlus, Search, Check, Phone, ShieldCheck, HeartHandshake, AlertCircle } from 'lucide-react';
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { useToast } from '../../contexts/ToastContext';
+
+import { useModalFocus } from '../../hooks/useModalFocus';
+import { EVENT_SAVE_NOTICE } from '../../features/events/eventRules';
 
 interface RegisterAttendeeModalProps {
   isOpen: boolean;
@@ -41,12 +44,17 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
   const [guestPhone, setGuestPhone] = useState('');
   const [guestEmail, setGuestEmail] = useState('');
 
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const close = () => { if (!savingRef.current) onClose(); };
+  const panel = useModalFocus(isOpen, close);
   if (!isOpen) return null;
 
   const currentEvent = events.find((e) => e.id === eventId);
   const existingAttendees = currentEvent?.attendees || [];
 
   const filteredMembers = members.filter((m) => {
+    if (m.is_archived || ['deceased','transferred'].includes(m.status)) return false;
     const q = memberSearch.toLowerCase();
     const fullName = `${m.first_name} ${m.last_name}`.toLowerCase();
     const phone = m.phone || '';
@@ -54,9 +62,12 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
     return fullName.includes(q) || phone.includes(q) || memId.toLowerCase().includes(q);
   }).slice(0, 10);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingRef.current) return;
     setErrorMsg(null);
+    savingRef.current = true; setSaving(true);
+    try {
 
     if (activeTab === 'member') {
       if (!selectedMemberId) {
@@ -66,41 +77,43 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
       const selectedMember = members.find((m) => m.id === selectedMemberId);
       if (!selectedMember) return;
 
-      const alreadyAdded = existingAttendees.some((a) => a.member_id === selectedMember.id);
+      const alreadyAdded = existingAttendees.some((a) => (a.member_id === selectedMember.id || a.member_id === selectedMember.member_id));
       if (alreadyAdded) {
         setErrorMsg(`${selectedMember.first_name} ${selectedMember.last_name} is already registered for this event.`);
         return;
       }
 
-      addEventAttendee(eventId, {
+      await addEventAttendee(eventId, {
         name: `${selectedMember.first_name} ${selectedMember.last_name}`,
         phone: selectedMember.phone,
         email: selectedMember.email,
         member_id: selectedMember.id,
         role: selectedRole,
       });
-      success('Registered Successfully', `${selectedMember.first_name} ${selectedMember.last_name} assigned as ${selectedRole}.`);
+      success('Registration Saved', EVENT_SAVE_NOTICE);
     } else {
       if (!guestName.trim()) {
         setErrorMsg('Please enter the guest full name.');
         return;
       }
 
-      addEventAttendee(eventId, {
+      await addEventAttendee(eventId, {
         name: guestName.trim(),
         phone: guestPhone.trim() || undefined,
         email: guestEmail.trim() || undefined,
         role: selectedRole,
       });
-      success('Guest Registered', `${guestName.trim()} registered as ${selectedRole}.`);
+      success('Registration Saved', EVENT_SAVE_NOTICE);
     }
 
     onClose();
+    } catch (error) { setErrorMsg(error instanceof Error ? error.message : 'Unable to save this registration.'); }
+    finally { savingRef.current = false; setSaving(false); }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+      <div ref={panel} role="dialog" aria-modal="true" aria-label="Register Attendee / Volunteer" className="relative w-full min-w-0 max-w-lg max-h-[92vh] overflow-y-auto bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
         {/* Header */}
         <div className="px-6 py-4 bg-rose-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -111,7 +124,7 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            aria-label="Close form" onClick={close} disabled={saving}
             className="p-1 text-white/70 hover:text-white rounded-lg transition"
           >
             <X className="w-5 h-5" />
@@ -145,6 +158,7 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4 text-xs">
+          <fieldset disabled={saving} className="contents">
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl flex items-center gap-2 font-medium">
               <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
@@ -265,19 +279,20 @@ export const RegisterAttendeeModal: React.FC<RegisterAttendeeModalProps> = ({
           <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={close} disabled={saving}
               className="px-3.5 py-2 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 font-semibold"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={activeTab === 'member' && !selectedMemberId}
+              disabled={saving || (activeTab === 'member' && !selectedMemberId)}
               className="px-4 py-2 bg-rose-800 hover:bg-rose-900 disabled:opacity-50 text-white rounded-xl font-bold shadow-xs transition"
             >
-              Confirm Registration
+              {saving ? 'Saving...' : 'Confirm Registration'}
             </button>
           </div>
+          </fieldset>
         </form>
       </div>
     </div>

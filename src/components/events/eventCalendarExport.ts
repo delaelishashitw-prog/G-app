@@ -1,65 +1,34 @@
 import { ChurchEvent } from '../../types/database.types';
 
-/**
- * Generates and downloads a standard .ics (iCalendar) file for any church event
- */
-export function downloadEventIcs(event: ChurchEvent, churchName: string = 'Greater Works City Church') {
-  const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
-
-  // Format date-time for iCalendar: YYYYMMDDTHHMMSS
-  const formatIcsDateTime = (dateStr: string, timeStr: string): string => {
-    try {
-      const [year, month, day] = dateStr.split('-').map(Number);
-      const [hours, minutes] = (timeStr || '09:00').split(':').map(Number);
-      return `${year}${pad(month)}${pad(day)}T${pad(hours)}${pad(minutes)}00`;
-    } catch {
-      return `${dateStr.replace(/-/g, '')}T090000`;
-    }
-  };
-
-  const dtStart = formatIcsDateTime(event.start_date, event.start_time);
-  const dtEnd = formatIcsDateTime(event.end_date || event.start_date, event.end_time || event.start_time);
-  const now = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-
-  const cleanDescription = (
-    `${event.theme ? `THEME: "${event.theme}" (${event.theme_scripture || ''})\n\n` : ''}` +
-    `${event.description || ''}\n\n` +
-    `${event.speaker ? `Keynote Speaker: ${event.speaker}\n` : ''}` +
-    `Host: ${event.ministry_name || event.organizer || churchName}\n` +
-    `Location: ${event.venue}\n` +
-    `Expected Attendance: ${event.expected_attendance || 'All are welcome'}`
-  ).replace(/\n/g, '\\n');
-
-  const icsLines = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//Greater Works City Church//Ecclesiastical Calendar//EN',
-    'CALSCALE:GREGORIAN',
-    'METHOD:PUBLISH',
-    'BEGIN:VEVENT',
-    `UID:${event.id}@gwcc-joma.gh`,
-    `DTSTAMP:${now}`,
-    `DTSTART:${dtStart}`,
-    `DTEND:${dtEnd}`,
-    `SUMMARY:${event.title.replace(/,/g, '\\,')}`,
-    `DESCRIPTION:${cleanDescription}`,
-    `LOCATION:${event.venue.replace(/,/g, '\\,')}`,
-    'STATUS:CONFIRMED',
-    'END:VEVENT',
-    'END:VCALENDAR',
-  ];
-
-  const icsData = icsLines.join('\r\n');
-  const blob = new Blob([icsData], { type: 'text/calendar;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  const fileName = `${(event.title || 'church_event').toLowerCase().replace(/[^a-z0-9]/g, '_')}.ics`;
-  link.setAttribute('download', fileName);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+/** Escape iCalendar TEXT and fold by UTF-8 octets, without splitting a code point. */
+const escapeText = (text: string) => text.replace(/\\/g, '\\\\').replace(/\r\n|\r|\n/g, '\\n').replace(/;/g, '\\;').replace(/,/g, '\\,');
+function foldLine(line: string) {
+  const lines: string[] = []; let part = '', bytes = 0;
+  for (const character of line) {
+    const size = new TextEncoder().encode(character).length;
+    if (bytes + size > 75) { lines.push(part); part = ' '; bytes = 1; }
+    part += character; bytes += size;
+  }
+  lines.push(part); return lines.join('\r\n');
+}
+export function buildEventIcs(event: ChurchEvent, churchName = 'Greater Works City Church', now = new Date()) {
+  const instant = (date: string, time: string) => `${date.replaceAll('-', '')}T${time.slice(0, 5).replace(':', '')}00Z`;
+  const description = [event.theme, event.theme_scripture, event.description, event.speaker ? `Speaker: ${event.speaker}` : '', `Host: ${event.ministry_name || event.organizer || churchName}`].filter(Boolean).join('\n');
+  return [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//GWCC//Church Events//EN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
+    `UID:${escapeText(event.id)}@gwcc-joma.gh`, `DTSTAMP:${now.toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
+    `DTSTART:${instant(event.start_date, event.start_time)}`, `DTEND:${instant(event.end_date || event.start_date, event.end_time)}`,
+    `SUMMARY:${escapeText(event.title)}`, `DESCRIPTION:${escapeText(description)}`, `LOCATION:${escapeText(event.venue || '')}`,
+    `STATUS:${event.status === 'cancelled' ? 'CANCELLED' : event.status === 'draft' ? 'TENTATIVE' : 'CONFIRMED'}`,
+    'END:VEVENT', 'END:VCALENDAR',
+  ].map(foldLine).join('\r\n') + '\r\n';
+}
+export function downloadEventIcs(event: ChurchEvent, churchName = 'Greater Works City Church') {
+  const url = URL.createObjectURL(new Blob([buildEventIcs(event, churchName)], { type: 'text/calendar;charset=utf-8' }));
+  const link = document.createElement('a'); link.href = url;
+  link.download = `${(event.title || 'church_event').toLowerCase().replace(/[^a-z0-9]/g, '_')}.ics`;
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /**
@@ -67,8 +36,8 @@ export function downloadEventIcs(event: ChurchEvent, churchName: string = 'Great
  */
 export function generateWhatsAppAnnouncement(event: ChurchEvent, churchName: string = 'Greater Works City Church, Joma'): string {
   const dateFormatted = event.start_date === event.end_date
-    ? new Date(event.start_date).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-    : `${new Date(event.start_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} - ${new Date(event.end_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+    ? new Date(event.start_date).toLocaleDateString('en-GB', { timeZone: 'Africa/Accra', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+    : `${new Date(event.start_date).toLocaleDateString('en-GB', { timeZone: 'Africa/Accra', day: 'numeric', month: 'short' })} - ${new Date(event.end_date).toLocaleDateString('en-GB', { timeZone: 'Africa/Accra', day: 'numeric', month: 'short', year: 'numeric' })}`;
 
   const lines = [
     `🕊️ *${churchName.toUpperCase()}*`,
@@ -76,6 +45,7 @@ export function generateWhatsAppAnnouncement(event: ChurchEvent, churchName: str
     `--------------------------------------`,
   ];
 
+  if (['draft', 'cancelled', 'completed'].includes(event.status)) lines.push(`*Status: ${event.status.toUpperCase()}*`);
   if (event.theme) {
     lines.push(`🔥 *Theme:* "${event.theme}"`);
     if (event.theme_scripture) {
@@ -85,7 +55,7 @@ export function generateWhatsAppAnnouncement(event: ChurchEvent, churchName: str
   }
 
   lines.push(`📅 *Date:* ${dateFormatted}`);
-  lines.push(`⏰ *Time:* ${event.start_time} - ${event.end_time}`);
+  lines.push(`⏰ *Time:* ${event.start_time} - ${event.end_time} GMT`);
   lines.push(`📍 *Venue:* ${event.venue}`);
 
   if (event.speaker) {
@@ -102,7 +72,7 @@ export function generateWhatsAppAnnouncement(event: ChurchEvent, churchName: str
     lines.push(``);
   }
 
-  lines.push(`Come with your family, neighbors, and friends. Your breakthrough awaits you!`);
+  if (['upcoming','ongoing'].includes(event.status)) lines.push('You are warmly invited.');
   lines.push(`--------------------------------------`);
   lines.push(`Jesus Christ the same yesterday, and to day, and for ever. (Hebrews 13:8)`);
 

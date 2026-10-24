@@ -1,3 +1,4 @@
+import { canMemberRsvp, effectiveEventStatus } from '../features/events/eventRules';
 import {GivingInstructions} from '../components/finance/GivingChannels';
 import {rosterDate,rosterToday,isUpcomingDuty,type RosterSubstituteRequest} from '../lib/rosterUtils';
 import { isActiveTransaction } from '../lib/ledgerUtils';
@@ -248,6 +249,9 @@ export const MemberPortalPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const requiresCloudMemberAuth = true;
+
+  const [eventClock, setEventClock] = useState(Date.now);
+  React.useEffect(() => { const timer = setInterval(() => setEventClock(Date.now()), 30000); return () => clearInterval(timer); }, []);
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<PortalTab>(() => {
@@ -3556,8 +3560,9 @@ export const MemberPortalPage: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {events.map((ev) => {
+              {events.filter(event => event.status !== 'draft').map((ev) => {
                 const rsvpKey = `${activeMember.id}:${ev.id}`;
+                const lifecycle = effectiveEventStatus(ev, eventClock);
                 const isRsvp = savedRsvps.has(rsvpKey) || ev.attendees?.some(
                   (a) =>
                     a.member_id === activeMember.id ||
@@ -3568,7 +3573,7 @@ export const MemberPortalPage: React.FC = () => {
                   <div key={ev.id} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200">
-                        {ev.event_type.replace('_', ' ') || 'Special Gathering'}
+                        {(ev.event_type || 'special').replaceAll('_', ' ') || 'Special Gathering'}
                       </span>
                       <span className="text-xs text-slate-500 font-mono font-semibold">
                         {ev.start_date}
@@ -3594,17 +3599,17 @@ export const MemberPortalPage: React.FC = () => {
                       {isRsvp ? (
                         <div className="w-full py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5">
                           <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                          <span>RSVP Confirmed (See You There!)</span>
+                          <span>{lifecycle === 'cancelled' ? 'Event cancelled — registration kept for reference' : lifecycle === 'completed' ? 'Registration recorded — event ended' : 'RSVP Confirmed (See You There!)'}</span>
                         </div>
                       ) : (
                         <button
                           type="button"
-                          disabled={currentRole !== 'member' || savingRsvp !== null || ['cancelled', 'completed'].includes(ev.status) || (ev.end_date || ev.start_date) < new Date().toISOString().slice(0,10)}
+                          disabled={currentRole !== 'member' || savingRsvp !== null || !canMemberRsvp(ev, eventClock)}
                           onClick={() => void handleRsvp(ev.id)}
                           className="w-full py-2 bg-indigo-800 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition shadow-xs flex items-center justify-center gap-1.5"
                         >
                           <CalendarCheck className="w-4 h-4" />
-                          <span>{savingRsvp === ev.id ? 'Saving registration...' : currentRole !== 'member' ? 'Member sign-in required to register' : ['cancelled','completed'].includes(ev.status) || (ev.end_date || ev.start_date) < new Date().toISOString().slice(0,10) ? 'Registration closed' : '1-Click RSVP for Event'}</span>
+                          <span>{savingRsvp === ev.id ? 'Saving registration...' : currentRole !== 'member' ? 'Member sign-in required to register' : !canMemberRsvp(ev, eventClock) ? (ev.requires_registration ? 'Registration closed' : 'RSVP not enabled') : '1-Click RSVP for Event'}</span>
                         </button>
                       )}
                     </div>

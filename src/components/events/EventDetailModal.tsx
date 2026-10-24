@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   Calendar,
@@ -32,6 +32,9 @@ import { downloadEventIcs, generateWhatsAppAnnouncement } from './eventCalendarE
 import { PrintEventFlyerModal } from './PrintEventFlyerModal';
 import { RegisterAttendeeModal } from './RegisterAttendeeModal';
 
+import { useModalFocus } from '../../hooks/useModalFocus';
+import { effectiveEventStatus, EVENT_SAVE_NOTICE } from '../../features/events/eventRules';
+
 interface EventDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -45,51 +48,58 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
   event,
   onEdit,
 }) => {
-  const { deleteEvent, updateEvent, toggleAttendeeCheckIn, removeEventAttendee, settings } = useChurchData();
-  const { success, info } = useToast();
+  const { updateEvent, toggleAttendeeCheckIn, removeEventAttendee, settings } = useChurchData();
+  const { success, error: toastError } = useToast();
   const { canAccess, currentRole } = useAuth();
   const canManageEvents =
     canAccess('events') &&
-    (currentRole === 'senior_pastor' ||
+    (currentRole === 'super_admin' || currentRole === 'senior_pastor' ||
       currentRole === 'administrator' ||
       currentRole === 'pastor' ||
       currentRole === 'ministry_leader');
   const [activeTab, setActiveTab] = useState<'overview' | 'attendees' | 'share'>('overview');
   const [copiedAnnouncement, setCopiedAnnouncement] = useState(false);
-  const [copiedGps, setCopiedGps] = useState(false);
   const [isPrintFlyerOpen, setIsPrintFlyerOpen] = useState(false);
   const [isRegisterAttendeeOpen, setIsRegisterAttendeeOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  const [saving, setSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [removeId, setRemoveId] = useState<string | null>(null);
+  const savingRef = useRef(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const close = () => { if (!savingRef.current) onClose(); };
+  const panel = useModalFocus(isOpen && !isRegisterAttendeeOpen && !isPrintFlyerOpen, close);
+  useEffect(() => () => clearTimeout(copiedTimer.current), []);
+  useEffect(() => { setActiveTab('overview'); setConfirmDelete(false); setRemoveId(null); setErrorMessage(''); }, [event?.id]);
   if (!isOpen || !event) return null;
-
-  const handleCopyAnnouncement = () => {
-    const text = generateWhatsAppAnnouncement(event, settings.church_name || 'Greater Works City Church, Joma');
-    navigator.clipboard.writeText(text);
-    setCopiedAnnouncement(true);
-    setTimeout(() => setCopiedAnnouncement(false), 2500);
+  const pending = event._sync_status === 'pending';
+  const blocked = saving || pending;
+  const run = async (action: () => Promise<unknown>) => {
+    if (savingRef.current || pending) return;
+    savingRef.current = true; setSaving(true); setErrorMessage('');
+    try { await action(); success('Event Change Saved', EVENT_SAVE_NOTICE); }
+    catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to preserve this change.'); }
+    finally { savingRef.current = false; setSaving(false); }
   };
 
-  const handleCopyGps = () => {
-    navigator.clipboard.writeText('GA-184-2900');
-    setCopiedGps(true);
-    setTimeout(() => setCopiedGps(false), 2000);
+  const handleCopyAnnouncement = async () => {
+    try {
+      await navigator.clipboard.writeText(generateWhatsAppAnnouncement(event, settings.church_name));
+      setCopiedAnnouncement(true); clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopiedAnnouncement(false), 2500);
+    } catch { toastError('Copy Failed', 'Select and copy the announcement text manually.'); }
   };
 
   const handleDownloadIcs = () => {
     downloadEventIcs(event, settings.church_name);
   };
 
-  const handleDelete = () => {
-    deleteEvent(event.id);
-    success('Event Deleted', `"${event.title}" was removed successfully.`);
-    onClose();
-  };
-
-  const handleStatusChange = (newStatus: ChurchEvent['status']) => {
-    updateEvent(event.id, { status: newStatus });
-    info('Status Updated', `Event status set to ${newStatus}.`);
-  };
+  const handleDelete = () => run(async () => {
+    await updateEvent(event.id, { status: 'cancelled' });
+    setConfirmDelete(false);
+  });
+  const handleStatusChange = (status: ChurchEvent['status']) => run(() => updateEvent(event.id, { status }));
 
   const isMultiDay = event.start_date !== event.end_date;
   const attendeesList = event.attendees || [];
@@ -99,7 +109,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
   const formatDateReadable = (dStr: string) => {
     try {
       return new Date(dStr).toLocaleDateString('en-GB', {
-        weekday: 'short',
+        weekday: 'short', timeZone: 'Africa/Accra',
         day: 'numeric',
         month: 'short',
         year: 'numeric',
@@ -118,16 +128,16 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
     cancelled: { bg: 'bg-red-50 text-red-800 border-red-200', text: 'Cancelled', label: 'Cancelled' },
   };
 
-  const curStatus = statusColors[event.status] || statusColors.upcoming;
+  const curStatus = statusColors[effectiveEventStatus(event)] || statusColors.upcoming;
 
   return (
     <>
       <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
-        <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+        <div ref={panel} role="dialog" aria-modal="true" aria-label="Event details" className="relative w-full min-w-0 max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
           {/* Header Banner */}
           <div className="bg-gradient-to-r from-rose-950 via-rose-900 to-slate-900 text-white p-5 sm:p-6 shrink-0 relative">
             <button
-              onClick={onClose}
+              onClick={close}
               className="absolute top-4 right-4 p-1.5 text-white/70 hover:text-white rounded-lg hover:bg-white/10 transition"
               title="Close"
             >
@@ -136,7 +146,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
 
             <div className="flex items-center gap-2 mb-2 text-xs">
               <span className="font-semibold uppercase tracking-wider text-rose-300">
-                {event.event_type.replace('_', ' ')}
+                {(event.event_type || 'special').replaceAll('_', ' ')}
               </span>
               <span className="text-white/40">·</span>
               <span className="px-2 py-0.5 rounded text-[11px] font-bold border border-white/20 bg-white/10 text-white">
@@ -155,9 +165,15 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
             )}
           </div>
 
+          {pending && <p role="status" className="p-3 text-xs bg-amber-50 text-amber-900">{EVENT_SAVE_NOTICE} Further changes are available after confirmation.</p>}
+          {errorMessage && <p role="alert" className="p-3 text-xs bg-red-50 text-red-800">{errorMessage}</p>}
+          {removeId && <div className="p-3 bg-red-50 text-xs">Remove this person from the roster? The removal is recorded in the audit history.
+            <button disabled={blocked} onClick={() => void run(async () => { await removeEventAttendee(event.id, removeId); setRemoveId(null); })} className="ml-2 font-bold">Confirm removal</button>
+            <button onClick={() => setRemoveId(null)} className="ml-2">Keep person</button>
+          </div>}
           {/* Sub-nav Tabs */}
-          <div className="flex items-center justify-between px-6 border-b border-slate-200 bg-slate-50/60 shrink-0">
-            <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center justify-between px-2 sm:px-6 border-b border-slate-200 bg-slate-50/60 shrink-0">
+            <div className="flex flex-wrap items-center gap-1">
               <button
                 type="button"
                 onClick={() => setActiveTab('overview')}
@@ -245,15 +261,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                       Venue & Location
                     </span>
                     <p className="font-semibold text-slate-900 text-xs">{event.venue}</p>
-                    <div className="flex items-center gap-1.5 pt-0.5">
-                      <span className="text-[11px] text-slate-500 font-mono">GPS: GA-184-2900</span>
-                      <button
-                        onClick={handleCopyGps}
-                        className="text-[10px] text-rose-700 hover:text-rose-900 font-semibold underline"
-                      >
-                        {copiedGps ? 'Copied!' : 'Copy GPS'}
-                      </button>
-                    </div>
+
                   </div>
                 </div>
 
@@ -284,18 +292,18 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                   <div>
                     <span className="text-[10px] font-semibold text-slate-500 block">Expected Attendance</span>
                     <span className="text-base font-extrabold text-slate-900 font-mono">
-                      {event.expected_attendance || 'Open'}
+                      {event.expected_attendance ?? 'Open'}
                     </span>
                   </div>
                   <div>
                     <span className="text-[10px] font-semibold text-slate-500 block">Confirmed RSVPs</span>
                     <span className="text-base font-extrabold text-rose-900 font-mono">
-                      {attendeesList.length || event.registration_count || 0}
+                      {attendeesList.length}
                     </span>
                   </div>
                   {event.budget !== undefined && event.budget > 0 && (
                     <div>
-                      <span className="text-[10px] font-semibold text-slate-500 block">Approved Budget</span>
+                      <span className="text-[10px] font-semibold text-slate-500 block">Planned Budget</span>
                       <span className="text-base font-extrabold text-slate-900 font-mono">
                         GH₵ {event.budget.toLocaleString()}
                       </span>
@@ -341,8 +349,9 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] font-bold text-slate-600">Change Status:</span>
                       <select
+                        aria-label="Change event status" disabled={blocked}
                         value={event.status}
-                        onChange={(e) => handleStatusChange(e.target.value as any)}
+                        onChange={(e) => handleStatusChange(e.target.value as ChurchEvent['status'])}
                         className="px-2.5 py-1 text-xs border border-slate-300 rounded-lg bg-white font-medium focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
                       >
                         <option value="upcoming">Upcoming</option>
@@ -355,7 +364,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
 
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => onEdit(event)}
+                        disabled={blocked} onClick={() => onEdit(event)}
                         className="px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg border border-slate-300 flex items-center gap-1 transition"
                       >
                         <Edit className="w-3.5 h-3.5" />
@@ -363,17 +372,17 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                       </button>
                       {!confirmDelete ? (
                         <button
-                          onClick={() => setConfirmDelete(true)}
+                          disabled={blocked || event.status === 'cancelled'} onClick={() => setConfirmDelete(true)}
                           className="px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-lg transition"
-                          title="Delete event"
+                          title="Cancel event and keep history"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       ) : (
                         <div className="flex items-center gap-1.5 bg-red-50 p-1 rounded-lg border border-red-200">
-                          <span className="text-[10px] text-red-700 font-bold">Delete?</span>
+                          <span className="text-[10px] text-red-700 font-bold">Cancel event?</span>
                           <button
-                            onClick={handleDelete}
+                            disabled={blocked} onClick={handleDelete}
                             className="px-2 py-0.5 bg-red-600 text-white rounded text-[10px] font-bold hover:bg-red-700"
                           >
                             Confirm
@@ -412,7 +421,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                     </p>
                   </div>
                   <button
-                    onClick={() => setIsRegisterAttendeeOpen(true)}
+                    disabled={!canManageEvents || blocked || ['completed','cancelled'].includes(effectiveEventStatus(event))} onClick={() => setIsRegisterAttendeeOpen(true)}
                     className="px-3 py-1.5 bg-rose-800 hover:bg-rose-900 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-xs transition self-start sm:self-auto"
                   >
                     <UserPlus className="w-3.5 h-3.5" />
@@ -428,7 +437,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                       Assign ushers, protocol, media workers, and register church members expecting to attend.
                     </p>
                     <button
-                      onClick={() => setIsRegisterAttendeeOpen(true)}
+                      disabled={!canManageEvents || blocked || ['completed','cancelled'].includes(effectiveEventStatus(event))} onClick={() => setIsRegisterAttendeeOpen(true)}
                       className="mt-2 px-3 py-1.5 bg-rose-700 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5"
                     >
                       <UserPlus className="w-3.5 h-3.5" />
@@ -444,7 +453,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <button
-                            onClick={() => toggleAttendeeCheckIn(event.id, att.id)}
+                            disabled={!canManageEvents || blocked || event.status === 'cancelled'} onClick={() => void run(() => toggleAttendeeCheckIn(event.id, att.id))}
                             className={`p-1.5 rounded-lg border transition ${
                               att.checked_in
                                 ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
@@ -456,8 +465,8 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                           </button>
 
                           <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-slate-900 truncate">{att.name}</span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-bold text-slate-900 break-words">{att.name}</span>
                               <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
                                 {att.role || 'Attendee'}
                               </span>
@@ -475,7 +484,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                                 </span>
                               )}
                               {att.email && (
-                                <span className="flex items-center gap-1">
+                                <span className="flex flex-wrap items-center gap-1">
                                   <Mail className="w-3 h-3 text-slate-400" />
                                   {att.email}
                                 </span>
@@ -485,7 +494,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
                         </div>
 
                         <button
-                          onClick={() => removeEventAttendee(event.id, att.id)}
+                          disabled={!canManageEvents || blocked || att.checked_in} onClick={() => setRemoveId(att.id)}
                           className="p-1 text-slate-400 hover:text-red-600 rounded transition"
                           title="Remove from roster"
                         >

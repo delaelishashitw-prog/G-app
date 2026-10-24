@@ -10,8 +10,8 @@ export async function checkMemberPortal(browser,{origin,settings,sampleMember}) 
   const session={user,access_token:token,refresh_token:'synthetic-only-refresh',expires_at:exp,expires_in:3600,token_type:'bearer'};
   let own={...sampleMember,id:'portal-own',member_id:'GWCC-PORTAL-OWN',first_name:'Portal',last_name:'Member',auth_user_id:id,phone:'0240000001',email:'contact@example.test',residential_address:'Original address',gps_address:'GA-000-0000',emergency_name:'Original contact',emergency_phone:'0240000002'};
   const future=new Date(Date.now()+14*86400000).toISOString().slice(0,10);
-  const event=(id,title,attendees=[])=>({id,title,event_type:'conference',start_date:future,end_date:future,start_time:'18:00',end_time:'20:00',venue:'Synthetic venue',status:'upcoming',attendees});
-  const events=[event('same-name','Same surname test',[{id:'other',member_id:'someone-else',name:'Another Member',phone:'0240000003',email:'other@example.test'}]),event('target','Registration test')];
+  const event=(id,title,attendees=[])=>({id,title,event_type:'conference',start_date:future,end_date:future,start_time:'18:00',end_time:'20:00',venue:'Synthetic venue',status:'upcoming',requires_registration:true,attendees});
+  const events=[event('same-name','Same surname test',[{id:'other',member_id:'someone-else',name:'Another Member',phone:'0240000003',email:'other@example.test'}]),event('target','Registration test'),{...event('draft','Private draft fixture'),status:'draft'},{...event('disabled','No RSVP fixture'),requires_registration:false},{...event('ended','Ended fixture'),start_date:'2000-01-01',end_date:'2000-01-01'}];
   let includeLegacySurname=true;
   const safeEvent=ev=>({...ev,attendees:ev.id==='same-name'&&includeLegacySurname?[{id:'other',member_id:'someone-else',name:'Another Member'}]:ev.attendees.filter(a=>a.member_id===own.id||a.member_id===own.member_id).map(a=>({id:a.id,member_id:a.member_id,registered_at:a.registered_at,checked_in:a.checked_in}))});
   let attempts=0,rejectNext=true,loseNextResponse=false,legacyCache=false,profileWrites=0,eventReads=0,rawEventReads=0,genericWrites=0;
@@ -74,6 +74,9 @@ export async function checkMemberPortal(browser,{origin,settings,sampleMember}) 
     await page.reload();await page.waitForFunction(()=>document.querySelector('#portal-profile-0')?.value==='0240000004');
     await page.goto(`${origin}/portal?tab=events`);await page.getByText('Registration test',{exact:true}).waitFor();
     const card=()=>page.locator('div.bg-white').filter({has:page.getByText('Registration test',{exact:true})}).last();
+    assert.equal(await page.getByText('Private draft fixture',{exact:true}).count(),0);
+    assert.equal(await page.getByRole('button',{name:'RSVP not enabled',exact:true}).isDisabled(),true);
+    assert.equal(await page.getByRole('button',{name:'Registration closed',exact:true}).isDisabled(),true);
     // An older response with a same-surname attendee must not establish this member's identity.
     assert.equal(await page.getByText('RSVP Confirmed (See You There!)',{exact:true}).count(),0);
     await card().getByRole('button',{name:'1-Click RSVP for Event',exact:true}).click();

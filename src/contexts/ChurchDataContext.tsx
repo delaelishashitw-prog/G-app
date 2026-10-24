@@ -129,14 +129,8 @@ import {
   updateCampaign as updateCampaignRecord,
   updatePledge as updatePledgeRecord,
 } from '../features/pledges/pledgeStore';
-import {
-  addEventAttendee as addEventAttendeeRecord,
-  createEvent as createEventRecord,
-  deleteEvent as deleteEventRecord,
-  removeEventAttendee as removeEventAttendeeRecord,
-  toggleAttendeeCheckIn as toggleAttendeeCheckInRecord,
-  updateEvent as updateEventRecord,
-} from '../features/events/eventStore';
+import { preserveEvent, requireConfirmedEvent } from '../features/events/eventStore';
+import { EVENT_WRITE_ROLES } from '../features/events/eventRules';
 import {
   addMinistry as addMinistryRecord,
   addSmallGroup as addSmallGroupRecord,
@@ -308,15 +302,15 @@ interface ChurchDataContextType {
 
   // Events
   events: ChurchEvent[];
-  createEvent: (event: Omit<ChurchEvent, 'id'>) => ChurchEvent;
-  updateEvent: (id: string, updates: Partial<ChurchEvent>) => void;
-  deleteEvent: (id: string) => void;
+  createEvent: (event: Omit<ChurchEvent, 'id'> & { id: string }) => Promise<ChurchEvent>;
+  updateEvent: (id: string, updates: Partial<ChurchEvent>, expectedVersion?: string) => Promise<ChurchEvent>;
+  deleteEvent: (id: string) => Promise<void>;
   addEventAttendee: (
     eventId: string,
     attendee: { name: string; phone?: string; email?: string; member_id?: string; role?: string }
-  ) => void;
-  removeEventAttendee: (eventId: string, attendeeId: string) => void;
-  toggleAttendeeCheckIn: (eventId: string, attendeeId: string) => void;
+  ) => Promise<ChurchEvent>;
+  removeEventAttendee: (eventId: string, attendeeId: string) => Promise<ChurchEvent>;
+  toggleAttendeeCheckIn: (eventId: string, attendeeId: string) => Promise<ChurchEvent>;
 
   // Pastoral Care & Prayer Requests
   pastoralCare: PastoralCareRecord[];
@@ -462,6 +456,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const { currentUser, isAuthenticated, canAccess } = useAuth();
   const fundIdentity = `${isAuthenticated}:${currentUser.id}:${currentUser.role}`;
   const fundIdentityRef = React.useRef(fundIdentity); fundIdentityRef.current = fundIdentity;
+  const eventSavesInFlight = React.useRef(new Set<string>());
   const fundSavesInFlight = React.useRef(new Set<string>());
   const isInitialMount = React.useRef(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -1089,31 +1084,59 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const addSmallGroup = (data: Omit<SmallGroup, 'id' | 'member_count'>): SmallGroup =>
     addSmallGroupRecord(data, setSmallGroups, logAction, dbSyncUpsert);
 
-  // EVENTS
-  const createEvent = (data: Omit<ChurchEvent, 'id'>): ChurchEvent =>
-    createEventRecord(data, setEvents, logAction, dbSyncUpsert);
-
-  const updateEvent = (id: string, updates: Partial<ChurchEvent>) => {
-    updateEventRecord(id, updates, setEvents, logAction, dbSyncUpsert);
+  // EVENTS: one versioned change at a time; never show a change before durable admission.
+  const requireEventWriter = () => {
+    if (!isAuthenticated || !EVENT_WRITE_ROLES.includes(currentUser.role)) throw new Error('Event management access is required.');
   };
-
-  const deleteEvent = (id: string) => {
-    deleteEventRecord(id, events, setEvents, logAction, dbSyncDelete);
+  const saveEvent = async (record: ChurchEvent, existing?: ChurchEvent) => {
+    requireEventWriter();
+    const identity = fundIdentity, key = `${identity}:${record.id}`;
+    if (eventSavesInFlight.current.has(key)) throw new Error('This event is already being saved.');
+    eventSavesInFlight.current.add(key);
+    try {
+      const saved = await preserveEvent(record, existing, dbSyncUpsert);
+      if (fundIdentityRef.current !== identity) throw new Error('The signed-in account changed. This change remains with its original account.');
+      const rows = [saved, ...currentDataRef.current.events.filter(row => row.id !== saved.id)];
+      currentDataRef.current.events = rows; setEvents(rows);
+      return saved;
+    } finally { eventSavesInFlight.current.delete(key); }
   };
-
-  const addEventAttendee = (
-    eventId: string,
-    attendee: { name: string; phone?: string; email?: string; member_id?: string; role?: string }
-  ) => {
-    addEventAttendeeRecord(eventId, attendee, setEvents, logAction, dbSyncUpsert);
+  const createEvent = async (data: Omit<ChurchEvent, 'id'> & { id: string }) => {
+    if (currentDataRef.current.events.some(row => row.id === data.id)) throw new Error('This program already exists. Check Events and pending changes.');
+    return saveEvent({ ...data, created_at: new Date().toISOString(), registration_count: 0, attendees: [] });
   };
-
-  const removeEventAttendee = (eventId: string, attendeeId: string) => {
-    removeEventAttendeeRecord(eventId, attendeeId, setEvents, dbSyncUpsert);
+  const updateEvent = async (id: string, updates: Partial<ChurchEvent>, expectedVersion?: string) => {
+    const existing = requireConfirmedEvent(currentDataRef.current.events.find(row => row.id === id));
+    if (expectedVersion && expectedVersion !== existing.updated_at) throw new Error('This event changed while the form was open. Close and reopen it before editing.');
+    return saveEvent({ ...existing, ...updates, id, updated_at: existing.updated_at }, existing);
   };
-
-  const toggleAttendeeCheckIn = (eventId: string, attendeeId: string) => {
-    toggleAttendeeCheckInRecord(eventId, attendeeId, setEvents, dbSyncUpsert);
+  const deleteEvent = async (id: string) => {
+    requireEventWriter();
+    const row = requireConfirmedEvent(currentDataRef.current.events.find(event => event.id === id));
+    if (row.attendees?.length || row.registration_count) throw new Error('Events with registrations must be cancelled, not deleted.');
+    // Cancellation keeps event history and can be recovered through the existing outbox.
+    await updateEvent(id, { status: 'cancelled' });
+  };
+  const addEventAttendee = async (eventId: string, attendee: { name: string; phone?: string; email?: string; member_id?: string; role?: string }) => {
+    const row = requireConfirmedEvent(currentDataRef.current.events.find(event => event.id === eventId));
+    if (['cancelled', 'completed'].includes(row.status)) throw new Error('Registration is closed for this event.');
+    const person = attendee.member_id ? currentDataRef.current.members.find(member => member.id === attendee.member_id || member.member_id === attendee.member_id) : undefined;
+    if (attendee.member_id && (!person || person.is_archived || ['deceased','transferred'].includes(person.status))) throw new Error('Select an active saved member.');
+    if (person && row.attendees?.some(entry => entry.member_id === person.id || entry.member_id === person.member_id)) throw new Error('This member is already registered.');
+    const attendees = [...(row.attendees || []), { ...attendee, id: crypto.randomUUID(), registered_at: new Date().toISOString(), checked_in: false }];
+    return updateEvent(eventId, { attendees, registration_count: attendees.length });
+  };
+  const removeEventAttendee = async (eventId: string, attendeeId: string) => {
+    const row = requireConfirmedEvent(currentDataRef.current.events.find(event => event.id === eventId));
+    if (row.attendees?.find(person => person.id === attendeeId)?.checked_in) throw new Error('A checked-in person cannot be removed. Correct the check-in first if it was entered in error.');
+    const attendees = (row.attendees || []).filter(person => person.id !== attendeeId);
+    return updateEvent(eventId, { attendees, registration_count: attendees.length });
+  };
+  const toggleAttendeeCheckIn = async (eventId: string, attendeeId: string) => {
+    const row = requireConfirmedEvent(currentDataRef.current.events.find(event => event.id === eventId));
+    if (row.status === 'cancelled') throw new Error('Check-in is closed for a cancelled event.');
+    const attendees = (row.attendees || []).map(person => person.id === attendeeId ? { ...person, checked_in: !person.checked_in } : person);
+    return updateEvent(eventId, { attendees });
   };
 
   // PASTORAL CARE & PRAYER REQUESTS
