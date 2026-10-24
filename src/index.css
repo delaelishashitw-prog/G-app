@@ -129,6 +129,33 @@
   }
 }
 
+/* The directory is a body portal so only the full paper document is printed. */
+@media print {
+  body.member-directory-print-open > :not([data-member-directory-print-root]) { display: none !important; }
+  [data-member-directory-print-root],
+  [data-member-directory-print-root] .member-directory-dialog,
+  [data-member-directory-print-root] .member-directory-paper {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: white !important;
+    backdrop-filter: none !important;
+  }
+  [data-member-directory-print-root] table { table-layout: fixed; }
+  [data-member-directory-print-root] th,
+  [data-member-directory-print-root] td { font-size: 9pt; white-space: normal !important; overflow-wrap: anywhere; padding: 5px !important; }
+  [data-member-directory-print-root] tr { break-inside: avoid; }
+}
+
 /* Event bulletins print on their own, with no modal viewport clipping. */
 @media print {
   body.event-print-open > :not([data-event-print-root]) {

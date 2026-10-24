@@ -28,11 +28,12 @@ import {
 import { Member, GenderType, MembershipStatus } from '../../types/database.types';
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { ProfilePhotoUpload } from '../ProfilePhotoUpload';
+import { useModalFocus } from '../../hooks/useModalFocus';
 
 export interface AddEditMemberModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (memberData: Partial<Member>) => void;
+  onSave: (memberData: Partial<Member>) => Promise<void>;
   editingMember?: Member | null;
 }
 
@@ -162,8 +163,14 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
   });
 
   const [formErrors, setFormErrors] = useState<{ [key: string]: string }>({});
+  const [saving,setSaving]=useState(false),[saveError,setSaveError]=useState('');
+  const busy=React.useRef(false);
+  const creationId=React.useRef(crypto.randomUUID());
+  const close=()=>{if(!busy.current)onClose();};
+  const panel=useModalFocus(isOpen,close);
 
   useEffect(() => {
+    setSaveError('');
     if (editingMember) {
       setFormData({
         ...editingMember,
@@ -172,7 +179,9 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
       });
     } else {
       const today = new Date().toISOString().split('T')[0];
+      if(isOpen)creationId.current=crypto.randomUUID();
       setFormData({
+        id:creationId.current,
         first_name: '',
         middle_name: '',
         last_name: '',
@@ -354,8 +363,9 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
     return true;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (busy.current) return;
     if (!validate()) return;
 
     const cleanOptionalDate = (val?: string) => {
@@ -378,7 +388,10 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
       right_hand_of_fellowship_date: cleanOptionalDate(formData.right_hand_of_fellowship_date),
       wedding_anniversary: cleanOptionalDate(formData.wedding_anniversary),
     };
-    onSave(payload);
+    busy.current=true;setSaving(true);setSaveError('');
+    try{await onSave(payload);}
+    catch(err){setSaveError((err as Error).message || 'The member could not be saved. Your form is still available.');}
+    finally{busy.current=false;setSaving(false);}
   };
 
   // Toggle helper for gift/talent chips
@@ -406,7 +419,7 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/65 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[94vh]">
+      <div ref={panel} role="dialog" aria-modal="true" aria-label={editingMember?'Edit church member':'Register church member'} className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[94vh]">
         {/* Header */}
         <div className="px-6 py-4 bg-gradient-to-r from-[#064e3b] via-[#047857] to-[#064e3b] text-white flex items-center justify-between shadow-md shrink-0">
           <div className="flex items-center gap-3">
@@ -435,7 +448,7 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={close} disabled={saving}
             className="p-2 text-white/80 hover:text-white rounded-xl hover:bg-white/10 transition cursor-pointer"
             title="Close dialog"
           >
@@ -522,7 +535,9 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-5 text-xs">
+        <form aria-busy={saving} onSubmit={handleSubmit} className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-5 text-xs">
+          {saveError && <p role="alert" className="mx-6 mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">{saveError}</p>}
+          <fieldset disabled={saving} className="contents">
           {/* ======================================================== */}
           {/* TAB 1: PERSONAL & BIODATA                                */}
           {/* ======================================================== */}
@@ -1604,7 +1619,7 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
             <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
               <button
                 type="button"
-                onClick={onClose}
+                onClick={close} disabled={saving}
                 className="px-4 py-2 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 text-xs font-semibold transition cursor-pointer"
               >
                 Cancel
@@ -1614,10 +1629,11 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
                 className="px-6 py-2.5 bg-gradient-to-r from-emerald-700 to-teal-700 hover:from-emerald-800 hover:to-teal-800 text-white rounded-xl text-xs font-black shadow-md hover:shadow-lg transition cursor-pointer flex items-center gap-2"
               >
                 <CheckCircle2 className="w-4 h-4 text-emerald-200" />
-                <span>{editingMember ? 'Save Changes' : 'Register Church Member'}</span>
+                <span>{saving ? 'Saving member…' : editingMember ? 'Save Changes' : 'Register Church Member'}</span>
               </button>
             </div>
           </div>
+        </fieldset>
         </form>
       </div>
     </div>

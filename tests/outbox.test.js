@@ -4,6 +4,16 @@ import {SyncOutbox} from '../src/lib/syncOutbox.ts';
 import {fetchAllRows} from '../src/lib/supabase.ts';
 const storage=()=>{const rows=new Map();return {getItem:key=>rows.get(key)??null,setItem:(key,value)=>rows.set(key,value),removeItem:key=>rows.delete(key)};};
 const change=(id,value=1)=>({table:'members',operation:'upsert',id,record:{id,value}});
+test('retrying device admission preserves the retained operation ID and exact request body',async()=>{
+  const disk=storage(),store=persistence(),box=new SyncOutbox('owner',disk,()=>{},store);
+  await box.ready;store.fail=()=>true;
+  await assert.rejects(box.enqueue(change('stable-member')),/Quota exceeded/);
+  const retained=JSON.parse(box.exportPending()).batches;
+  store.fail=null;await box.preservePending();
+  assert.deepEqual(JSON.parse(box.exportPending()).batches,retained);
+  const restored=new SyncOutbox('owner',disk,()=>{},store);await restored.ready;
+  assert.deepEqual(JSON.parse(restored.exportPending()).batches,retained);
+});
 const acknowledged=args=>args.p_changes.filter(row=>row.table!=='audit_logs').map(row=>row.operation==='delete'?{table:row.table,id:row.id,deleted:true}:{table:row.table,record:{...row.record,updated_at:'2026-10-16T00:00:00Z'}});
 function persistence(){
   let saved=null;

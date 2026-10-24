@@ -125,6 +125,13 @@ export class SyncOutbox {
     try { await this.persist(); } catch { /* The status banner reports the failure; subsequent writes still require a durable commit. */ }
   }
   enqueue(change: Mutation) { return this.enqueueMany([change]); }
+  /** Checkpoint the exact retained intent without appending or rewriting requests. */
+  async preservePending() {
+    await this.ready;
+    this.assertWritable();
+    await this.persist();
+    return this.status;
+  }
   async enqueueMany(changes: Mutation[]) {
     await this.ready;
     const blocked=this.readFailure || this.corruptRaw || this.legacyConflict;

@@ -43,7 +43,7 @@ export const MemberDossierModal: React.FC<MemberDossierModalProps> = ({
   if (!isOpen) return null;
 
   const handlePrint = () => {
-    window.print();
+    if(member._sync_status !== 'pending')window.print();
   };
 
   const totalGiving = givingRecords
@@ -81,7 +81,7 @@ export const MemberDossierModal: React.FC<MemberDossierModalProps> = ({
 
           <div className="flex items-center gap-2">
             <button
-              onClick={handlePrint}
+              disabled={member._sync_status === 'pending'} onClick={handlePrint}
               type="button"
               className="flex items-center gap-1.5 px-4 py-2 bg-teal-600 hover:bg-teal-500 active:bg-teal-700 text-white rounded-xl text-xs font-bold transition shadow-md cursor-pointer"
             >

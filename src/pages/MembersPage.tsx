@@ -62,6 +62,9 @@ import { MemberDemographicsSection } from '../components/members/MemberDemograph
 import { FoundationSchoolModal } from '../components/discipleship/FoundationSchoolModal';
 import { BulkMemberOperationsModal } from '../components/members/BulkMemberOperationsModal';
 import { PrintDirectoryModal } from '../components/members/PrintDirectoryModal';
+import { BatchArchiveMembersModal } from '../components/members/BatchArchiveMembersModal';
+import { buildCsv } from '../lib/financeViewUtils';
+import { canEditMembers, canArchiveMembers, memberMatchesSearch, memberDirectoryPage, memberDirectoryPageSize, MEMBER_SAVE_NOTICE } from '../features/members/memberRules';
 import {
   clusterHouseholds,
   buildFamilyBlessingWhatsAppUrl,
@@ -123,6 +126,7 @@ export const MembersPage: React.FC = () => {
     updateFoundationCohort,
     foundationStudents,
     enrollMemberInFoundationSchool,
+    bulkEnrollMembersInFoundationSchool,
     updateFoundationStudent,
     toggleFoundationModule,
     graduateFoundationStudent,
@@ -150,22 +154,14 @@ export const MembersPage: React.FC = () => {
     currentRole === 'senior_pastor' ||
     currentRole === 'finance_officer';
 
-  const canArchive =
-    currentRole === 'super_admin' ||
-    currentRole === 'senior_pastor' ||
-    currentRole === 'administrator';
+  const canArchive = canArchiveMembers(currentRole);
 
   const canExportSensitive =
     currentRole === 'super_admin' ||
     currentRole === 'senior_pastor' ||
     currentRole === 'administrator';
 
-  const canManageMembers =
-    canAccess('members') &&
-    (currentRole === 'super_admin' ||
-      currentRole === 'senior_pastor' ||
-      currentRole === 'administrator' ||
-      currentRole === 'data_entry');
+  const canManageMembers = canAccess('members') && canEditMembers(currentRole);
 
   // Initialize filters from URL or default
   const urlQ = searchParams.get('q') || '';
@@ -173,7 +169,7 @@ export const MembersPage: React.FC = () => {
   const urlMinistry = searchParams.get('ministry') || 'all';
   const urlCell = searchParams.get('cell') || 'all';
   const urlGender = searchParams.get('gender') || 'all';
-  const urlPage = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+  const urlPage = memberDirectoryPage(searchParams.get('page'));
   const urlView = (searchParams.get('view') as 'cards' | 'table' | 'families') || null;
 
   const [viewMode, setViewMode] = useState<'cards' | 'table' | 'families'>(() => {
@@ -181,7 +177,8 @@ export const MembersPage: React.FC = () => {
       return urlView;
     }
     try {
-      return (localStorage.getItem('gwcc_member_view_mode') as 'cards' | 'table' | 'families') || 'cards';
+      const stored = localStorage.getItem('gwcc_member_view_mode');
+      return stored === 'table' || stored === 'families' ? stored : 'cards';
     } catch {
       return 'cards';
     }
@@ -211,7 +208,7 @@ export const MembersPage: React.FC = () => {
   const [pageSize, setPageSize] = useState<number>(() => {
     try {
       const stored = localStorage.getItem('gwcc_member_page_size');
-      return stored ? parseInt(stored, 10) : 24;
+      return memberDirectoryPageSize(stored);
     } catch {
       return 24;
     }
@@ -249,10 +246,16 @@ export const MembersPage: React.FC = () => {
   // Multi-select batch state
   const [batchSelectedIds, setBatchSelectedIds] = useState<Set<string>>(new Set());
 
-  // Reset page when filters change
+  // Preserve the page from a shared link; only later filter changes reset it.
+  const filterKey = JSON.stringify([searchTerm, statusFilter, ministryFilter, smallGroupFilter, genderFilter, birthdayFilterActive, sortOrder]);
+  const previousFilterKey = React.useRef(filterKey);
   React.useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, statusFilter, ministryFilter, smallGroupFilter, genderFilter, birthdayFilterActive, sortOrder]);
+    if (previousFilterKey.current !== filterKey) {
+      previousFilterKey.current = filterKey;
+      setCurrentPage(1);
+      setBatchSelectedIds(new Set());
+    }
+  }, [filterKey]);
 
   // Selected Member & Modals
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
@@ -264,6 +267,7 @@ export const MembersPage: React.FC = () => {
   const [isArchiving, setIsArchiving] = useState(false);
   const [isFoundationSchoolOpen, setIsFoundationSchoolOpen] = useState(false);
   const [isBulkOperationsOpen, setIsBulkOperationsOpen] = useState(false);
+  const [isBatchArchiveOpen, setIsBatchArchiveOpen] = useState(false);
   const [isPrintDirectoryOpen, setIsPrintDirectoryOpen] = useState(false);
 
   // Demographics Visual Dashboard collapsible state
@@ -374,8 +378,9 @@ export const MembersPage: React.FC = () => {
     if (!memberToArchive) return;
     setIsArchiving(true);
     try {
-      archiveMember(memberToArchive.id);
-      success(`${memberToArchive.first_name} ${memberToArchive.last_name} moved to archives.`);
+      if (!canArchive) return;
+      await archiveMember(memberToArchive.id, memberToArchive.updated_at);
+      info('Archive saved', MEMBER_SAVE_NOTICE);
       setMemberToArchive(null);
     } catch (err: any) {
       error(err?.message || 'Failed to archive member');
@@ -384,58 +389,32 @@ export const MembersPage: React.FC = () => {
     }
   };
 
-  const handleRestoreMember = (m: Member) => {
-    unarchiveMember(m.id);
-    success(`${m.first_name} ${m.last_name} restored to active congregation!`);
+  const handleRestoreMember = async (m: Member) => {
+    if (!canArchive) return;
+    try {
+      await unarchiveMember(m.id, m.updated_at);
+      info('Restore saved', MEMBER_SAVE_NOTICE);
+    } catch (err) { error((err as Error).message || 'This member could not be restored.'); }
   };
 
   const handleBatchArchive = () => {
-    if (batchSelectedIds.size === 0) return;
-    let count = 0;
-    batchSelectedIds.forEach((id) => {
-      archiveMember(id);
-      count++;
-    });
-    success(`Archived ${count} selected members.`);
-    setBatchSelectedIds(new Set());
+    if (canArchive && selectedMembers.length) setIsBatchArchiveOpen(true);
   };
 
-  const handleBulkUpdate = (memberIds: string[], updates: Partial<Member>) => {
-    bulkUpdateMembers(memberIds, updates);
-    success(`Updated ${memberIds.length} members successfully.`);
+  const handleBulkUpdate = async (memberIds: string[], updates: Partial<Member>) => {
+    if (!canManageMembers) throw new Error('Member editing authorization is required.');
+    const allowed = new Set(selectedMembers.map(member => member.id));
+    if (memberIds.some(id => !allowed.has(id))) throw new Error('The selection changed. Review the selected members again.');
+    await bulkUpdateMembers(memberIds, updates);
+    info('Member changes saved', MEMBER_SAVE_NOTICE);
   };
 
-  const handleBulkEnrollInCohort = (
-    cohortId: string,
-    cohortName: string,
-    selectedMemberList: Member[]
-  ) => {
-    let enrolledCount = 0;
-    selectedMemberList.forEach((m) => {
-      const alreadyEnrolled = foundationStudents.some(
-        (s) => s.member_id === m.id && s.cohort_id === cohortId
-      );
-      if (!alreadyEnrolled) {
-        enrollMemberInFoundationSchool({
-          cohort_id: cohortId,
-          cohort_name: cohortName,
-          member_id: m.id,
-          member_name: `${m.first_name} ${m.last_name}`,
-          member_phone: m.phone,
-          enrollment_date: new Date().toISOString().split('T')[0],
-          completed_modules: [],
-          water_baptism_status: Boolean(m.baptism_status),
-          water_baptism_date: m.baptism_date,
-          status: 'in_progress',
-        });
-        enrolledCount++;
-      }
-    });
-    if (enrolledCount > 0) {
-      success(`Enrolled ${enrolledCount} member${enrolledCount > 1 ? 's' : ''} into "${cohortName}".`);
-    } else {
-      info('Selected members are already enrolled in this cohort.');
-    }
+  const handleBulkEnrollInCohort = async (cohortId:string,cohortName:string,selectedMemberList:Member[]) => {
+    if(!canManageMembers)throw new Error('Member editing authorization is required.');
+    const allowed=new Set(selectedMembers.map(member=>member.id));
+    if(selectedMemberList.some(member=>!allowed.has(member.id)))throw new Error('The selection changed. Review the selected members again.');
+    const count=await bulkEnrollMembersInFoundationSchool(cohortId,selectedMemberList.map(member=>member.id));
+    info(count ? 'Enrollments saved' : 'Already enrolled',count ? MEMBER_SAVE_NOTICE : `The selected members are already enrolled in ${cohortName}.`);
   };
 
   // Filtered and Sorted members
@@ -454,48 +433,11 @@ export const MembersPage: React.FC = () => {
         if (parts.length >= 2 && parseInt(parts[1], 10) !== currentMonth) return false;
       }
 
-      // Search term
-      const term = searchTerm.toLowerCase().trim();
-      let matchesSearch = true;
-      if (term) {
-        const fullName = `${m.first_name || ''} ${m.middle_name || ''} ${m.last_name || ''}`.toLowerCase();
-        const reversedFullName = `${m.last_name || ''} ${m.first_name || ''}`.toLowerCase();
-        const cleanMemberPhone = (m.phone || '').replace(/[^0-9]/g, '');
-        const localMemberPhone = cleanMemberPhone.startsWith('233') ? '0' + cleanMemberPhone.slice(3) : cleanMemberPhone;
-        const cleanSearchDigits = term.replace(/[^0-9]/g, '');
-
-        const tokens = term.split(/\s+/).filter(Boolean);
-        const cleanMemberIdDigits = (m.member_id || '').replace(/[^0-9]/g, '');
-        const matchesTokens = tokens.every(
-          (t) =>
-            fullName.includes(t) ||
-            reversedFullName.includes(t) ||
-            (m.member_id || '').toLowerCase().includes(t) ||
-            (cleanSearchDigits.length > 0 && cleanMemberIdDigits.endsWith(cleanSearchDigits)) ||
-            (m.tithe_number && m.tithe_number.toLowerCase().includes(t)) ||
-            (m.email && m.email.toLowerCase().includes(t)) ||
-            (m.gps_address && m.gps_address.toLowerCase().includes(t)) ||
-            (m.national_id && m.national_id.toLowerCase().includes(t)) ||
-            (m.leadership_position && m.leadership_position.toLowerCase().includes(t)) ||
-            (m.ministry_name && m.ministry_name.toLowerCase().includes(t)) ||
-            (m.small_group_name && m.small_group_name.toLowerCase().includes(t)) ||
-            (m.residential_address && m.residential_address.toLowerCase().includes(t)) ||
-            (m.landmark && m.landmark.toLowerCase().includes(t)) ||
-            (m.city && m.city.toLowerCase().includes(t)) ||
-            (m.hometown && m.hometown.toLowerCase().includes(t))
-        );
-
-        const matchesPhone =
-          (m.phone && m.phone.toLowerCase().includes(term)) ||
-          (cleanSearchDigits.length >= 3 &&
-            (cleanMemberPhone.includes(cleanSearchDigits) || localMemberPhone.includes(cleanSearchDigits)));
-
-        matchesSearch = matchesTokens || matchesPhone;
-      }
+      const matchesSearch = memberMatchesSearch(m, searchTerm);
 
       // Status
       let matchesStatus = true;
-      if (statusFilter === 'all') {
+      if (statusFilter === 'all' || statusFilter === 'archived') {
         matchesStatus = true;
       } else if (statusFilter === 'leader') {
         matchesStatus = m.status === 'leader' || Boolean(m.leadership_position);
@@ -550,6 +492,17 @@ export const MembersPage: React.FC = () => {
   ]);
 
   const totalPages = Math.max(1, Math.ceil(filteredMembers.length / pageSize));
+  const selectedMembers = useMemo(() => filteredMembers.filter(member => batchSelectedIds.has(member.id)), [filteredMembers, batchSelectedIds]);
+  React.useEffect(() => {
+    const ids = new Set(filteredMembers.map(member => member.id));
+    setBatchSelectedIds(previous => {
+      const next = new Set([...previous].filter(id => ids.has(id)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [filteredMembers]);
+  React.useEffect(() => {
+    if (members.length && !isRefreshing && currentPage > totalPages) setCurrentPage(totalPages);
+  }, [members.length, isRefreshing, totalPages, currentPage]);
 
   // Paginated slice for cards and table views
   const paginatedMembers = useMemo(() => {
@@ -580,7 +533,7 @@ export const MembersPage: React.FC = () => {
   };
 
   const handleSelectAllVisible = () => {
-    if (batchSelectedIds.size === filteredMembers.length) {
+    if (selectedMembers.length === filteredMembers.length) {
       setBatchSelectedIds(new Set());
     } else {
       setBatchSelectedIds(new Set(filteredMembers.map((m) => m.id)));
@@ -590,7 +543,7 @@ export const MembersPage: React.FC = () => {
   // Export to CSV
   const handleExportCSV = (selectedOnly = false) => {
     const listToExport = selectedOnly
-      ? filteredMembers.filter((m) => batchSelectedIds.has(m.id))
+      ? selectedMembers
       : filteredMembers;
 
     if (listToExport.length === 0) {
@@ -633,6 +586,7 @@ export const MembersPage: React.FC = () => {
       'Talents & Skills',
       'Emergency Contact',
       'Emergency Phone',
+      'Cloud Confirmation',
     ];
 
     const rows = listToExport.map((m) => [
@@ -672,21 +626,10 @@ export const MembersPage: React.FC = () => {
       m.talents_skills || '',
       m.emergency_name ? `${m.emergency_name} (${m.emergency_relationship || 'Contact'})` : '',
       m.emergency_phone || '',
+      m._sync_status === 'pending' ? 'Awaiting cloud confirmation' : 'Confirmed',
     ]);
 
-    const csvContent =
-      '\uFEFF' +
-      [
-        headers.map((h) => `"${h.replace(/"/g, '""')}"`).join(','),
-        ...rows.map((row) =>
-          row
-            .map((val) => {
-              const str = String(val ?? '');
-              return `"${str.replace(/"/g, '""')}"`;
-            })
-            .join(',')
-        ),
-      ].join('\r\n');
+    const csvContent = buildCsv([headers, ...rows]);
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -702,19 +645,21 @@ export const MembersPage: React.FC = () => {
   };
 
   const openCreateModal = () => {
+    if (!canManageMembers) return;
     setEditingMember(null);
     setIsAddModalOpen(true);
   };
 
   const openEditModal = (member: Member) => {
+    if (!canManageMembers || member._sync_status === 'pending') return;
     setEditingMember(member);
     setIsAddModalOpen(true);
   };
 
-  const handleSaveMember = (memberData: Partial<Member>) => {
+  const handleSaveMember = async (memberData: Partial<Member>) => {
+    if (!canManageMembers) throw new Error('Member editing authorization is required.');
     if (!memberData.first_name?.trim() || !memberData.last_name?.trim() || !memberData.phone?.trim()) {
-      error('Please provide first name, last name, and phone number.');
-      return;
+      throw new Error('Please provide first name, last name, and phone number.');
     }
 
     const selectedMin = ministries.find((m) => m.id === memberData.ministry_id);
@@ -730,16 +675,13 @@ export const MembersPage: React.FC = () => {
         ministry_name: selectedMin ? selectedMin.name : memberData.ministry_name,
         small_group_name: selectedGrp ? selectedGrp.name : memberData.small_group_name,
       };
-      updateMember(editingMember.id, updatedPayload);
+      const saved = await updateMember(editingMember.id, updatedPayload, editingMember.updated_at);
       if (selectedMember && selectedMember.id === editingMember.id) {
-        setSelectedMember({
-          ...selectedMember,
-          ...updatedPayload,
-        } as Member);
+        setSelectedMember(saved);
       }
-      success(`Updated profile for ${memberData.first_name} ${memberData.last_name}.`);
+      info('Member changes saved', MEMBER_SAVE_NOTICE);
     } else {
-      const created = addMember({
+      const created = await addMember({
         first_name: memberData.first_name!.trim(),
         middle_name: memberData.middle_name?.trim(),
         last_name: memberData.last_name!.trim(),
@@ -795,9 +737,9 @@ export const MembersPage: React.FC = () => {
         emergency_relationship: memberData.emergency_relationship?.trim(),
         notes: memberData.notes?.trim(),
         is_archived: false,
-      });
-      setSelectedMember(created);
-      success(`Welcome ${created.first_name} ${created.last_name}! Registered with ID ${created.member_id}.`);
+      }, memberData.id);
+      handleSelectMember(created);
+      info('Member registration saved', `${MEMBER_SAVE_NOTICE} The official member and tithe numbers will appear after confirmation.`);
     }
 
     setIsAddModalOpen(false);
@@ -805,6 +747,8 @@ export const MembersPage: React.FC = () => {
 
   // Status Badge Helper
   const renderStatusBadge = (member: Member, size: 'sm' | 'md' = 'sm') => {
+    if (member._sync_status === 'pending') return <span role="status" className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-900">Awaiting cloud confirmation</span>;
+    if (member.is_archived) return <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-700">Archived</span>;
     const isLeader = member.status === 'leader' || Boolean(member.leadership_position);
 
     if (member.status === 'leader' || (statusFilter === 'leader' && isLeader)) {
@@ -1093,13 +1037,13 @@ export const MembersPage: React.FC = () => {
                 <span className="hidden sm:inline">Export Excel</span>
               </button>
 
-              <button
+              {canManageMembers && (<button
                 onClick={openCreateModal}
                 className="px-4 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-md shadow-teal-700/20"
               >
                 <Plus className="w-4 h-4" />
                 <span>Add Member</span>
-              </button>
+              </button>)}
             </div>
           </div>
 
@@ -1406,9 +1350,9 @@ export const MembersPage: React.FC = () => {
                 >
                   <Check className="w-3.5 h-3.5" />
                   <span>
-                    {batchSelectedIds.size === filteredMembers.length && filteredMembers.length > 0
+                    {selectedMembers.length === filteredMembers.length && filteredMembers.length > 0
                       ? 'Deselect All'
-                      : `Select All Visible (${filteredMembers.length})`}
+                      : `Select all matching (${filteredMembers.length})`}
                   </span>
                 </button>
                 <span className="text-slate-300">•</span>
@@ -1444,14 +1388,14 @@ export const MembersPage: React.FC = () => {
           </div>
 
           {/* Floating Multi-Select Action Bar (appears when 1+ members selected) */}
-          {batchSelectedIds.size > 0 && (
+          {selectedMembers.length > 0 && (
             <div className="sticky top-20 z-20 bg-slate-900 text-white p-3.5 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-2">
               <div className="flex items-center gap-2">
                 <span className="w-6 h-6 rounded-full bg-teal-500 text-white font-bold flex items-center justify-center text-xs">
-                  {batchSelectedIds.size}
+                  {selectedMembers.length}
                 </span>
                 <span className="font-bold text-xs">
-                  {batchSelectedIds.size} Member{batchSelectedIds.size > 1 ? 's' : ''} Selected
+                  {selectedMembers.length} Member{selectedMembers.length > 1 ? 's' : ''} Selected
                 </span>
               </div>
 
@@ -1463,7 +1407,7 @@ export const MembersPage: React.FC = () => {
                     title="Batch assign ministry, cell group, status, or Foundation School"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-emerald-200" />
-                    <span>Bulk Operations ({batchSelectedIds.size})</span>
+                    <span>Bulk Operations ({selectedMembers.length})</span>
                   </button>
                 )}
 
@@ -1483,7 +1427,7 @@ export const MembersPage: React.FC = () => {
                     title="Archive selected members"
                   >
                     <Archive className="w-3.5 h-3.5" />
-                    <span>Archive Selected ({batchSelectedIds.size})</span>
+                    <span>Archive Selected ({selectedMembers.length})</span>
                   </button>
                 )}
 
@@ -1527,6 +1471,7 @@ export const MembersPage: React.FC = () => {
                 return (
                   <div
                     key={member.id}
+                    role="article" aria-label={`${member.first_name} ${member.last_name}`}
                     onClick={() => handleSelectMember(member)}
                     className={`bg-white rounded-2xl border p-5 shadow-xs transition-all duration-200 cursor-pointer flex flex-col justify-between group relative overflow-hidden ${
                       isSelected
@@ -1540,6 +1485,7 @@ export const MembersPage: React.FC = () => {
                         <div className="flex items-center gap-2">
                           <input
                             type="checkbox"
+                            aria-label={`Select ${member.first_name} ${member.last_name}`}
                             checked={isSelected}
                             onClick={(e) => toggleSelectMember(member.id, e)}
                             onChange={() => {}}
@@ -1607,7 +1553,7 @@ export const MembersPage: React.FC = () => {
                             <span>{member.phone}</span>
                           </a>
 
-                          <button
+                          {canGive && (<button disabled={member._sync_status === 'pending'}
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1617,7 +1563,7 @@ export const MembersPage: React.FC = () => {
                             title="Record Tithe/Giving for this member"
                           >
                             + Give
-                          </button>
+                          </button>)}
                         </div>
 
                         {member.gps_address ? (
@@ -1661,7 +1607,7 @@ export const MembersPage: React.FC = () => {
                       onClick={(e) => e.stopPropagation()}
                     >
                       <button
-                        onClick={() => setSelectedMember(member)}
+                        onClick={() => handleSelectMember(member)}
                         className="text-xs font-bold text-teal-800 hover:text-teal-950 flex items-center gap-1 group/btn transition"
                       >
                         <span>View Profile</span>
@@ -1676,16 +1622,16 @@ export const MembersPage: React.FC = () => {
                         >
                           <QrCode className="w-3.5 h-3.5" />
                         </button>
-                        <button
+                        {canManageMembers && (<button disabled={member._sync_status === 'pending'}
                           onClick={() => openEditModal(member)}
                           className="p-1.5 text-slate-400 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition"
                           title="Edit Details"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        {member.is_archived ? (
+                        </button>)}
+                        {canArchive && (member.is_archived ? (
                           <button
-                            onClick={() => handleRestoreMember(member)}
+                            disabled={member._sync_status === 'pending'} onClick={() => void handleRestoreMember(member)}
                             className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
                             title="Restore member to active congregation"
                           >
@@ -1693,13 +1639,13 @@ export const MembersPage: React.FC = () => {
                           </button>
                         ) : (
                           <button
-                            onClick={() => setMemberToArchive(member)}
+                            disabled={member._sync_status === 'pending'} onClick={() => setMemberToArchive(member)}
                             className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                             title="Archive Member"
                           >
                             <Archive className="w-3.5 h-3.5" />
                           </button>
-                        )}
+                        ))}
                       </div>
                     </div>
                   </div>
@@ -1716,7 +1662,7 @@ export const MembersPage: React.FC = () => {
                       <th className="py-3.5 px-4 w-10 text-center">
                         <input
                           type="checkbox"
-                          checked={batchSelectedIds.size === filteredMembers.length && filteredMembers.length > 0}
+                          checked={selectedMembers.length === filteredMembers.length && filteredMembers.length > 0}
                           onChange={handleSelectAllVisible}
                           className="w-4 h-4 text-teal-600 rounded-sm focus:ring-teal-500 cursor-pointer"
                         />
@@ -1746,6 +1692,7 @@ export const MembersPage: React.FC = () => {
                           <td className="py-3 px-4 text-center" onClick={(e) => toggleSelectMember(member.id, e)}>
                             <input
                               type="checkbox"
+                              aria-label={`Select ${member.first_name} ${member.last_name}`}
                               checked={isSelected}
                               onChange={() => {}}
                               className="w-4 h-4 text-teal-600 rounded-sm focus:ring-teal-500 cursor-pointer"
@@ -1799,7 +1746,7 @@ export const MembersPage: React.FC = () => {
                               </span>
                               {member.national_id && (
                                 <span className="font-mono text-[10px] text-slate-400 block mt-0.5">
-                                  {member.national_id}
+                                  {canExportSensitive ? member.national_id : member.national_id.replace(/\d{4}-\d$/i, '••••-•')}
                                 </span>
                               )}
                             </div>
@@ -1848,13 +1795,13 @@ export const MembersPage: React.FC = () => {
 
                           <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center justify-end gap-1.5">
-                              <button
+                              {canGive && (<button disabled={member._sync_status === 'pending'}
                                 onClick={() => setSelectedMemberForGiving(member)}
                                 className="px-2 py-1 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 rounded-lg text-xs font-bold transition border border-emerald-200"
                                 title="Record Tithe/Giving"
                               >
                                 + Give
-                              </button>
+                              </button>)}
                               <button
                                 onClick={() => setSelectedMemberForIdCard(member)}
                                 className="p-1.5 text-slate-400 hover:text-teal-700 hover:bg-slate-100 rounded-lg transition"
@@ -1862,16 +1809,16 @@ export const MembersPage: React.FC = () => {
                               >
                                 <QrCode className="w-4 h-4" />
                               </button>
-                              <button
+                              {canManageMembers && (<button disabled={member._sync_status === 'pending'}
                                 onClick={() => openEditModal(member)}
                                 className="p-1.5 text-slate-400 hover:text-blue-700 hover:bg-slate-100 rounded-lg transition"
                                 title="Edit Details"
                               >
                                 <Edit2 className="w-4 h-4" />
-                              </button>
-                              {member.is_archived ? (
+                              </button>)}
+                              {canArchive && (member.is_archived ? (
                                 <button
-                                  onClick={() => handleRestoreMember(member)}
+                                  disabled={member._sync_status === 'pending'} onClick={() => void handleRestoreMember(member)}
                                   className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
                                   title="Restore member to active congregation"
                                 >
@@ -1879,13 +1826,13 @@ export const MembersPage: React.FC = () => {
                                 </button>
                               ) : (
                                 <button
-                                  onClick={() => setMemberToArchive(member)}
+                                  disabled={member._sync_status === 'pending'} onClick={() => setMemberToArchive(member)}
                                   className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                                   title="Archive Member"
                                 >
                                   <Archive className="w-4 h-4" />
                                 </button>
-                              )}
+                              ))}
                             </div>
                           </td>
                         </tr>
@@ -2086,7 +2033,7 @@ export const MembersPage: React.FC = () => {
 
       {/* MODAL 1: ADD / EDIT MEMBER (ENHANCED) */}
       <AddEditMemberModal
-        isOpen={isAddModalOpen}
+        isOpen={isAddModalOpen && canManageMembers}
         onClose={() => setIsAddModalOpen(false)}
         onSave={handleSaveMember}
         editingMember={editingMember}
@@ -2138,9 +2085,9 @@ export const MembersPage: React.FC = () => {
 
       {/* MODAL 6: BULK MEMBER OPERATIONS */}
       <BulkMemberOperationsModal
-        isOpen={isBulkOperationsOpen}
+        isOpen={isBulkOperationsOpen && canManageMembers}
         onClose={() => setIsBulkOperationsOpen(false)}
-        selectedMembers={filteredMembers.filter((m) => batchSelectedIds.has(m.id))}
+        selectedMembers={selectedMembers}
         ministries={ministries}
         smallGroups={smallGroups}
         foundationCohorts={foundationCohorts}
@@ -2149,24 +2096,34 @@ export const MembersPage: React.FC = () => {
         onClearSelection={() => setBatchSelectedIds(new Set())}
       />
 
+      {isBatchArchiveOpen && canArchive && <BatchArchiveMembersModal
+        members={selectedMembers}
+        onClose={() => setIsBatchArchiveOpen(false)}
+        onConfirm={async () => {
+          await bulkUpdateMembers(selectedMembers.map(member => member.id), {is_archived: true});
+          info('Archive saved', MEMBER_SAVE_NOTICE);
+          setBatchSelectedIds(new Set());
+        }}
+      />}
+
       {/* MODAL 7: PRINT MEMBERSHIP DIRECTORY */}
       <PrintDirectoryModal
         isOpen={isPrintDirectoryOpen}
         onClose={() => setIsPrintDirectoryOpen(false)}
         members={
-          batchSelectedIds.size > 0
-            ? filteredMembers.filter((m) => batchSelectedIds.has(m.id))
+          selectedMembers.length > 0
+            ? selectedMembers
             : filteredMembers
         }
         settings={settings}
         filterLabel={
-          batchSelectedIds.size > 0
-            ? `${batchSelectedIds.size} Selected Members`
+          selectedMembers.length > 0
+            ? `${selectedMembers.length} Selected Members`
             : statusFilter !== 'all'
             ? `Status: ${statusFilter}`
             : ministryFilter !== 'all'
             ? `Ministry: ${ministryFilter}`
-            : 'All Active Congregation'
+            : 'All listed congregation members'
         }
       />
     </div>

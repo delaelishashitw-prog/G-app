@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Member, Ministry, SmallGroup, FoundationCohort, MembershipStatus } from '../../types/database.types';
 import { useToast } from '../../contexts/ToastContext';
+import {useModalFocus} from '../../hooks/useModalFocus';
 
 interface BulkMemberOperationsModalProps {
   isOpen: boolean;
@@ -22,8 +23,8 @@ interface BulkMemberOperationsModalProps {
   ministries: Ministry[];
   smallGroups: SmallGroup[];
   foundationCohorts: FoundationCohort[];
-  onBulkUpdate: (memberIds: string[], updates: Partial<Member>) => void;
-  onEnrollInCohort: (cohortId: string, cohortName: string, members: Member[]) => void;
+  onBulkUpdate: (memberIds: string[], updates: Partial<Member>) => Promise<void>;
+  onEnrollInCohort: (cohortId: string, cohortName: string, members: Member[]) => Promise<void>;
   onClearSelection: () => void;
 }
 
@@ -47,11 +48,22 @@ export const BulkMemberOperationsModal: React.FC<BulkMemberOperationsModalProps>
   const [targetGroupId, setTargetGroupId] = useState(smallGroups[0]?.id || '');
   const [targetStatus, setTargetStatus] = useState<MembershipStatus>('active');
   const [targetCohortId, setTargetCohortId] = useState(foundationCohorts[0]?.id || '');
+  const [saving,setSaving]=useState(false),[saveError,setSaveError]=useState('');
+  const busy=React.useRef(false),close=()=>{if(!busy.current)onClose();};
+  const panel=useModalFocus(isOpen,close);
+  React.useEffect(()=>{
+    if(!isOpen)return;
+    setSaveError('');
+    setTargetMinistryId(value=>ministries.some(row=>row.id===value)?value:ministries[0]?.id||'');
+    setTargetGroupId(value=>smallGroups.some(row=>row.id===value)?value:smallGroups[0]?.id||'');
+    setTargetCohortId(value=>foundationCohorts.some(row=>row.id===value)?value:foundationCohorts[0]?.id||'');
+  },[isOpen,ministries,smallGroups,foundationCohorts]);
 
   if (!isOpen) return null;
 
-  const handleApply = (e: React.FormEvent) => {
+  const handleApply = async (e: React.FormEvent) => {
     e.preventDefault();
+    if(busy.current)return;
     const memberIds = selectedMembers.map((m) => m.id);
 
     if (memberIds.length === 0) {
@@ -59,62 +71,50 @@ export const BulkMemberOperationsModal: React.FC<BulkMemberOperationsModalProps>
       return;
     }
 
+    busy.current=true;setSaving(true);setSaveError('');
+    try {
     if (operationType === 'ministry') {
       const selectedMin = ministries.find((m) => m.id === targetMinistryId);
       if (!selectedMin) {
         toastError('Selection Error', 'Please select a valid ministry.');
         return;
       }
-      onBulkUpdate(memberIds, {
+      await onBulkUpdate(memberIds, {
         ministry_id: selectedMin.id,
         ministry_name: selectedMin.name,
       });
-      toastSuccess(
-        'Ministry Assigned',
-        `Assigned ${memberIds.length} members to ${selectedMin.name}.`
-      );
     } else if (operationType === 'small_group') {
       const selectedGrp = smallGroups.find((g) => g.id === targetGroupId);
       if (!selectedGrp) {
         toastError('Selection Error', 'Please select a valid cell fellowship group.');
         return;
       }
-      onBulkUpdate(memberIds, {
+      await onBulkUpdate(memberIds, {
         small_group_id: selectedGrp.id,
         small_group_name: selectedGrp.name,
       });
-      toastSuccess(
-        'Cell Group Assigned',
-        `Assigned ${memberIds.length} members to ${selectedGrp.name}.`
-      );
     } else if (operationType === 'status') {
-      onBulkUpdate(memberIds, {
+      await onBulkUpdate(memberIds, {
         status: targetStatus,
       });
-      toastSuccess(
-        'Status Updated',
-        `Updated membership status to "${targetStatus.replace('_', ' ')}" for ${memberIds.length} members.`
-      );
     } else if (operationType === 'discipleship') {
       const selectedCohort = foundationCohorts.find((c) => c.id === targetCohortId);
       if (!selectedCohort) {
         toastError('Selection Error', 'Please select a valid Foundation School cohort.');
         return;
       }
-      onEnrollInCohort(selectedCohort.id, selectedCohort.name, selectedMembers);
-      toastSuccess(
-        'Foundation School Enrollment',
-        `Enrolled ${memberIds.length} members into ${selectedCohort.name}.`
-      );
+      await onEnrollInCohort(selectedCohort.id, selectedCohort.name, selectedMembers);
     }
 
     onClearSelection();
     onClose();
+    }catch(err){setSaveError((err as Error).message || 'The selected members could not be updated.');}
+    finally{busy.current=false;setSaving(false);}
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
-      <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-4 max-h-[94vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
+      <div ref={panel} role="dialog" aria-modal="true" aria-label="Bulk member operations" className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-4 max-h-[94vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="px-6 py-4 bg-[#064e3b] text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
@@ -129,7 +129,7 @@ export const BulkMemberOperationsModal: React.FC<BulkMemberOperationsModalProps>
             </div>
           </div>
           <button
-            onClick={onClose}
+            disabled={saving} onClick={close}
             className="p-1.5 text-white/80 hover:text-white rounded-lg transition hover:bg-emerald-800"
           >
             <X className="w-5 h-5" />
@@ -138,6 +138,8 @@ export const BulkMemberOperationsModal: React.FC<BulkMemberOperationsModalProps>
 
         {/* Form Body */}
         <form onSubmit={handleApply} className="p-6 space-y-4 text-xs overflow-y-auto flex-1">
+          {saveError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{saveError}</p>}
+          <fieldset disabled={saving} className="contents">
           {/* Selected Members Preview */}
           <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
             <div className="flex items-center justify-between">
@@ -325,7 +327,7 @@ export const BulkMemberOperationsModal: React.FC<BulkMemberOperationsModalProps>
           <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={onClose}
+              disabled={saving} onClick={close}
               className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 font-bold hover:bg-slate-50 transition"
             >
               Cancel
@@ -335,9 +337,10 @@ export const BulkMemberOperationsModal: React.FC<BulkMemberOperationsModalProps>
               className="inline-flex items-center gap-2 px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl shadow-xs transition"
             >
               <Save className="w-4 h-4" />
-              <span>Apply to {selectedMembers.length} Members</span>
+              <span>{saving ? 'Saving selected members…' : `Apply to ${selectedMembers.length} Members`}</span>
             </button>
           </div>
+        </fieldset>
         </form>
       </div>
     </div>

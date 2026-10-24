@@ -19,7 +19,7 @@ export const MemberIdCardModal: React.FC<MemberIdCardModalProps> = ({
   if (!isOpen) return null;
 
   const handlePrint = () => {
-    window.print();
+    if(member._sync_status !== 'pending' && !member.member_id.startsWith('PENDING-'))window.print();
   };
 
   return (
@@ -39,7 +39,7 @@ export const MemberIdCardModal: React.FC<MemberIdCardModalProps> = ({
 
           <div className="flex items-center gap-2">
             <button
-              onClick={handlePrint}
+              disabled={member._sync_status === 'pending' || member.member_id.startsWith('PENDING-')} onClick={handlePrint}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold transition shadow-xs"
             >
               <Printer className="w-3.5 h-3.5" />

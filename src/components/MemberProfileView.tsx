@@ -1,4 +1,5 @@
 import { isActiveTransaction } from '../lib/ledgerUtils';
+import {canEditMembers,canArchiveMembers,MEMBER_SAVE_NOTICE} from '../features/members/memberRules';
 import React, { useState, useMemo } from 'react';
 import {
   ArrowLeft,
@@ -103,16 +104,9 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
     currentRole === 'senior_pastor' ||
     currentRole === 'pastor';
 
-  const canManageMembers =
-    currentRole === 'super_admin' ||
-    currentRole === 'senior_pastor' ||
-    currentRole === 'administrator' ||
-    currentRole === 'data_entry';
+  const canManageMembers = canEditMembers(currentRole);
 
-  const canArchive =
-    currentRole === 'super_admin' ||
-    currentRole === 'senior_pastor' ||
-    currentRole === 'administrator';
+  const canArchive = canArchiveMembers(currentRole);
 
   const completedMilestonesCount = [
     member.salvation_status,
@@ -243,8 +237,9 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
   const handleConfirmArchive = async () => {
     setIsArchiving(true);
     try {
-      archiveMember(member.id);
-      success(`${member.first_name} ${member.last_name} has been moved to archives.`);
+      if(!canArchive)return;
+      await archiveMember(member.id,member.updated_at);
+      info('Archive saved',MEMBER_SAVE_NOTICE);
       setIsArchiveModalOpen(false);
       onBack();
     } catch (err: any) {
@@ -257,8 +252,9 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
   const handleRestoreMember = async () => {
     setIsRestoring(true);
     try {
-      unarchiveMember(member.id);
-      success(`${member.first_name} ${member.last_name} restored to active congregation!`);
+      if(!canArchive)return;
+      await unarchiveMember(member.id,member.updated_at);
+      info('Restore saved',MEMBER_SAVE_NOTICE);
     } catch (err: any) {
       error(err?.message || 'Failed to restore member');
     } finally {
@@ -281,14 +277,16 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
   };
 
   // Toggle spiritual journey milestones
-  const handleToggleMilestone = (field: 'salvation_status' | 'baptism_status' | 'membership_class_completed') => {
+  const handleToggleMilestone = async (field: 'salvation_status' | 'baptism_status' | 'holy_spirit_baptism' | 'membership_class_completed') => {
+    if(!canManageMembers || member._sync_status==='pending')return;
     const nextVal = !member[field];
-    updateMember(member.id, { [field]: nextVal });
-    success(`Updated ${field.replace('_', ' ')} for ${member.first_name}.`);
+    try{await updateMember(member.id, { [field]: nextVal },member.updated_at);info('Member changes saved',MEMBER_SAVE_NOTICE);}
+    catch(err){error((err as Error).message || 'The member could not be updated.');}
   };
 
   return (
     <div className="min-w-0 space-y-6 animate-in fade-in duration-150">
+      {member._sync_status === 'pending' && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{MEMBER_SAVE_NOTICE}</p>}
       {/* Top Navigation & Breadcrumbs Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-2 border-b border-slate-200">
         <div className="flex items-center gap-2 text-xs">
@@ -310,22 +308,22 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
 
         {/* Quick Top Actions Toolbar */}
         <div className="flex items-center flex-wrap gap-2">
-          {currentRole === 'super_admin' && <button type="button" onClick={() => setIsPortalAccessOpen(true)}
+          {currentRole === 'super_admin' && <button type="button" disabled={member._sync_status==='pending'} onClick={() => setIsPortalAccessOpen(true)}
             className="px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 text-xs font-bold flex items-center gap-1.5">
             <ShieldCheck className="w-3.5 h-3.5" />Portal Access
           </button>}
           {/* Quick Record Giving Button */}
-          <button
+          {canViewGiving && (<button disabled={member._sync_status === 'pending'}
             type="button"
             onClick={() => setIsGivingModalOpen(true)}
             className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-xs"
           >
             <Coins className="w-3.5 h-3.5" />
             <span>Record Tithe/Giving</span>
-          </button>
+          </button>)}
 
           {/* Quick Check In Today */}
-          <button
+          {canAccess('attendance') && !member.is_archived && (<button disabled={member._sync_status === 'pending'}
             type="button"
             onClick={handleQuickCheckInToday}
             className="px-3 py-1.5 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 text-xs font-bold flex items-center gap-1.5 transition shadow-2xs"
@@ -333,7 +331,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
           >
             <CalendarCheck className="w-3.5 h-3.5 text-teal-700" />
             <span>Check In Today</span>
-          </button>
+          </button>)}
 
           {/* Member ID Card */}
           <button
@@ -423,7 +421,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
           {canManageMembers && (
             <button
               type="button"
-              onClick={() => onEdit(member)}
+              disabled={member._sync_status === 'pending'} onClick={() => onEdit(member)}
               className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-xs"
             >
               <Edit2 className="w-3.5 h-3.5" />
@@ -436,8 +434,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
             member.is_archived ? (
               <button
                 type="button"
-                onClick={handleRestoreMember}
-                disabled={isRestoring}
+                disabled={isRestoring || member._sync_status === 'pending'} onClick={() => void handleRestoreMember()}
                 className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-xs cursor-pointer disabled:opacity-50"
                 title="Restore this member to active registry"
               >
@@ -447,7 +444,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
             ) : (
               <button
                 type="button"
-                onClick={handleOpenArchiveModal}
+                disabled={member._sync_status === 'pending'} onClick={handleOpenArchiveModal}
                 className="px-3 py-1.5 text-xs font-semibold text-rose-700 hover:text-rose-900 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
                 title="Archive member from active congregation"
               >
@@ -471,15 +468,14 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
               </p>
             </div>
           </div>
-          <button
+          {canArchive && (<button
             type="button"
-            onClick={handleRestoreMember}
-            disabled={isRestoring}
+            disabled={isRestoring || member._sync_status === 'pending'} onClick={() => void handleRestoreMember()}
             className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shrink-0 transition flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>{isRestoring ? 'Restoring...' : 'Restore to Active'}</span>
-          </button>
+          </button>)}
         </div>
       )}
 
@@ -489,7 +485,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
           <div className="flex flex-col sm:flex-row sm:items-center gap-5">
             {/* Avatar */}
             <div
-              onClick={() => onEdit(member)}
+              role={canManageMembers ? 'button' : undefined} tabIndex={canManageMembers ? 0 : undefined} aria-disabled={!canManageMembers || member._sync_status === 'pending'} onClick={() => {if(canManageMembers && member._sync_status !== 'pending')onEdit(member);}} onKeyDown={e=>{if((e.key==='Enter'||e.key===' ')&&canManageMembers&&member._sync_status!=='pending'){e.preventDefault();onEdit(member);}}}
               className="relative shrink-0 group cursor-pointer"
               title="Click to edit profile photo"
             >
@@ -637,7 +633,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
           {/* Milestone 1: Salvation */}
           <button
             type="button"
-            onClick={() => handleToggleMilestone('salvation_status')}
+            disabled={!canManageMembers || member._sync_status === 'pending'} onClick={() => void handleToggleMilestone('salvation_status')}
             className={`p-3 rounded-xl border text-left transition flex items-center justify-between gap-2 ${
               member.salvation_status
                 ? 'bg-emerald-50/70 border-emerald-300 text-emerald-950'
@@ -661,7 +657,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
           {/* Milestone 2: Water Baptism */}
           <button
             type="button"
-            onClick={() => handleToggleMilestone('baptism_status')}
+            disabled={!canManageMembers || member._sync_status === 'pending'} onClick={() => void handleToggleMilestone('baptism_status')}
             className={`p-3 rounded-xl border text-left transition flex items-center justify-between gap-2 ${
               member.baptism_status
                 ? 'bg-emerald-50/70 border-emerald-300 text-emerald-950'
@@ -685,7 +681,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
           {/* Milestone 3: Holy Ghost Baptism */}
           <button
             type="button"
-            onClick={() => handleToggleMilestone('holy_spirit_baptism' as any)}
+            disabled={!canManageMembers || member._sync_status === 'pending'} onClick={() => void handleToggleMilestone('holy_spirit_baptism')}
             className={`p-3 rounded-xl border text-left transition flex items-center justify-between gap-2 ${
               member.holy_spirit_baptism
                 ? 'bg-orange-50/70 border-orange-300 text-orange-950'
@@ -711,7 +707,7 @@ export const MemberProfileView: React.FC<MemberProfileViewProps> = ({
           {/* Milestone 4: Foundation Class */}
           <button
             type="button"
-            onClick={() => handleToggleMilestone('membership_class_completed')}
+            disabled={!canManageMembers || member._sync_status === 'pending'} onClick={() => void handleToggleMilestone('membership_class_completed')}
             className={`p-3 rounded-xl border text-left transition flex items-center justify-between gap-2 ${
               member.membership_class_completed
                 ? 'bg-emerald-50/70 border-emerald-300 text-emerald-950'
