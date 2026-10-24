@@ -986,6 +986,23 @@ export function clearPrivateCache(ownerId?:string) {
 }
 export const getSyncStatus = (): SyncResult => outbox?.status || {success:true,pending:0};
 export const hasPendingChanges=(table:string)=>Boolean(outbox?.pendingChanges.some(change=>change.table===table));
+export const pendingSyncRecord=(table:string,id:string):Record<string,unknown>|undefined=>{
+  const change=outbox?.pendingChanges.find(change=>change.table===table&&change.id===id&&change.operation==='upsert');
+  return change?.record ? structuredClone(change.record) : undefined;
+};
+export const pendingMemberRecord=(id:string)=>pendingSyncRecord('members',id) as unknown as Member|undefined;
+/** Preserve a failed device admission without changing any retained operation ID or body. */
+export async function preservePendingSync():Promise<SyncResult>{
+  const active=outbox;
+  if(!active || syncRole==='member')return {success:false,pending:active?.status.pending||0,error:'A verified staff session is required.'};
+  try{
+    const result=await active.preservePending();
+    if(active!==outbox)return {success:false,pending:active.status.pending,error:'The signed-in account changed. Changes remain with their original owner.'};
+    if(flushTimer)clearTimeout(flushTimer);
+    flushTimer=setTimeout(()=>{flushTimer=null;void flushSyncOutbox();},100);
+    return {...result,durable:true};
+  }catch(err){return {success:false,pending:active.status.pending,error:`Device storage could not preserve this change: ${(err as Error).message}`};}
+}
 export const exportPendingChanges=()=>outbox?.exportPending()||'{}';
 export const previewPendingChanges=()=>outbox?.previewPending()||'{}';
 export async function restorePendingChanges(raw:string){

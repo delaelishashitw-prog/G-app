@@ -1,4 +1,6 @@
-import React from 'react';
+import React, {useEffect} from 'react';
+import {createPortal} from 'react-dom';
+import {useModalFocus} from '../../hooks/useModalFocus';
 import { X, Printer, Users, BookOpen } from 'lucide-react';
 import { Member, ChurchSettings } from '../../types/database.types';
 
@@ -17,18 +19,26 @@ export const PrintDirectoryModal: React.FC<PrintDirectoryModalProps> = ({
   settings,
   filterLabel,
 }) => {
+  const panel=useModalFocus(isOpen,onClose);
+  useEffect(()=>{
+    if(!isOpen)return;
+    document.body.classList.add('member-directory-print-open');
+    return()=>document.body.classList.remove('member-directory-print-open');
+  },[isOpen]);
   if (!isOpen) return null;
 
+  const pending=members.some(member=>member._sync_status==='pending');
   const handlePrint = () => {
-    window.print();
+    if(members.length && !pending)window.print();
   };
 
-  const activeCount = members.filter((m) => m.status === 'active').length;
-  const leadersCount = members.filter((m) => m.status === 'leader' || Boolean(m.leadership_position)).length;
+  const activeCount = members.filter((m) => !m.is_archived && m.status === 'active').length;
+  const leadersCount = members.filter((m) => !m.is_archived && (m.status === 'leader' || Boolean(m.leadership_position?.trim()))).length;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
-      <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-4 max-h-[94vh] flex flex-col">
+  return createPortal(
+    <div data-member-directory-print-root className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
+      <style media="print">{'@page { size: A4 landscape; margin: 12mm; }'}</style>
+      <div ref={panel} role="dialog" aria-modal="true" aria-label="Print congregational membership directory" className="member-directory-dialog relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-4 max-h-[94vh] flex flex-col">
         {/* Top Control Bar */}
         <div className="px-6 py-4 bg-[#064e3b] text-white flex items-center justify-between shrink-0 print:hidden">
           <div className="flex items-center gap-2.5">
@@ -44,14 +54,14 @@ export const PrintDirectoryModal: React.FC<PrintDirectoryModalProps> = ({
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={handlePrint}
+              disabled={pending||!members.length} onClick={handlePrint}
               className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition shadow-xs"
             >
               <Printer className="w-4 h-4" />
               <span>Print Directory</span>
             </button>
             <button
-              onClick={onClose}
+              aria-label="Close directory preview" onClick={onClose}
               className="p-1.5 text-white/80 hover:text-white rounded-lg transition hover:bg-emerald-800"
             >
               <X className="w-5 h-5" />
@@ -60,7 +70,8 @@ export const PrintDirectoryModal: React.FC<PrintDirectoryModalProps> = ({
         </div>
 
         {/* Printable Paper Document */}
-        <div className="p-8 text-slate-900 overflow-y-auto flex-1 font-sans bg-white print:p-0">
+        <div className="member-directory-paper p-4 sm:p-8 text-slate-900 overflow-y-auto flex-1 font-sans bg-white print:p-0">
+          {pending && <p role="status" className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Wait for cloud confirmation before printing updated member records.</p>}
           {/* Header */}
           <div className="border-b-2 border-emerald-900 pb-4 mb-6 text-center">
             <h1 className="text-xl font-black uppercase tracking-wider text-emerald-950">
@@ -82,7 +93,7 @@ export const PrintDirectoryModal: React.FC<PrintDirectoryModalProps> = ({
             <div>
               <span className="text-[10px] uppercase font-bold text-slate-400 block">Print Date</span>
               <span className="font-bold text-slate-800">
-                {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                {new Date().toLocaleDateString('en-GB', { timeZone: 'Africa/Accra', day: '2-digit', month: 'short', year: 'numeric' })}
               </span>
             </div>
             <div>
@@ -140,7 +151,7 @@ export const PrintDirectoryModal: React.FC<PrintDirectoryModalProps> = ({
                       <div className="text-[10px] text-slate-500">{m.small_group_name || 'General Fellowship'}</div>
                     </td>
                     <td className="p-2 border border-slate-200 capitalize font-medium text-slate-800">
-                      {m.status.replace('_', ' ')}
+                      {m.is_archived ? 'archived' : m.status.replace('_', ' ')}
                     </td>
                     <td className="p-2 text-slate-600 border border-slate-200 text-[11px]">
                       <div>{m.residential_address || m.city || '—'}</div>
@@ -167,7 +178,7 @@ export const PrintDirectoryModal: React.FC<PrintDirectoryModalProps> = ({
             <div className="space-y-6">
               <div className="border-b border-slate-400 pb-1"></div>
               <div>
-                <p className="font-bold text-slate-800">Deaconess Akosua Frimpong</p>
+                <p className="font-bold text-slate-800">Church Secretariat</p>
                 <p className="text-[10px] text-slate-500 uppercase">Head of Church Secretariat & Membership Records</p>
               </div>
             </div>
@@ -175,13 +186,13 @@ export const PrintDirectoryModal: React.FC<PrintDirectoryModalProps> = ({
             <div className="space-y-6">
               <div className="border-b border-slate-400 pb-1"></div>
               <div>
-                <p className="font-bold text-slate-800">Prophet Elisha K. Richard</p>
+                <p className="font-bold text-slate-800">{settings.senior_pastor || 'Senior Pastor'}</p>
                 <p className="text-[10px] text-slate-500 uppercase">Senior Pastor & General Overseer</p>
               </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </div>, document.body
   );
 };

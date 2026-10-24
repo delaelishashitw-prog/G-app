@@ -185,12 +185,12 @@ export const VisitorsPage: React.FC = () => {
     }
   };
 
-  const handleConvert = (visitor: Visitor) => {
+  const handleConvert = async (visitor: Visitor) => {
     try {
-      const createdMember = convertVisitorToMember(visitor.id);
+      const createdMember = await convertVisitorToMember(visitor.id);
       if (createdMember) {
         success(
-          `Converted ${visitor.full_name} into official Member ${createdMember.member_id} with Tithe Number ${createdMember.tithe_number}!`
+          `Membership registration saved on this device for ${visitor.full_name}. Awaiting cloud confirmation and official member and tithe numbers.`
         );
         setConvertingVisitor(null);
         if (selectedVisitorForDossier?.id === visitor.id) {

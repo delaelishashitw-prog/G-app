@@ -123,6 +123,8 @@ import {
 } from '../features/finance/financeStore';
 import { PLEDGE_WRITE_ROLES, buildPledgePayment, requireConfirmedPledge, validateCampaign, validatePledge, type PledgeInput, type PledgePaymentInput, type PledgePaymentResult } from '../features/pledges/pledgeStore';
 import { preserveEvent, requireConfirmedEvent } from '../features/events/eventStore';
+import { canEditMembers, canArchiveMembers, foundationEnrollmentId } from '../features/members/memberRules';
+import {pendingSyncRecord,pendingMemberRecord,preservePendingSync,sanitizeMemberForSupabase} from '../lib/supabase';
 import { EVENT_WRITE_ROLES } from '../features/events/eventRules';
 import {
   addMinistry as addMinistryRecord,
@@ -192,11 +194,11 @@ interface ChurchDataContextType {
 
   // Members
   members: Member[];
-  addMember: (member: Omit<Member, 'id' | 'member_id' | 'created_at' | 'updated_at'>) => Member;
-  updateMember: (id: string, updates: Partial<Member>) => void;
-  bulkUpdateMembers: (memberIds: string[], updates: Partial<Member>) => void;
-  archiveMember: (id: string) => void;
-  unarchiveMember: (id: string) => void;
+  addMember: (member: Omit<Member, 'id' | 'member_id' | 'created_at' | 'updated_at'>, requestId?:string) => Promise<Member>;
+  updateMember: (id: string, updates: Partial<Member>, expectedVersion?: string) => Promise<Member>;
+  bulkUpdateMembers: (memberIds: string[], updates: Partial<Member>) => Promise<Member[]>;
+  archiveMember: (id: string, expectedVersion?: string) => Promise<Member>;
+  unarchiveMember: (id: string, expectedVersion?: string) => Promise<Member>;
   getMember: (id: string) => Member | undefined;
 
   // Visitors
@@ -204,7 +206,7 @@ interface ChurchDataContextType {
   addVisitor: (visitor: Omit<Visitor, 'id' | 'created_at' | 'updated_at'>) => Visitor;
   updateVisitor: (id: string, updates: Partial<Visitor>) => void;
   deleteVisitor: (id: string) => void;
-  convertVisitorToMember: (visitorId: string) => Member | undefined;
+  convertVisitorToMember: (visitorId: string) => Promise<Member | undefined>;
 
   // Attendance & Services
   services: ChurchService[];
@@ -408,6 +410,7 @@ interface ChurchDataContextType {
   updateFoundationCohort: (id: string, updates: Partial<FoundationCohort>) => void;
   foundationStudents: FoundationStudent[];
   enrollMemberInFoundationSchool: (data: Omit<FoundationStudent, 'id' | 'created_at'>) => FoundationStudent;
+  bulkEnrollMembersInFoundationSchool: (cohortId:string,memberIds:string[]) => Promise<number>;
   updateFoundationStudent: (id: string, updates: Partial<FoundationStudent>) => void;
   toggleFoundationModule: (studentId: string, moduleNumber: number) => void;
   graduateFoundationStudent: (studentId: string, certificateNo?: string) => void;
@@ -499,6 +502,11 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [intercessorySlots, setIntercessorySlots] = useState<IntercessoryWatchSlot[]>([]);
 
   const [dataOwner,setDataOwner]=useState('');
+  const membersRef=React.useRef(members);membersRef.current=members;
+  const commitMembers:React.Dispatch<React.SetStateAction<Member[]>>=action=>{const next=typeof action==='function'?action(membersRef.current):action;membersRef.current=next;setMembers(next);};
+  const memberIdentity=`${isAuthenticated}:${currentUser.id}:${currentUser.role}`;
+  const memberIdentityRef=React.useRef(memberIdentity);memberIdentityRef.current=memberIdentity;
+  const memberWrites=React.useRef(new Set<string>());
   const pledgesRef=React.useRef(pledges);pledgesRef.current=pledges;
   const commitPledges:React.Dispatch<React.SetStateAction<PledgeRecord[]>>=action=>{const next=typeof action==='function'?action(pledgesRef.current):action;pledgesRef.current=next;setPledges(next);};
   const givingRef=React.useRef(giving);givingRef.current=giving;
@@ -523,7 +531,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [supabaseError, setSupabaseError] = useState<string | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   const dataSetters: Record<string, React.Dispatch<React.SetStateAction<any[]>>> = {
-    members: setMembers,
+    members: commitMembers,
     visitors: setVisitors,
     services: setServices,
     attendance: setAttendance,
@@ -694,29 +702,31 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     });
   };
 
-  // Helper to generate the next member ID matching canonical GWCC-XXXX convention.
-  const generateMemberId = () => `PENDING-${crypto.randomUUID()}`;
-  const generateTitheNumber = () => `PENDING-${crypto.randomUUID()}`;
-
   // MEMBER OPERATIONS
-  const addMember = (data: Omit<Member, 'id' | 'member_id' | 'created_at' | 'updated_at'>): Member =>
-    addMemberRecord(data, members, setMembers, logAction, dbSyncUpsert, generateMemberId, generateTitheNumber);
-
-  const updateMember = (id: string, updates: Partial<Member>) => {
-    updateMemberRecord(id, updates, setMembers, logAction, dbSyncUpsert);
+  const memberWriter = () => ({members:membersRef.current,setMembers:commitMembers,persist:dbSyncUpsertBatch,
+    pending:pendingMemberRecord,retryPending:preservePendingSync,normalize:sanitizeMemberForSupabase,
+    isCurrent:()=>memberIdentityRef.current===memberIdentity,log:logAction});
+  const writeMembers = async <T,>(ids:string[],archive:boolean,work:()=>Promise<T>):Promise<T> => {
+    if(!isAuthenticated || !canEditMembers(currentUser.role) || (archive && !canArchiveMembers(currentUser.role)))
+      throw new Error(archive?'Member archive authorization is required.':'Member editing authorization is required.');
+    const locks=[...new Set(ids)].map(id=>`${memberIdentity}:${id}`);
+    if(locks.some(key=>memberWrites.current.has(key)))throw new Error('A selected member is already being saved.');
+    locks.forEach(key=>memberWrites.current.add(key));
+    try{return await work();}finally{locks.forEach(key=>memberWrites.current.delete(key));}
   };
-
-  const bulkUpdateMembers = (memberIds: string[], updates: Partial<Member>) => {
-    bulkUpdateMembersRecord(memberIds, updates, setMembers, logAction, dbSyncUpsert);
+  const addMember = (data: Omit<Member, 'id' | 'member_id' | 'created_at' | 'updated_at'>,requestId?:string) =>
+    writeMembers(['new'],false,()=>addMemberRecord({...data,is_archived:false,auth_user_id:undefined},memberWriter(),requestId));
+  const updateMember = (id:string,updates:Partial<Member>,expectedVersion?:string) => {
+    const previous=membersRef.current.find(row=>row.id===id);
+    const archiveChange=updates.is_archived!==undefined && Boolean(updates.is_archived)!==Boolean(previous?.is_archived);
+    return writeMembers([id],archiveChange,()=>updateMemberRecord(id,updates,memberWriter(),expectedVersion));
   };
-
-  const archiveMember = (id: string) => {
-    archiveMemberRecord(id, setMembers, logAction, dbSyncUpsert);
-  };
-
-  const unarchiveMember = (id: string) => {
-    unarchiveMemberRecord(id, setMembers, logAction, dbSyncUpsert);
-  };
+  const bulkUpdateMembers = (ids:string[],updates:Partial<Member>) =>
+    writeMembers(ids,updates.is_archived!==undefined,()=>bulkUpdateMembersRecord(ids,updates,memberWriter()));
+  const archiveMember = (id:string,version?:string) =>
+    writeMembers([id],true,()=>archiveMemberRecord(id,memberWriter(),version));
+  const unarchiveMember = (id:string,version?:string) =>
+    writeMembers([id],true,()=>unarchiveMemberRecord(id,memberWriter(),version));
 
   const getMember = (id: string) => getMemberRecord(members, id);
 
@@ -758,7 +768,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     dbSyncDelete('visitors', id);
   };
 
-  const convertVisitorToMember = (visitorId: string): Member | undefined => {
+  const convertVisitorToMember = async (visitorId: string): Promise<Member | undefined> => {
     const visitor = visitors.find((v) => v.id === visitorId);
     if (!visitor) return undefined;
 
@@ -788,7 +798,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       notes: `Converted from visitor recorded on ${visitor.visit_date}. Notes: ${visitor.notes || ''}`,
     };
 
-    const newMember = addMember(newMemberData);
+    const newMember = await addMember(newMemberData,`visitor-${visitor.id}`);
 
     updateVisitor(visitorId, {
       follow_up_status: 'converted_to_member',
@@ -1720,6 +1730,33 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   ): FoundationStudent =>
     enrollMemberInFoundationSchoolRecord(data, setFoundationStudents, logAction);
 
+  const bulkEnrollMembersInFoundationSchool = (cohortId:string,ids:string[]) => writeMembers(ids,false,async()=>{
+    const cohort=foundationCohorts.find(row=>row.id===cohortId);
+    if(!cohort)throw new Error('Select an available Foundation School cohort.');
+    const students=currentDataRef.current.foundationStudents;
+    const rows:FoundationStudent[]=await Promise.all([...new Set(ids)].filter(id=>!students.some(row=>row.member_id===id&&row.cohort_id===cohortId&&row._sync_status!=='pending')).map(async id=>{
+      const member=membersRef.current.find(row=>row.id===id);
+      if(!member || member.is_archived || member._sync_status==='pending')throw new Error('Select confirmed, unarchived members for enrollment.');
+      return {id:await foundationEnrollmentId(cohort.id,member.id),cohort_id:cohort.id,cohort_name:cohort.name,member_id:member.id,
+        member_name:`${member.first_name} ${member.last_name}`,member_phone:member.phone,
+        enrollment_date:new Date().toISOString().slice(0,10),completed_modules:[],water_baptism_status:Boolean(member.baptism_status),
+        water_baptism_date:member.baptism_date,status:'in_progress',created_at:new Date().toISOString()};
+    }));
+    if(!rows.length)return 0;
+    if(memberIdentityRef.current!==memberIdentity)throw new Error('The signed-in account changed. Reopen the member directory.');
+    const retained=rows.map(row=>pendingSyncRecord('foundation_students',row.id));
+    if(retained.some(Boolean)&&retained.some(row=>!row))throw new Error('Some enrollments are already awaiting confirmation. Use Retry sync before changing the selection.');
+    const result=retained.some(Boolean)?await preservePendingSync():await dbSyncUpsertBatch(rows.map(record=>({table:'foundation_students',record})));
+    if(!result.durable)throw new Error(result.error || 'The enrollments could not be preserved. Keep the selection and retry.');
+    if(memberIdentityRef.current!==memberIdentity)throw new Error('The account changed. Enrollments remain with their original account.');
+    const admitted=retained.some(Boolean)?retained as unknown as FoundationStudent[]:rows;
+    const idsAdded=new Set(admitted.map(row=>row.id));
+    const next=[...admitted.map(row=>({...row,_sync_status:'pending' as const})),...currentDataRef.current.foundationStudents.filter(row=>!idsAdded.has(row.id))];
+    incomingDocuments.current.foundationStudents=next;setFoundationStudents(next);
+    logAction('BULK_ENROLL_FOUNDATION','Members',`Queued ${rows.length} member enrollments in ${cohort.name}`);
+    return rows.length;
+  });
+
   const updateFoundationStudent = (id: string, updates: Partial<FoundationStudent>) => {
     updateFoundationStudentRecord(id, updates, setFoundationStudents, logAction);
   };
@@ -1888,6 +1925,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       updateFoundationCohort,
       foundationStudents,
       enrollMemberInFoundationSchool,
+      bulkEnrollMembersInFoundationSchool,
       updateFoundationStudent,
       toggleFoundationModule,
       graduateFoundationStudent,

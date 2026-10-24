@@ -33,7 +33,7 @@ import {useToast} from '../contexts/ToastContext';
 export const SmallGroupsPage: React.FC = () => {
   const { smallGroups, members, addSmallGroup, updateMember,cellMeetingReports:meetingReports,recordCellMeetingReport } = useChurchData();
 
-  const {info}=useToast();
+  const {info,error:memberError}=useToast();
   const [reportError,setReportError]=useState(''),[savingReport,setSavingReport]=useState(false);
   const reportId=useRef(crypto.randomUUID()),reportBusy=useRef(false);
 
@@ -151,30 +151,31 @@ export const SmallGroupsPage: React.FC = () => {
   };
 
   // Handle Member Assignment to Cell
-  const handleAssignMember = (e: React.FormEvent) => {
+  const handleAssignMember = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!memberToAssignId || !selectedGroupForRoster) return;
 
-    if (updateMember) {
-      updateMember(memberToAssignId, {
+    try {
+      await updateMember(memberToAssignId, {
         small_group_id: selectedGroupForRoster.id,
         small_group_name: selectedGroupForRoster.name
       });
-    }
-
-    setMemberToAssignId('');
-    setIsAssignMemberModalOpen(false);
+      info('Cell assignment saved','Saved on this device. Awaiting cloud confirmation.');
+      setMemberToAssignId('');
+      setIsAssignMemberModalOpen(false);
+    } catch(err){memberError((err as Error).message || 'The assignment could not be saved.');}
   };
 
   // Remove Member from Cell
-  const handleRemoveFromCell = (memberId: string) => {
+  const handleRemoveFromCell = async (memberId: string) => {
     if (confirm('Remove this member from the cell fellowship roster?')) {
-      if (updateMember) {
-        updateMember(memberId, {
+      try {
+        await updateMember(memberId, {
           small_group_id: null,
           small_group_name: null
         });
-      }
+        info('Cell assignment saved','Saved on this device. Awaiting cloud confirmation.');
+      } catch(err){memberError((err as Error).message || 'The assignment could not be saved.');}
     }
   };
 

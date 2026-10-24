@@ -3,6 +3,7 @@ import { X, UserPlus, Gift, Calendar, Check, Hash, User } from 'lucide-react';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useToast } from '../contexts/ToastContext';
 import { PaymentMethod, GenderType } from '../types/database.types';
+import { MEMBER_SAVE_NOTICE } from '../features/members/memberRules';
 import { EVENT_SAVE_NOTICE } from '../features/events/eventRules';
 import { ProfilePhotoUpload } from './ProfilePhotoUpload';
 
@@ -25,6 +26,10 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
     createEvent,
   } = useChurchData();
 
+  const memberBusy = useRef(false);
+  const memberId=useRef(crypto.randomUUID());
+  useEffect(()=>{if(isOpen)memberId.current=crypto.randomUUID();},[isOpen,type]);
+  const [memberSaving,setMemberSaving]=useState(false);
   const eventId = useRef(crypto.randomUUID());
   const eventSaving = useRef(false);
   useEffect(() => { if (isOpen) eventId.current = crypto.randomUUID(); }, [isOpen, type]);
@@ -102,12 +107,15 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
     }, 1200);
   };
 
-  const handleMemberSubmit = (e: React.FormEvent) => {
+  const handleMemberSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!memberForm.first_name || !memberForm.last_name || !memberForm.phone) return;
+    if(memberBusy.current)return;
+    memberBusy.current=true;setMemberSaving(true);
+    try {
     const selectedMin = ministries.find((m) => m.id === memberForm.ministry_id);
     const dateJoined = memberForm.date_joined || new Date().toISOString().split('T')[0];
-    const res = addMember({
+    await addMember({
       first_name: memberForm.first_name,
       last_name: memberForm.last_name,
       gender: memberForm.gender,
@@ -128,8 +136,10 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
       salvation_status: true,
       membership_class_completed: false,
       is_archived: false,
-    });
-    showSuccess(`Registered ${res.first_name} (${res.member_id}) successfully!`);
+    },memberId.current);
+    showSuccess(MEMBER_SAVE_NOTICE);
+    }catch(err){toastError('Member not saved',(err as Error).message);}
+    finally{memberBusy.current=false;setMemberSaving(false);}
   };
 
   const handleVisitorSubmit = (e: React.FormEvent) => {
@@ -384,7 +394,7 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
 
               <div className="pt-2">
                 <button
-                  type="submit"
+                  type="submit" disabled={memberSaving}
                   className="w-full py-2.5 bg-[#064e3b] hover:bg-[#047857] text-white font-semibold text-sm rounded-xl transition shadow-md"
                 >
                   Save Member & Auto-Generate ID (GWCC-######)

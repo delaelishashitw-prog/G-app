@@ -85,6 +85,7 @@ export interface UserProfile {
 }
 
 export interface Member {
+  _sync_status?: 'pending';
   auth_user_id?: string;
   id: string;
   member_id: string; // e.g. MEMBER-000001
@@ -932,6 +933,7 @@ export interface FoundationCohort {
 }
 
 export interface FoundationStudent {
+  _sync_status?: 'pending';
   id: string;
   cohort_id: string;
   cohort_name: string;
