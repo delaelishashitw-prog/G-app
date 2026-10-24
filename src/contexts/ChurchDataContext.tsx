@@ -56,6 +56,7 @@ import {
   pushAllDataToSupabase,
   pullAllDataFromSupabase,
   dbSyncUpsert,
+  dbSyncUpsertBatch,
   dbSyncDelete,
   syncRosterAssignmentToSupabase,
   deleteRosterAssignmentFromSupabase,
@@ -120,15 +121,7 @@ import {
   addDepartmentBudget as addDepartmentBudgetRecord,
   updateDepartmentBudget as updateDepartmentBudgetRecord,
 } from '../features/finance/financeStore';
-import {
-  addCampaign as addCampaignRecord,
-  createPledge as createPledgeRecord,
-  deleteCampaign as deleteCampaignRecord,
-  deletePledge as deletePledgeRecord,
-  recordPledgePayment as recordPledgePaymentRecord,
-  updateCampaign as updateCampaignRecord,
-  updatePledge as updatePledgeRecord,
-} from '../features/pledges/pledgeStore';
+import { PLEDGE_WRITE_ROLES, buildPledgePayment, requireConfirmedPledge, validateCampaign, validatePledge, type PledgeInput, type PledgePaymentInput, type PledgePaymentResult } from '../features/pledges/pledgeStore';
 import { preserveEvent, requireConfirmedEvent } from '../features/events/eventStore';
 import { EVENT_WRITE_ROLES } from '../features/events/eventRules';
 import {
@@ -269,24 +262,16 @@ interface ChurchDataContextType {
 
   // Pledges
   campaigns: PledgeCampaign[];
-  addCampaign: (campaign: Omit<PledgeCampaign, 'id'>) => PledgeCampaign;
-  updateCampaign: (id: string, updates: Partial<PledgeCampaign>) => void;
-  deleteCampaign: (id: string) => void;
+  addCampaign: (campaign: PledgeCampaign) => Promise<PledgeCampaign>;
+  updateCampaign: (id: string, updates: Partial<PledgeCampaign>, expectedVersion?: string) => Promise<PledgeCampaign>;
+  deleteCampaign: (id: string, expectedVersion?: string) => Promise<void>;
   pledges: PledgeRecord[];
-  createPledge: (pledge: Omit<PledgeRecord, 'id' | 'balance' | 'status' | 'created_at'>) => PledgeRecord;
-  addPledge: (pledge: Omit<PledgeRecord, 'id' | 'balance' | 'status' | 'created_at'>) => PledgeRecord;
-  updatePledge: (id: string, updates: Partial<PledgeRecord>) => void;
-  deletePledge: (id: string) => void;
-  recordPledgePayment: (
-    pledgeId: string,
-    amount: number,
-    paymentDetails?: {
-      method?: PaymentMethod;
-      channel?: string;
-      reference?: string;
-      syncWithGiving?: boolean;
-    }
-  ) => void;
+  createPledge: (pledge: PledgeInput, initial?: {amount:number; details:PledgePaymentInput}) => Promise<PledgeRecord>;
+  addPledge: (pledge: PledgeInput, initial?: {amount:number; details:PledgePaymentInput}) => Promise<PledgeRecord>;
+  updatePledge: (id: string, updates: Partial<PledgeRecord>, expectedVersion?: string) => Promise<PledgeRecord>;
+  deletePledge: (id: string, expectedVersion?: string) => Promise<void>;
+  recordPledgePayment: (pledgeId: string, amount: number, paymentDetails: PledgePaymentInput) => Promise<PledgePaymentResult>;
+  voidPledgePayment: (pledgeId: string, paymentId: string, reason: string, expectedVersion?: string) => Promise<void>;
 
   // Ministries & Small Groups
   ministries: Ministry[];
@@ -457,6 +442,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const fundIdentity = `${isAuthenticated}:${currentUser.id}:${currentUser.role}`;
   const fundIdentityRef = React.useRef(fundIdentity); fundIdentityRef.current = fundIdentity;
   const eventSavesInFlight = React.useRef(new Set<string>());
+  const pledgeSavesInFlight = React.useRef(new Set<string>());
   const fundSavesInFlight = React.useRef(new Set<string>());
   const isInitialMount = React.useRef(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -921,26 +907,23 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const recordGiving = (data:Omit<GivingRecord,'id'|'created_at'>):GivingRecord=>withSyncTransaction(()=>{
     if(!isAuthenticated || !canAccess('giving'))throw new Error('Finance staff access is required.');
     if(!Number.isFinite(data.amount)||data.amount<=0)throw new Error('Enter a finite positive amount.');
-    const pledge=data.pledge_id?pledgesRef.current.find(row=>row.id===data.pledge_id):null;
-    if(data.pledge_id && (!pledge||data.amount>pledge.balance))throw new Error('The amount exceeds the remaining pledge balance.');
+    if(data.pledge_id)throw new Error('Record linked payments through the pledge payment form.');
     const record=recordGivingRecord(data,members,commitGiving,logAction,dbSyncUpsert);
-    if(pledge){
-      const amount_paid=pledge.amount_paid+data.amount,balance=pledge.amount_pledged-amount_paid;
-      const updated={...pledge,amount_paid,balance,status:(balance===0?'completed':'partially_paid') as PledgeRecord['status'],updated_at:new Date().toISOString()};
-      commitPledges(prev=>prev.map(row=>row.id===pledge.id?updated:row));void dbSyncUpsert('pledges',updated);
-    }
     return record;
   });
 
   const updateGiving = (id: string, updates: Partial<GivingRecord>) => {
+    if(givingRef.current.find(row=>row.id===id)?.pledge_id)throw new Error('Correct this payment from its pledge payment history.');
     updateGivingRecord(id, updates, members, setGiving, logAction, dbSyncUpsert);
   };
 
   const deleteGiving = (id: string) => {
+    if(givingRef.current.find(row=>row.id===id)?.pledge_id)throw new Error('Void this payment from its pledge payment history.');
     voidGivingRecord(id,'Removed by the finance office',`${currentUser.first_name} ${currentUser.last_name}`,setGiving,logAction,dbSyncUpsert);
   };
 
   const voidGiving = (id: string, reason: string) => {
+    if(givingRef.current.find(row=>row.id===id)?.pledge_id)throw new Error('Void this payment from its pledge payment history.');
     const actor = currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat';
     voidGivingRecord(id, reason, actor, setGiving, logAction, dbSyncUpsert);
   };
@@ -998,51 +981,292 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     success:false,message:'Financial history is preserved. Void incorrect receipts or record an adjustment instead of clearing balances.'
   });
 
-  // CAMPAIGNS
-  const addCampaign = (data: Omit<PledgeCampaign, 'id'>): PledgeCampaign =>
-    addCampaignRecord(data, setCampaigns, logAction, dbSyncUpsert);
-
-  const updateCampaign = (id: string, updates: Partial<PledgeCampaign>) => {
-    updateCampaignRecord(id, updates, setCampaigns, logAction, dbSyncUpsert);
+  // Pledge writes enter durable storage as one versioned, owner-scoped batch.
+  const preservePledgeBatch = async (
+    key: string,
+    records: Array<{ table: string; record: unknown }>,
+    apply: () => void,
+  ) => {
+    if (!isAuthenticated || !PLEDGE_WRITE_ROLES.includes(currentUser.role))
+      throw new Error("Finance staff access is required.");
+    const identity = fundIdentity,
+      lock = `${identity}:${key}`;
+    if (pledgeSavesInFlight.current.has(lock))
+      throw new Error("This record is already being saved.");
+    pledgeSavesInFlight.current.add(lock);
+    try {
+      const result = await dbSyncUpsertBatch(records);
+      if (!result.durable)
+        throw new Error(
+          result.error ||
+            "This device could not preserve the change. Keep the form open and retry.",
+        );
+      if (fundIdentityRef.current !== identity)
+        throw new Error(
+          "The signed-in account changed. This change remains with its original account.",
+        );
+      apply();
+    } finally {
+      pledgeSavesInFlight.current.delete(lock);
+    }
   };
-
-  const deleteCampaign = (id: string) => {
-    deleteCampaignRecord(id, campaigns, setCampaigns, logAction, dbSyncDelete);
+  const saveCampaign = async (
+    row: PledgeCampaign,
+    previous?: PledgeCampaign,
+  ) => {
+    validateCampaign(row);
+    const pending = { ...row, _sync_status: "pending" as const };
+    await preservePledgeBatch(
+      `campaign:${row.id}`,
+      [
+        {
+          table: "pledge_campaigns",
+          record: { ...row, _expected_updated_at: previous?.updated_at },
+        },
+      ],
+      () => {
+        const rows = [
+          pending,
+          ...currentDataRef.current.campaigns.filter(
+            (item) => item.id !== row.id,
+          ),
+        ];
+        currentDataRef.current.campaigns = rows;
+        setCampaigns(rows);
+      },
+    );
+    return pending;
   };
-
-  // PLEDGES
-  const createPledge = (
-    data: Omit<PledgeRecord, 'id' | 'balance' | 'status' | 'created_at'>
-  ): PledgeRecord => createPledgeRecord(data, members, commitPledges, logAction, dbSyncUpsert);
-
-  const updatePledge = (id: string, updates: Partial<PledgeRecord>) => {
-    updatePledgeRecord(id, updates, commitPledges, logAction, dbSyncUpsert);
+  const addCampaign = async (data: PledgeCampaign) => {
+    if (currentDataRef.current.campaigns.some((row) => row.id === data.id))
+      throw new Error("This campaign is already saved. Check pending changes.");
+    return saveCampaign({ ...data, created_at: new Date().toISOString() });
   };
-
-  const deletePledge = (id: string) => {
-    deletePledgeRecord(id, pledgesRef.current, commitPledges, logAction, dbSyncDelete);
+  const updateCampaign = async (
+    id: string,
+    updates: Partial<PledgeCampaign>,
+    expectedVersion?: string,
+  ) => {
+    const row = requireConfirmedPledge(
+      currentDataRef.current.campaigns.find((item) => item.id === id),
+      expectedVersion,
+    );
+    return saveCampaign(
+      { ...row, ...updates, id, updated_at: row.updated_at },
+      row,
+    );
   };
-
-  const recordPledgePayment = (
+  const deletePledgeRecord = async (
+    table: "pledges" | "pledge_campaigns",
+    id: string,
+    version: string,
+  ) => {
+    if (!isAuthenticated || !PLEDGE_WRITE_ROLES.includes(currentUser.role))
+      throw new Error("Finance staff access is required.");
+    const identity = fundIdentity,
+      result = await dbSyncDelete(table, id, version);
+    if (!result.durable)
+      throw new Error(
+        result.error || "This device could not preserve the change.",
+      );
+    if (fundIdentityRef.current !== identity)
+      throw new Error("The signed-in account changed.");
+  };
+  const deleteCampaign = async (id: string, expectedVersion?: string) => {
+    const row = requireConfirmedPledge(
+      currentDataRef.current.campaigns.find((item) => item.id === id),
+      expectedVersion,
+    );
+    if (pledgesRef.current.some((item) => item.campaign_id === id))
+      throw new Error(
+        "This campaign has pledges. Turn off its Active status to archive it.",
+      );
+    await deletePledgeRecord("pledge_campaigns", id, row.updated_at!);
+    const rows = currentDataRef.current.campaigns.filter(
+      (item) => item.id !== id,
+    );
+    currentDataRef.current.campaigns = rows;
+    setCampaigns(rows);
+  };
+  const savePledge = async (
+    row: PledgeRecord,
+    previous?: PledgeRecord,
+    gift?: GivingRecord,
+  ) => {
+    validatePledge(row);
+    const pending = { ...row, _sync_status: "pending" as const };
+    const records: Array<{ table: string; record: unknown }> = [
+      {
+        table: "pledges",
+        record: { ...row, _expected_updated_at: previous?.updated_at },
+      },
+    ];
+    if (gift) records.push({ table: "giving", record: gift });
+    await preservePledgeBatch(`pledge:${row.id}`, records, () => {
+      commitPledges((prev) => [
+        pending,
+        ...prev.filter((item) => item.id !== row.id),
+      ]);
+      // Linked Giving appears after the server confirms both parts of the payment.
+    });
+    return pending;
+  };
+  const createPledge = async (
+    data: PledgeInput,
+    initial?: { amount: number; details: PledgePaymentInput },
+  ) => {
+    if (pledgesRef.current.some((row) => row.id === data.id))
+      throw new Error("This pledge is already saved. Check pending changes.");
+    const person = currentDataRef.current.members.find(
+      (row) => row.id === data.member_id,
+    );
+    const campaign = currentDataRef.current.campaigns.find(
+      (row) => row.id === data.campaign_id,
+    );
+    if (
+      !person ||
+      person.is_archived ||
+      ["deceased", "transferred"].includes(person.status)
+    )
+      throw new Error("Select an active saved member.");
+    if (!campaign?.is_active || campaign._sync_status)
+      throw new Error("Select an active campaign confirmed by the cloud.");
+    if (data.amount_paid !== 0)
+      throw new Error("Record collections as payment receipts.");
+    const row: PledgeRecord = {
+      ...data,
+      member_name: `${person.first_name} ${person.last_name}`.trim(),
+      member_phone: person.phone,
+      campaign_name: campaign.name,
+      amount_paid: 0,
+      balance: data.amount_pledged,
+      status: "active",
+      payments: [],
+      created_at: new Date().toISOString(),
+    };
+    const payment = initial
+      ? buildPledgePayment(row, initial.amount, initial.details)
+      : undefined;
+    return savePledge(payment?.pledge || row, undefined, payment?.giving);
+  };
+  const updatePledge = async (
+    id: string,
+    updates: Partial<PledgeRecord>,
+    expectedVersion?: string,
+  ) => {
+    const row = requireConfirmedPledge(
+      pledgesRef.current.find((item) => item.id === id),
+      expectedVersion,
+    );
+    if (
+      updates.amount_paid !== undefined ||
+      updates.payments ||
+      updates.legacy_paid_amount !== undefined
+    )
+      throw new Error("Use payment history to correct collections.");
+    return savePledge(
+      {
+        ...row,
+        ...updates,
+        id,
+        amount_paid: row.amount_paid,
+        updated_at: row.updated_at,
+      },
+      row,
+    );
+  };
+  const deletePledge = async (id: string, expectedVersion?: string) => {
+    const row = requireConfirmedPledge(
+      pledgesRef.current.find((item) => item.id === id),
+      expectedVersion,
+    );
+    if (row.amount_paid > 0 || row.payments?.length)
+      throw new Error("Pledges with payment history cannot be deleted.");
+    await deletePledgeRecord("pledges", id, row.updated_at!);
+    commitPledges((prev) => prev.filter((item) => item.id !== id));
+  };
+  const recordPledgePayment = async (
     pledgeId: string,
     amount: number,
-    paymentDetails?: {
-      method?: PaymentMethod;
-      channel?: string;
-      reference?: string;
-      syncWithGiving?: boolean;
+    input: PledgePaymentInput,
+  ): Promise<PledgePaymentResult> => {
+    const existing = pledgesRef.current.find((row) => row.id === pledgeId),
+      prior = existing?.payments?.find((row) => row.id === input.id);
+    if (prior && existing) {
+      if (
+        prior.amount !== amount ||
+        (prior.date !== input.date && Boolean(input.date)) ||
+        prior.payment_method !== (input.method || "cash") ||
+        (prior.payment_channel || "") !== (input.channel || "") ||
+        (prior.transaction_reference || "") !== (input.reference || "") ||
+        (prior.notes || "") !== (input.notes || "") ||
+        prior.sync_with_giving !== Boolean(input.syncWithGiving)
+      )
+        throw new Error(
+          "This receipt ID was already used with different payment details.",
+        );
+      return {
+        pledge: existing,
+        payment: prior,
+        giving: givingRef.current.find((row) => row.id === prior.giving_id),
+      };
     }
+    const row = requireConfirmedPledge(existing, input.expectedVersion),
+      result = buildPledgePayment(row, amount, input);
+    result.pledge = await savePledge(result.pledge, row, result.giving);
+    return result;
+  };
+  const voidPledgePayment = async (
+    pledgeId: string,
+    paymentId: string,
+    reason: string,
+    expectedVersion?: string,
   ) => {
-    withSyncTransaction(()=>recordPledgePaymentRecord(
-      pledgeId,
-      amount,
-      pledgesRef.current,
-      commitPledges,
-      logAction,
-      dbSyncUpsert,
-      (data) => recordGiving(data),
-      paymentDetails
-    ));
+    const row = requireConfirmedPledge(
+        pledgesRef.current.find((item) => item.id === pledgeId),
+        expectedVersion,
+      ),
+      payment = row.payments?.find((item) => item.id === paymentId);
+    if (!payment || payment.status !== "completed" || !payment.recorded_at)
+      throw new Error("Select a confirmed payment to void.");
+    if (reason.trim().length < 5 || reason.trim().length > 1000)
+      throw new Error("Enter a void reason in 5–1,000 characters.");
+    const record = {
+      ...row,
+      payments: row.payments!.map((item) =>
+        item.id === paymentId
+          ? { ...item, status: "voided" as const, void_reason: reason.trim() }
+          : item,
+      ),
+    };
+    const records: Array<{ table: string; record: unknown }> = [
+      {
+        table: "pledges",
+        record: { ...record, _expected_updated_at: row.updated_at },
+      },
+    ];
+    if (payment.giving_id) {
+      const gift = requireConfirmedPledge(
+        givingRef.current.find((item) => item.id === payment.giving_id),
+      );
+      records.push({
+        table: "giving",
+        record: {
+          ...gift,
+          status: "voided",
+          void_reason: reason.trim(),
+          voided_by: currentUser.id,
+          _expected_updated_at: gift.updated_at,
+        },
+      });
+    }
+    await preservePledgeBatch(`pledge:${row.id}`, records, () =>
+      commitPledges((prev) =>
+        prev.map((item) =>
+          item.id === row.id ? { ...record, _sync_status: "pending" } : item,
+        ),
+      ),
+    );
   };
 
   // MINISTRIES & SMALL GROUPS
@@ -1577,6 +1801,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       updatePledge,
       deletePledge,
       recordPledgePayment,
+      voidPledgePayment,
       ministries,
       addMinistry,
       updateMinistry,

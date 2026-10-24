@@ -125,6 +125,7 @@ export const GivingPage: React.FC = () => {
     services,
     settings,
     recordGiving,
+    recordPledgePayment,
     updateGiving,
     deleteGiving,
     voidGiving,
@@ -200,6 +201,8 @@ export const GivingPage: React.FC = () => {
   const [formReferenceNumber, setFormReferenceNumber] = useState('');
   const [formServiceId, setFormServiceId] = useState('');
   const [formPledgeId, setFormPledgeId] = useState('');
+  const [pledgePaymentId,setPledgePaymentId]=useState(()=>crypto.randomUUID());
+  const [formPledgeVersion,setFormPledgeVersion]=useState<string>();
   const [formNotes, setFormNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -445,6 +448,7 @@ export const GivingPage: React.FC = () => {
   // Confirm Voiding
   const handleConfirmVoid = () => {
     if (!voidingRecord) return;
+    if(voidingRecord.pledge_id){error('Pledge payment','Open this pledge in Pledges and void the payment from its history.');return;}
     if (!voidReason.trim()) {
       error('Reason Required', 'Please provide a reason for voiding this giving entry.');
       return;
@@ -456,13 +460,16 @@ export const GivingPage: React.FC = () => {
   };
 
   // Handle Save Single Giving
-  const handleSaveSingleGiving = (e: React.FormEvent) => {
+  const handleSaveSingleGiving = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
 
     const amountNum = parseFloat(formAmount);
     if (isNaN(amountNum) || amountNum <= 0) {
-      error('Invalid Amount', 'Please provide a valid giving amount in Ghana Cedis.');
+      error(
+        "Invalid Amount",
+        "Please provide a valid giving amount in Ghana Cedis.",
+      );
       return;
     }
 
@@ -470,56 +477,104 @@ export const GivingPage: React.FC = () => {
     if (formReferenceNumber.trim()) {
       const cleanRef = formReferenceNumber.trim().toLowerCase();
       const duplicateRecord = giving.find(
-        (g) => g.status !== 'voided' && g.reference_number?.trim().toLowerCase() === cleanRef
+        (g) =>
+          g.status !== "voided" &&
+          g.reference_number?.trim().toLowerCase() === cleanRef,
       );
       if (duplicateRecord) {
         const proceed = confirm(
-          `Warning: Reference number "${formReferenceNumber.trim()}" was already recorded for ${duplicateRecord.member_name || duplicateRecord.donor_name || 'a donor'} on ${duplicateRecord.date} (GH₵ ${duplicateRecord.amount.toFixed(2)}).\n\nDo you still wish to submit this transaction?`
+          `Warning: Reference number "${formReferenceNumber.trim()}" was already recorded for ${duplicateRecord.member_name || duplicateRecord.donor_name || "a donor"} on ${duplicateRecord.date} (GH₵ ${duplicateRecord.amount.toFixed(2)}).\n\nDo you still wish to submit this transaction?`,
         );
         if (!proceed) return;
       }
     }
 
     setIsSubmitting(true);
+    try {
+      let member = formSelectedMemberId
+        ? members.find((m) => m.id === formSelectedMemberId)
+        : undefined;
+      if (!member && formTitheNumber.trim()) {
+        member = members.find(
+          (m) =>
+            m.tithe_number?.trim().toLowerCase() ===
+            formTitheNumber.trim().toLowerCase(),
+        );
+      }
 
-    let member = formSelectedMemberId ? members.find((m) => m.id === formSelectedMemberId) : undefined;
-    if (!member && formTitheNumber.trim()) {
-      member = members.find((m) => m.tithe_number?.trim().toLowerCase() === formTitheNumber.trim().toLowerCase());
+      const selectedSrv = services.find((s) => s.id === formServiceId);
+      const selectedPledge = formPledgeId
+        ? pledges.find((p) => p.id === formPledgeId)
+        : undefined;
+
+      if (
+        formPledgeId &&
+        (!selectedPledge || selectedPledge.member_id !== member?.id)
+      )
+        throw new Error("Select a pledge belonging to this member.");
+      const record = selectedPledge
+        ? (
+            await recordPledgePayment(selectedPledge.id, amountNum, {
+              id: pledgePaymentId,
+              expectedVersion: formPledgeVersion,
+              date: formDate || todayISO(),
+              method: formPaymentMethod,
+              channel: formPaymentChannel || "",
+              reference: formReferenceNumber.trim(),
+              notes: formNotes.trim(),
+              syncWithGiving: true,
+              service_id: selectedSrv?.id,
+              service_name: selectedSrv?.name,
+            })
+          ).giving
+        : recordGiving({
+            member_id: member?.id,
+            member_name: member
+              ? `${member.first_name} ${member.last_name}`
+              : undefined,
+            tithe_number: formTitheNumber.trim() || member?.tithe_number,
+            donor_name: !member
+              ? formDonorName.trim() || "Anonymous Giver"
+              : undefined,
+            category: formCategory,
+            amount: amountNum,
+            currency: "GHS",
+            date: formDate || todayISO(),
+            payment_method: formPaymentMethod,
+            payment_channel: formPaymentChannel || undefined,
+            reference_number: formReferenceNumber.trim() || undefined,
+            service_id: selectedSrv?.id,
+            service_name: selectedSrv?.name || "Sunday Service",
+            status: "completed",
+            notes: formNotes.trim() || undefined,
+            recorded_by: currentUser
+              ? `${currentUser.first_name} ${currentUser.last_name}`
+              : "Finance Secretariat",
+          });
+
+      if (selectedPledge)
+        info(
+          "Pledge payment saved",
+          "Awaiting cloud confirmation. The linked receipt will appear in Giving when confirmed.",
+        );
+      else
+        success(
+          "Giving Recorded",
+          `Recorded ${formCategory} of ${formatGHS(amountNum)} successfully.`,
+        );
+      setShowRecordModal(false);
+      resetForm();
+      if (!selectedPledge && record) setReceiptRecord(record);
+    } catch (err) {
+      error("Payment could not be saved", (err as Error).message);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const selectedSrv = services.find((s) => s.id === formServiceId);
-    const selectedPledge = formPledgeId ? pledges.find((p) => p.id === formPledgeId) : undefined;
-
-    const record = recordGiving({
-      member_id: member?.id,
-      member_name: member ? `${member.first_name} ${member.last_name}` : undefined,
-      tithe_number: formTitheNumber.trim() || member?.tithe_number,
-      donor_name: !member ? (formDonorName.trim() || 'Anonymous Giver') : undefined,
-      category: formCategory,
-      amount: amountNum,
-      currency: 'GHS',
-      date: formDate || todayISO(),
-      payment_method: formPaymentMethod,
-      payment_channel: formPaymentChannel || undefined,
-      reference_number: formReferenceNumber.trim() || undefined,
-      service_id: selectedSrv?.id,
-      service_name: selectedSrv?.name || 'Sunday Service',
-      pledge_id: selectedPledge?.id,
-      pledge_campaign_name: selectedPledge?.campaign_name,
-      status: 'completed',
-      notes: formNotes.trim() || undefined,
-      recorded_by: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat',
-    });
-
-    success('Giving Recorded', `Recorded ${formCategory} of ${formatGHS(amountNum)} successfully.`);
-    setShowRecordModal(false);
-    resetForm();
-    setIsSubmitting(false);
-    // Prompt for official receipt
-    setReceiptRecord(record);
   };
 
   const resetForm = () => {
+    setPledgePaymentId(crypto.randomUUID());
+    setFormPledgeVersion(undefined);
     setFormMemberSearch('');
     setFormSelectedMemberId('');
     setFormDonorName('');
@@ -1220,7 +1275,7 @@ export const GivingPage: React.FC = () => {
                             )}
                           </td>
                           <td className="py-3 px-4 text-xs text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                            {record.service_name || 'Sunday Service'}
+                            {record.service_name || 'Unassigned service'}
                           </td>
                           <td className="py-3 px-4 text-xs font-mono text-slate-400 whitespace-nowrap">
                             {record.reference_number || '—'}
@@ -1237,27 +1292,30 @@ export const GivingPage: React.FC = () => {
                               {isFinanceAdmin && (
                                 <>
                                   <button
+                                    disabled={Boolean(record.pledge_id)}
                                     onClick={() => setEditingRecord(record)}
                                     className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-all cursor-pointer"
-                                    title="Edit Entry"
+                                    title={record.pledge_id?'Correct from pledge payment history':'Edit Entry'}
                                   >
                                     <FileText className="w-4 h-4" />
                                   </button>
 
                                   {!isVoided && (
                                     <button
+                                      disabled={Boolean(record.pledge_id)}
+                                      title={record.pledge_id?'Void from pledge payment history':'Void Transaction (Preserve Audit Trail)'}
                                       onClick={() => {
                                         setVoidingRecord(record);
                                         setVoidReason('');
                                       }}
                                       className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-all cursor-pointer"
-                                      title="Void Transaction (Preserve Audit Trail)"
                                     >
                                       <Ban className="w-4 h-4" />
                                     </button>
                                   )}
 
                                   <button
+                                    disabled={Boolean(record.pledge_id)}
                                     onClick={() => {
                                       if (confirm(`Delete giving entry for ${displayName} (GH₵ ${record.amount.toFixed(2)})?`)) {
                                         deleteGiving(record.id);
@@ -1425,7 +1483,7 @@ export const GivingPage: React.FC = () => {
       {/* RECORD SINGLE GIVING MODAL */}
       {showRecordModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 my-8">
+          <div role="dialog" aria-modal="true" aria-label="Record member giving" className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 my-8">
             <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800 mb-4">
               <div className="flex items-center gap-2">
                 <span className="p-2 rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400">
@@ -1451,10 +1509,12 @@ export const GivingPage: React.FC = () => {
                   Select Registered Member (or leave blank for external donor)
                 </label>
                 <select
+                  aria-label="Giving member"
                   value={formSelectedMemberId}
                   onChange={(e) => {
                     const memId = e.target.value;
                     setFormSelectedMemberId(memId);
+                    setFormPledgeId('');setFormPledgeVersion(undefined);
                     const mem = members.find((m) => m.id === memId);
                     if (mem?.tithe_number) setFormTitheNumber(mem.tithe_number);
                   }}
@@ -1506,7 +1566,7 @@ export const GivingPage: React.FC = () => {
                   </label>
                   <select
                     value={formCategory}
-                    onChange={(e) => setFormCategory(e.target.value as GivingCategory)}
+                    onChange={(e) => {setFormCategory(e.target.value as GivingCategory);if(e.target.value!=='Building Fund'){setFormPledgeId('');setFormPledgeVersion(undefined);}}}
                     className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
                   >
                     {GIVING_CATEGORIES.map((cat) => (
@@ -1627,15 +1687,20 @@ export const GivingPage: React.FC = () => {
                   Credit to Active Pledge Campaign (Optional)
                 </label>
                 <select
+                  aria-label="Credit to active pledge"
                   value={formPledgeId}
-                  onChange={(e) => setFormPledgeId(e.target.value)}
+                  onChange={(e) => {
+                    const pledge=pledges.find(row=>row.id===e.target.value);
+                    setFormPledgeId(e.target.value);setFormPledgeVersion(pledge?.updated_at);
+                    if(pledge){setFormCategory('Building Fund');setFormSelectedMemberId(pledge.member_id);setFormTitheNumber(members.find(row=>row.id===pledge.member_id)?.tithe_number || '');}
+                  }}
                   className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none"
                 >
                   <option value="">-- Direct Giving (No Pledge Link) --</option>
                   {pledges
                     .filter(
                       (p) =>
-                        p.status !== 'completed' &&
+                        p.status !== 'completed' && p.status !== 'cancelled' && !p._sync_status &&
                         (!formSelectedMemberId || p.member_id === formSelectedMemberId)
                     )
                     .map((p) => (

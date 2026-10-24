@@ -1,3 +1,4 @@
+import {pledgeOverdue,pledgeDisplayStatus} from '../features/pledges/pledgeStore';
 import {useGivingChannels} from '../hooks/useGivingChannels';
 import {givingInstructions} from '../lib/givingChannels';
 import React, { useState, useMemo } from 'react';
@@ -61,14 +62,7 @@ export const PledgesPage: React.FC = () => {
   const [preselectedCampaignId, setPreselectedCampaignId] = useState<string | undefined>(undefined);
 
   // Overdue status check helper
-  const isPledgeOverdue = (p: PledgeRecord) => {
-    if (p.balance <= 0 || !p.due_date) return false;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const due = new Date(p.due_date);
-    due.setHours(0, 0, 0, 0);
-    return due.getTime() < today.getTime();
-  };
+  const isPledgeOverdue = pledgeOverdue;
 
   // Filter and Sort Pledges
   const filteredPledges = useMemo(() => {
@@ -94,17 +88,7 @@ export const PledgesPage: React.FC = () => {
         }
 
         // Status Filter
-        if (selectedStatusFilter !== 'all') {
-          if (selectedStatusFilter === 'overdue') {
-            if (!isPledgeOverdue(p)) return false;
-          } else if (selectedStatusFilter === 'completed') {
-            if (p.balance > 0) return false;
-          } else if (selectedStatusFilter === 'partially_paid') {
-            if (p.amount_paid === 0 || p.balance === 0) return false;
-          } else if (selectedStatusFilter === 'active') {
-            if (p.amount_paid > 0) return false;
-          }
-        }
+        if (selectedStatusFilter !== 'all' && pledgeDisplayStatus(p)!==selectedStatusFilter) return false;
 
         return true;
       })
@@ -133,7 +117,7 @@ export const PledgesPage: React.FC = () => {
   const realizedPercent = totalPledged > 0 ? ((totalPaid / totalPledged) * 100).toFixed(1) : '0';
 
   const completedCount = pledges.filter((p) => p.balance === 0).length;
-  const partialCount = pledges.filter((p) => p.amount_paid > 0 && p.balance > 0).length;
+  const partialCount = pledges.filter((p) => pledgeDisplayStatus(p)==='partially_paid').length;
   const overdueCount = pledges.filter((p) => isPledgeOverdue(p)).length;
 
   // Aggregate target across all active campaigns
@@ -141,6 +125,7 @@ export const PledgesPage: React.FC = () => {
 
   // Quick WhatsApp trigger
   const handleQuickWhatsApp = (p: PledgeRecord) => {
+    if(p._sync_status==='pending'){window.alert('Wait for cloud confirmation before sharing a pledge balance.');return;}
     const phone = cleanGhanaPhone(p.member_phone);
     const name = p.member_name.split(' ')[0] || 'Beloved';
     const text = encodeURIComponent(
@@ -156,6 +141,7 @@ export const PledgesPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {pledges.some(row=>row._sync_status)||campaigns.some(row=>row._sync_status)?<p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Pledge changes are awaiting cloud confirmation. Collected totals retain their last confirmed amounts. Open Pending Changes if a change needs review.</p>:null}
       {/* Page Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -338,7 +324,7 @@ export const PledgesPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <Building2 className="w-4 h-4 text-purple-700" />
             <h2 className="text-sm font-bold uppercase tracking-wider text-slate-800">
-              Active Capital Campaigns ({campaigns.length})
+              Capital Campaigns ({campaigns.length})
             </h2>
           </div>
           <button
@@ -386,7 +372,7 @@ export const PledgesPage: React.FC = () => {
                           : 'bg-slate-100 text-slate-600'
                       }`}
                     >
-                      {camp.is_active ? 'Active' : 'Closed'}
+                      {camp._sync_status==='pending'?'Awaiting confirmation':camp.is_active ? 'Active' : 'Archived'}
                     </span>
                   </div>
 
@@ -458,6 +444,7 @@ export const PledgesPage: React.FC = () => {
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
+                      disabled={Boolean(camp._sync_status)}
                       onClick={() => {
                         setSelectedCampaignToEdit(camp);
                         setIsCampaignModalOpen(true);
@@ -469,6 +456,7 @@ export const PledgesPage: React.FC = () => {
                     </button>
                     <button
                       type="button"
+                      disabled={!camp.is_active||Boolean(camp._sync_status)}
                       onClick={() => {
                         setPreselectedCampaignId(camp.id);
                         setIsAddModalOpen(true);
@@ -766,7 +754,7 @@ export const PledgesPage: React.FC = () => {
                               : 'bg-purple-100 text-purple-800'
                           }`}
                         >
-                          {plg.status.replace('_', ' ')}
+                          {plg._sync_status==='pending'?'Awaiting confirmation':pledgeDisplayStatus(plg).replace('_', ' ')}
                         </span>
                       </td>
 
@@ -776,9 +764,10 @@ export const PledgesPage: React.FC = () => {
                         onClick={(e) => e.stopPropagation()} // don't trigger row click
                       >
                         <div className="flex items-center justify-end gap-1.5">
-                          {plg.balance > 0 ? (
+                          {plg.balance > 0 && plg.status!=='cancelled' ? (
                             <button
                               type="button"
+                              disabled={plg._sync_status==='pending'}
                               onClick={() => {
                                 setSelectedPledge(plg);
                                 setIsPaymentModalOpen(true);
@@ -789,13 +778,14 @@ export const PledgesPage: React.FC = () => {
                             </button>
                           ) : (
                             <span className="text-emerald-700 font-semibold text-[11px] flex items-center gap-1">
-                              <CheckCircle2 className="w-3.5 h-3.5" /> Redeemed
+                              <CheckCircle2 className="w-3.5 h-3.5" /> {plg.status==='cancelled'?'Cancelled':'Redeemed'}
                             </span>
                           )}
 
-                          {plg.balance > 0 && plg.member_phone && (
+                          {plg.balance > 0 && plg.status!=='cancelled' && plg.member_phone && (
                             <button
                               type="button"
+                              disabled={plg._sync_status==='pending'}
                               onClick={() => handleQuickWhatsApp(plg)}
                               className="p-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg transition border border-emerald-200"
                               title="Send WhatsApp Payment Reminder"
@@ -852,22 +842,22 @@ export const PledgesPage: React.FC = () => {
       </div>
 
       {/* ALL MODALS */}
-      <AddPledgeModal
+      {isAddModalOpen&&<AddPledgeModal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         preselectedCampaignId={preselectedCampaignId}
-      />
+      />}
 
-      <RecordPledgePaymentModal
+      {isPaymentModalOpen&&<RecordPledgePaymentModal
         isOpen={isPaymentModalOpen}
         onClose={() => {
           setIsPaymentModalOpen(false);
           setSelectedPledge(null);
         }}
         pledge={selectedPledge}
-      />
+      />}
 
-      <PledgeDossierModal
+      {isDossierModalOpen&&<PledgeDossierModal
         isOpen={isDossierModalOpen}
         onClose={() => {
           setIsDossierModalOpen(false);
@@ -882,31 +872,31 @@ export const PledgesPage: React.FC = () => {
           setSelectedPledge(p);
           setIsEditModalOpen(true);
         }}
-      />
+      />}
 
-      <CampaignManagerModal
+      {isCampaignModalOpen&&<CampaignManagerModal
         isOpen={isCampaignModalOpen}
         onClose={() => {
           setIsCampaignModalOpen(false);
           setSelectedCampaignToEdit(null);
         }}
         campaignToEdit={selectedCampaignToEdit}
-      />
+      />}
 
-      <EditPledgeModal
+      {isEditModalOpen&&<EditPledgeModal
         isOpen={isEditModalOpen}
         onClose={() => {
           setIsEditModalOpen(false);
           setSelectedPledge(null);
         }}
         pledge={selectedPledge}
-      />
+      />}
 
-      <PrintPledgesModal
+      {isPrintModalOpen&&<PrintPledgesModal
         isOpen={isPrintModalOpen}
         onClose={() => setIsPrintModalOpen(false)}
         pledgesList={pledges}
-      />
+      />}
     </div>
   );
 };
