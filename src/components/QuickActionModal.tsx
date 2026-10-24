@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { X, UserPlus, Gift, Calendar, Check, Hash, User } from 'lucide-react';
 import { useChurchData } from '../contexts/ChurchDataContext';
 import { useToast } from '../contexts/ToastContext';
 import { PaymentMethod, GenderType } from '../types/database.types';
+import { EVENT_SAVE_NOTICE } from '../features/events/eventRules';
 import { ProfilePhotoUpload } from './ProfilePhotoUpload';
 
 interface QuickActionModalProps {
@@ -24,6 +25,9 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
     createEvent,
   } = useChurchData();
 
+  const eventId = useRef(crypto.randomUUID());
+  const eventSaving = useRef(false);
+  useEffect(() => { if (isOpen) eventId.current = crypto.randomUUID(); }, [isOpen, type]);
   const [notification, setNotification] = useState<string | null>(null);
 
   // Member form state
@@ -85,7 +89,7 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
     start_time: '18:30',
     end_time: '20:30',
     venue: 'GWCC Main Auditorium, Joma, Accra',
-    expected_attendance: '200',
+    expected_attendance: '0',
   });
 
   if (!isOpen || !type) return null;
@@ -207,10 +211,12 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
     }
   };
 
-  const handleEventSubmit = (e: React.FormEvent) => {
+  const handleEventSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!eventForm.title) return;
-    createEvent({
+    if (!eventForm.title || eventSaving.current) return;
+    eventSaving.current = true;
+    try { await createEvent({
+      id: eventId.current,
       title: eventForm.title,
       event_type: eventForm.event_type,
       start_date: eventForm.start_date,
@@ -218,10 +224,12 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
       start_time: eventForm.start_time,
       end_time: eventForm.end_time,
       venue: eventForm.venue,
-      expected_attendance: parseInt(eventForm.expected_attendance, 10) || 100,
+      expected_attendance: Number(eventForm.expected_attendance || '0'),
       status: 'upcoming',
     });
-    showSuccess(`Scheduled: ${eventForm.title}`);
+    showSuccess(EVENT_SAVE_NOTICE);
+    } catch (error) { toastError('Event Not Saved', error instanceof Error ? error.message : 'Keep the form open and retry.'); }
+    finally { eventSaving.current = false; }
   };
 
   return (
@@ -249,7 +257,7 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={() => { if (!eventSaving.current) onClose(); }}
             className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg"
           >
             <X className="w-5 h-5" />

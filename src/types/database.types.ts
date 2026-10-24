@@ -454,6 +454,7 @@ export interface EventAttendee {
 }
 
 export interface ChurchEvent {
+  _sync_status?: 'pending';
   id: string;
   title: string;
   description?: string;

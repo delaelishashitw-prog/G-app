@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   CalendarCheck,
   Calendar as CalendarIcon,
@@ -33,6 +33,9 @@ import { ScheduleEventModal } from '../components/events/ScheduleEventModal';
 import { PrintEventFlyerModal } from '../components/events/PrintEventFlyerModal';
 import { downloadEventIcs, generateWhatsAppAnnouncement } from '../components/events/eventCalendarExport';
 
+import { useModalFocus } from '../hooks/useModalFocus';
+import { effectiveEventStatus, ghanaToday } from '../features/events/eventRules';
+
 type ViewMode = 'calendar' | 'agenda' | 'cards';
 
 const CATEGORY_TABS: Array<{ id: string; label: string }> = [
@@ -47,7 +50,7 @@ const CATEGORY_TABS: Array<{ id: string; label: string }> = [
 ];
 
 export const EventsPage: React.FC = () => {
-  const { events, services, settings } = useChurchData();
+  const { events: storedEvents, services, settings } = useChurchData();
   const { canAccess, currentRole, currentUser } = useAuth();
   const canManageEvents =
     canAccess('events') &&
@@ -57,11 +60,15 @@ export const EventsPage: React.FC = () => {
       currentRole === 'pastor' ||
       currentRole === 'ministry_leader');
 
+  const [clock, setClock] = useState(Date.now);
+  useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 30000); return () => clearInterval(timer); }, []);
+  const events = useMemo(() => storedEvents.map(event => ({ ...event, status: effectiveEventStatus(event, clock) })), [storedEvents, clock]);
+
   // Navigation & View State
   const [viewMode, setViewMode] = useState<ViewMode>('calendar');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'ongoing' | 'completed' | 'draft'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'ongoing' | 'completed' | 'draft' | 'cancelled'>('all');
   const [showWeeklyServices, setShowWeeklyServices] = useState(false);
 
   // Calendar Date State (defaults to current month)
@@ -74,24 +81,30 @@ export const EventsPage: React.FC = () => {
   const [scheduleDefaultDate, setScheduleDefaultDate] = useState<string | undefined>(undefined);
   const [selectedEventForFlyer, setSelectedEventForFlyer] = useState<ChurchEvent | null>(null);
 
+  useEffect(() => { setSelectedEventForDetail(null); setEventToEdit(null); setIsScheduleModalOpen(false); setSelectedEventForFlyer(null); }, [currentUser.id]);
+
   // Day inspection drawer/modal
   const [inspectedDate, setInspectedDate] = useState<string | null>(null);
+
+  const dayPanel = useModalFocus(!!inspectedDate && !selectedEventForDetail && !isScheduleModalOpen, () => setInspectedDate(null));
 
   // Notification / toast feedback
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
   const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    setToastMessage(msg); clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMessage(null), 3000);
   };
 
   // Calendar Navigation
   const prevMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
+    setCurrentDate(new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth() - 1, 1)));
   };
 
   const nextMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+    setCurrentDate(new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth() + 1, 1)));
   };
 
   const jumpToToday = () => {
@@ -126,43 +139,29 @@ export const EventsPage: React.FC = () => {
     const upcoming = events
       .filter((e) => e.status === 'upcoming' || e.status === 'ongoing')
       .sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime());
-    return upcoming[0] || events[0];
+    return upcoming[0];
   }, [events]);
 
   // Calendar Grid Computations
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
+  const year = currentDate.getUTCFullYear();
+  const month = currentDate.getUTCMonth();
 
-  const monthName = currentDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  const monthName = currentDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'Africa/Accra' });
 
-  const firstDayOfMonth = new Date(year, month, 1).getDay(); // 0 is Sunday
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const daysInPrevMonth = new Date(year, month, 0).getDate();
+  const firstDayOfMonth = new Date(Date.UTC(year, month, 1)).getUTCDay(); // 0 is Sunday
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const daysInPrevMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
 
   // Map events to date strings
   const eventsByDate = useMemo(() => {
     const map: Record<string, ChurchEvent[]> = {};
-    events.forEach((evt) => {
-      // If multi-day, populate across range
-      const start = new Date(evt.start_date);
-      const end = new Date(evt.end_date || evt.start_date);
-
-      // Loop days
-      const cur = new Date(start);
-      while (cur <= end) {
-        const y = cur.getFullYear();
-        const m = String(cur.getMonth() + 1).padStart(2, '0');
-        const d = String(cur.getDate()).padStart(2, '0');
-        const dKey = `${y}-${m}-${d}`;
-        if (!map[dKey]) map[dKey] = [];
-        if (!map[dKey].some((x) => x.id === evt.id)) {
-          map[dKey].push(evt);
-        }
-        cur.setDate(cur.getDate() + 1);
-      }
-    });
+    // Only inspect visible month dates; a long multi-day event cannot create an unbounded loop.
+    for (let day = 1; day <= daysInMonth; day++) {
+      const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      map[key] = filteredEvents.filter(event => event.start_date <= key && (event.end_date || event.start_date) >= key);
+    }
     return map;
-  }, [events]);
+  }, [filteredEvents, year, month, daysInMonth]);
 
   // Recurring weekly services mapping dynamically loaded from services context
   const regularServicesByDayOfWeek = useMemo(() => {
@@ -187,24 +186,11 @@ export const EventsPage: React.FC = () => {
       sat: 6,
     };
 
-    if (services && services.length > 0) {
-      services.filter((s) => s.is_active !== false).forEach((s) => {
-        const dayIdx = dayNameMap[s.day_of_week?.toLowerCase().trim()] ?? 0;
-        map[dayIdx].push({
-          name: s.name,
-          time: `${s.start_time || '08:00'} - ${s.end_time || '11:00'}`,
-          venue: s.venue || settings.church_name || 'GWCC Sanctuary',
-        });
-      });
-    } else {
-      // Standard Greater Works City Church weekly liturgical schedule defaults
-      map[0] = [
-        { name: 'Sunday 1st Service', time: '07:00 - 09:00', venue: 'GWCC Sanctuary' },
-        { name: 'Sunday 2nd Service', time: '09:30 - 12:30', venue: 'GWCC Sanctuary' },
-      ];
-      map[3] = [{ name: 'Midweek Miracle & Communion', time: '18:30 - 20:30', venue: 'GWCC Sanctuary' }];
-      map[5] = [{ name: 'Friday Breakthrough & Deliverance', time: '19:00 - 21:00', venue: 'GWCC Sanctuary' }];
-    }
+    services.filter(service => service.is_active !== false).forEach(service => {
+      const day = dayNameMap[service.day_of_week?.toLowerCase().trim()];
+      if (day === undefined) return;
+      map[day].push({ name: service.name, time: `${service.start_time || 'Time to be confirmed'} - ${service.end_time || ''}`, venue: service.venue || 'Venue to be confirmed' });
+    });
 
     return map;
   }, [services, settings.church_name]);
@@ -212,9 +198,9 @@ export const EventsPage: React.FC = () => {
   // Compute countdown for spotlight
   const getCountdownText = (startDateStr: string) => {
     const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const today = Date.parse(`${ghanaToday()}T00:00:00Z`);
     const targetParts = startDateStr.split('-').map(Number);
-    const target = new Date(targetParts[0], (targetParts[1] || 1) - 1, targetParts[2] || 1).getTime();
+    const target = Date.UTC(targetParts[0], (targetParts[1] || 1) - 1, targetParts[2] || 1);
     const diffDays = Math.ceil((target - today) / (1000 * 60 * 60 * 24));
 
     if (diffDays === 0) return 'Happening Today';
@@ -226,11 +212,11 @@ export const EventsPage: React.FC = () => {
 
   // Quick stats
   const totalUpcoming = events.filter((e) => e.status === 'upcoming' || e.status === 'ongoing').length;
-  const totalRsvps = events.reduce((sum, e) => sum + (e.attendees?.length || e.registration_count || 0), 0);
+  const totalRsvps = events.reduce((sum, e) => sum + (e.attendees?.length ?? e.registration_count ?? 0), 0);
   const totalExpected = events.reduce((sum, e) => sum + (e.expected_attendance || 0), 0);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0 w-full">
       {/* Toast Alert */}
       {toastMessage && (
         <div className="fixed bottom-5 right-5 z-50 px-4 py-2.5 bg-slate-900 text-white text-xs font-semibold rounded-xl shadow-2xl border border-slate-700 flex items-center gap-2 animate-in slide-in-from-bottom-2">
@@ -242,8 +228,8 @@ export const EventsPage: React.FC = () => {
       {/* TOP HEADER */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <CalendarCheck className="w-6 h-6 text-rose-800" />
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2 min-w-0 break-words">
+            <CalendarCheck className="w-6 h-6 text-rose-800 shrink-0" />
             Events & Ecclesiastical Calendar
           </h1>
           <p className="text-xs text-slate-500">
@@ -335,10 +321,10 @@ export const EventsPage: React.FC = () => {
 
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     const text = generateWhatsAppAnnouncement(spotlightEvent, settings.church_name);
-                    navigator.clipboard.writeText(text);
-                    showToast('WhatsApp announcement copied to clipboard!');
+                    try { await navigator.clipboard.writeText(text);
+                    showToast('WhatsApp announcement copied to clipboard!'); } catch { showToast('Copy failed. Open Share and select the announcement text.'); }
                   }}
                   className="px-3 py-1.5 bg-rose-800/80 hover:bg-rose-800 text-white text-xs font-medium rounded-lg border border-rose-700/60 transition flex items-center gap-1.5"
                   title="Share WhatsApp announcement"
@@ -414,7 +400,7 @@ export const EventsPage: React.FC = () => {
           </div>
 
           {/* View Mode & Toggles */}
-          <div className="flex items-center gap-2 overflow-x-auto">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             {/* Weekly Services Toggle */}
             <button
               onClick={() => setShowWeeklyServices(!showWeeklyServices)}
@@ -432,7 +418,7 @@ export const EventsPage: React.FC = () => {
             {/* View Switcher */}
             <div className="p-1 bg-slate-100 rounded-lg flex items-center border border-slate-200 text-xs">
               <button
-                onClick={() => setViewMode('calendar')}
+                aria-label="Month Grid" onClick={() => setViewMode('calendar')}
                 className={`px-2.5 py-1 rounded-md font-semibold flex items-center gap-1 transition ${
                   viewMode === 'calendar'
                     ? 'bg-white text-rose-900 shadow-xs'
@@ -443,7 +429,7 @@ export const EventsPage: React.FC = () => {
                 <span className="hidden sm:inline">Month Grid</span>
               </button>
               <button
-                onClick={() => setViewMode('agenda')}
+                aria-label="Agenda" onClick={() => setViewMode('agenda')}
                 className={`px-2.5 py-1 rounded-md font-semibold flex items-center gap-1 transition ${
                   viewMode === 'agenda'
                     ? 'bg-white text-rose-900 shadow-xs'
@@ -454,7 +440,7 @@ export const EventsPage: React.FC = () => {
                 <span className="hidden sm:inline">Agenda</span>
               </button>
               <button
-                onClick={() => setViewMode('cards')}
+                aria-label="Cards" onClick={() => setViewMode('cards')}
                 className={`px-2.5 py-1 rounded-md font-semibold flex items-center gap-1 transition ${
                   viewMode === 'cards'
                     ? 'bg-white text-rose-900 shadow-xs'
@@ -468,8 +454,14 @@ export const EventsPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Category Segmented Filter Tabs */}
-        <div role="tablist" aria-label="Event categories" className="flex items-center gap-1.5 overflow-x-auto pt-1 no-scrollbar border-t border-slate-100">
+        <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">Status
+        <select aria-label="Event status" value={statusFilter} onChange={event => setStatusFilter(event.target.value as typeof statusFilter)} className="p-1.5 border border-slate-300 rounded-lg">
+          <option value="all">All statuses</option>
+          {(['upcoming','ongoing','completed','draft','cancelled'] as const).map(status => <option key={status} value={status}>{status}</option>)}
+        </select>
+      </label>
+      {/* Category Segmented Filter Tabs */}
+        <div role="tablist" aria-label="Event categories" className="flex items-center gap-1.5 overflow-x-auto max-w-full min-w-0 pt-1 no-scrollbar border-t border-slate-100">
           {CATEGORY_TABS.map((tab) => {
             const isActive = selectedCategory === tab.id;
             return (
@@ -545,7 +537,7 @@ export const EventsPage: React.FC = () => {
               return (
                 <div
                   key={`prev-${i}`}
-                  className="min-h-[100px] sm:min-h-[115px] p-1.5 sm:p-2 bg-slate-50/50 text-slate-300 text-xs"
+                  className="min-w-0 min-h-[100px] sm:min-h-[115px] p-1.5 sm:p-2 bg-slate-50/50 text-slate-300 text-xs"
                 >
                   <span className="font-mono">{dayNum}</span>
                 </div>
@@ -556,20 +548,22 @@ export const EventsPage: React.FC = () => {
             {Array.from({ length: daysInMonth }).map((_, i) => {
               const dayNum = i + 1;
               const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
-              const dayOfWeek = new Date(year, month, dayNum).getDay();
+              const dayOfWeek = new Date(Date.UTC(year, month, dayNum)).getUTCDay();
               const now = new Date();
               const isToday =
-                year === now.getFullYear() &&
-                month === now.getMonth() &&
-                dayNum === now.getDate();
+                year === now.getUTCFullYear() &&
+                month === now.getUTCMonth() &&
+                dayNum === now.getUTCDate();
               const dayEvents = eventsByDate[dateStr] || [];
               const weeklyServicesForDay = showWeeklyServices ? regularServicesByDayOfWeek[dayOfWeek] || [] : [];
 
               return (
                 <div
                   key={`day-${dayNum}`}
+                  tabIndex={0} aria-label={`View schedule for ${dateStr}`}
+                  onKeyDown={event => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); setInspectedDate(dateStr); } }}
                   onClick={() => setInspectedDate(dateStr)}
-                  className={`min-h-[100px] sm:min-h-[115px] p-1.5 sm:p-2 bg-white transition hover:bg-rose-50/30 cursor-pointer flex flex-col justify-between group ${
+                  className={`min-w-0 min-h-[100px] sm:min-h-[115px] p-1.5 sm:p-2 bg-white transition hover:bg-rose-50/30 cursor-pointer flex flex-col justify-between group ${
                     isToday ? 'bg-rose-50/40 ring-2 ring-rose-600/20 inset-0' : ''
                   }`}
                 >
@@ -683,20 +677,20 @@ export const EventsPage: React.FC = () => {
                         {/* Big Date Badge */}
                         <div className="w-16 h-16 rounded-xl bg-slate-900 text-white flex flex-col items-center justify-center shrink-0">
                           <span className="text-[10px] uppercase font-bold text-rose-300">
-                            {new Date(evt.start_date).toLocaleDateString('en-GB', { month: 'short' })}
+                            {new Date(evt.start_date).toLocaleDateString('en-GB', { month: 'short', timeZone: 'Africa/Accra' })}
                           </span>
                           <span className="text-xl font-black font-mono leading-none">
-                            {new Date(evt.start_date).getDate()}
+                            {new Date(evt.start_date).getUTCDate()}
                           </span>
                           <span className="text-[9px] text-slate-400">
-                            {new Date(evt.start_date).toLocaleDateString('en-GB', { weekday: 'short' })}
+                            {new Date(evt.start_date).toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'Africa/Accra' })}
                           </span>
                         </div>
 
                         <div className="space-y-1">
                           <div className="flex items-center gap-2 text-xs">
                             <span className="text-[10px] font-bold uppercase tracking-wider text-rose-800">
-                              {evt.event_type.replace('_', ' ')}
+                              {(evt.event_type || 'special').replace('_', ' ')}
                             </span>
                             <span className="text-slate-300">·</span>
                             <span className="text-[10px] font-bold uppercase px-2 py-0.2 rounded bg-slate-100 text-slate-700">
@@ -778,7 +772,7 @@ export const EventsPage: React.FC = () => {
                 <div className="space-y-2">
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-rose-50 text-rose-800 border border-rose-200">
-                      {evt.event_type.replace('_', ' ')}
+                      {(evt.event_type || 'special').replace('_', ' ')}
                     </span>
                     <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
                       {evt.status}
@@ -819,7 +813,7 @@ export const EventsPage: React.FC = () => {
                   <div className="flex items-center justify-between gap-2 pt-1">
                     <span className="flex items-center gap-1 truncate text-[11px]">
                       <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span className="truncate">{evt.venue.split(',')[0]}</span>
+                      <span className="truncate">{(evt.venue || 'Venue to be confirmed').split(',')[0]}</span>
                     </span>
 
                     <button
@@ -842,13 +836,13 @@ export const EventsPage: React.FC = () => {
       {/* DATE INSPECTION MODAL (When clicking a day in the monthly calendar) */}
       {inspectedDate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+          <div ref={dayPanel} role="dialog" aria-modal="true" aria-label="Day schedule" className="relative w-full min-w-0 max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
             <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
               <div>
                 <span className="text-[10px] uppercase font-bold text-rose-300">Day Schedule</span>
                 <h3 className="text-base font-bold text-white">
                   {new Date(inspectedDate).toLocaleDateString('en-GB', {
-                    weekday: 'long',
+                    weekday: 'long', timeZone: 'Africa/Accra',
                     day: 'numeric',
                     month: 'long',
                     year: 'numeric',
@@ -856,7 +850,7 @@ export const EventsPage: React.FC = () => {
                 </h3>
               </div>
               <button
-                onClick={() => setInspectedDate(null)}
+                aria-label="Close day schedule" onClick={() => setInspectedDate(null)}
                 className="p-1 text-white/70 hover:text-white rounded-lg transition"
               >
                 ✕
@@ -882,7 +876,7 @@ export const EventsPage: React.FC = () => {
                     >
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-bold uppercase text-rose-800">
-                          {evt.event_type.replace('_', ' ')}
+                          {(evt.event_type || 'special').replace('_', ' ')}
                         </span>
                         <span className="text-xs font-mono font-semibold text-slate-600">
                           {evt.start_time} - {evt.end_time}
@@ -904,7 +898,7 @@ export const EventsPage: React.FC = () => {
               {/* Schedule on this date button */}
               <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
                 <button
-                  onClick={() => setInspectedDate(null)}
+                  aria-label="Close day schedule" onClick={() => setInspectedDate(null)}
                   className="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900"
                 >
                   Close
@@ -935,10 +929,10 @@ export const EventsPage: React.FC = () => {
         <EventDetailModal
           isOpen={!!selectedEventForDetail}
           onClose={() => setSelectedEventForDetail(null)}
-          event={selectedEventForDetail}
+          event={storedEvents.find(event => event.id === selectedEventForDetail?.id) || null}
           onEdit={(evt) => {
             setSelectedEventForDetail(null);
-            setEventToEdit(evt);
+            setEventToEdit(storedEvents.find(event => event.id === evt.id) || null);
             setIsScheduleModalOpen(true);
           }}
         />

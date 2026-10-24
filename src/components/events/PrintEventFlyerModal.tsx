@@ -3,6 +3,8 @@ import { X, Printer, Calendar, Clock, MapPin, Sparkles, User, HeartHandshake, Bo
 import { ChurchEvent } from '../../types/database.types';
 import { useChurchData } from '../../contexts/ChurchDataContext';
 
+import { useModalFocus } from '../../hooks/useModalFocus';
+
 interface PrintEventFlyerModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -16,6 +18,7 @@ export const PrintEventFlyerModal: React.FC<PrintEventFlyerModalProps> = ({
 }) => {
   const { settings } = useChurchData();
 
+  const panel = useModalFocus(isOpen, onClose);
   if (!isOpen) return null;
 
   const handlePrint = () => {
@@ -25,7 +28,7 @@ export const PrintEventFlyerModal: React.FC<PrintEventFlyerModalProps> = ({
   const formatDate = (dateStr: string) => {
     try {
       return new Date(dateStr).toLocaleDateString('en-GB', {
-        weekday: 'long',
+        weekday: 'long', timeZone: 'Africa/Accra',
         day: 'numeric',
         month: 'long',
         year: 'numeric',
@@ -39,7 +42,7 @@ export const PrintEventFlyerModal: React.FC<PrintEventFlyerModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-150">
-      <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+      <div ref={panel} role="dialog" aria-modal="true" aria-label="Event flyer" className="relative w-full min-w-0 max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
         {/* Screen Header Bar */}
         <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between shrink-0 print:hidden">
           <div className="flex items-center gap-2">
@@ -70,6 +73,7 @@ export const PrintEventFlyerModal: React.FC<PrintEventFlyerModalProps> = ({
         {/* PRINTABLE CANVAS */}
         <div className="p-6 sm:p-10 overflow-y-auto print:p-0 print:m-0 space-y-6 text-slate-800 bg-white">
           {/* Church Crest & Header */}
+          {['draft','cancelled'].includes(event.status) && <p className="text-center font-bold uppercase p-2">{event.status}</p>}
           <div className="text-center pb-5 border-b-2 border-rose-900/20 space-y-1">
             <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-rose-950 text-white font-serif font-black text-xl shadow-md mb-2">
               GW
@@ -81,7 +85,7 @@ export const PrintEventFlyerModal: React.FC<PrintEventFlyerModalProps> = ({
               {settings.tagline || 'Raising Generations of Impact, Dominion & Supernatural Exploits'}
             </p>
             <p className="text-[11px] text-slate-500">
-              {settings.address || 'Joma, Ga South Municipal, Greater Accra'} · GPS: GA-184-2900 · Tel: {settings.phone || '+233 24 400 0000'}
+              {settings.address}{settings.gps_address ? ` · Church office GPS: ${settings.gps_address}` : ''}{settings.phone ? ` · Tel: ${settings.phone}` : ''}
             </p>
           </div>
 

@@ -1,3 +1,4 @@
+import {checkEvents} from './events-browser-checks.mjs';
 import {checkWelfareFunds} from './welfare-funds-browser-checks.mjs';
 import {checkAppReviewCorrections} from './app-review-browser-checks.mjs';
 import {checkAuthLinks} from './auth-links-browser-checks.mjs';
@@ -38,7 +39,9 @@ try{
   }
   const invalidJson=await fetch(`${origin}/api/staff`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{bad'});assert.equal(invalidJson.status,400);
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{channel:'chromium'}),args:['--no-sandbox']});
-  if(process.env.TEST_SCOPE==='welfare-funds'){
+  if(process.env.TEST_SCOPE==='events'){
+    await checkEvents(browser,{origin});
+  }else if(process.env.TEST_SCOPE==='welfare-funds'){
     await checkWelfareFunds(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   }else if(process.env.TEST_SCOPE==='ai'){
     await checkAiAgent(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
@@ -241,6 +244,7 @@ try{
   await checkTasks(browser,{origin,settings:initialSettings});
   await checkAppReviewCorrections(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkAiAgent(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  await checkEvents(browser,{origin});
   await checkWelfareFunds(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   console.info(`Browser smoke passed: mobile authorization, ${pages.length} signed-in pages, member invitation/linking/suspension guards/password help/password setup/portal, welfare arrears/defaulter filters/CSV/partial claim approval/member portal, durable draft retry, and logout cache clearing.`);
   }

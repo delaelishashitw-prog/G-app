@@ -1145,7 +1145,7 @@ test('member RSVP saves canonical identity, preserves other attendees and safely
   const register=()=>db.query("SELECT public.gwcc_member_rsvp('rsvp-event') result");
   try{
     await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,phone,email,auth_user_id) VALUES('rsvp-own','GWCC-RSVP-OWN','Own','Member','0240000001','own@example.test','${member}'),('rsvp-other','GWCC-RSVP-OTHER','Other','Member','0240000002','other@example.test','${other}');
-      INSERT INTO public.events(id,title,event_type,start_date,end_date,start_time,end_time,budget,attendees) VALUES('rsvp-event','Preserved event','conference',current_date+10,current_date+10,'18:00','20:00',1500,'[{"id":"prior","member_id":"unrelated","name":"Another Member","phone":"0240000003","checked_in":true}]');`);
+      INSERT INTO public.events(id,title,event_type,start_date,end_date,start_time,end_time,budget,requires_registration,attendees) VALUES('rsvp-event','Preserved event','conference',current_date+10,current_date+10,'18:00','20:00',1500,true,'[{"id":"prior","member_id":"unrelated","name":"Another Member","phone":"0240000003","checked_in":true}]');`);
     const before=(await db.query("SELECT attendees->0 prior FROM public.events WHERE id='rsvp-event'")).rows[0].prior;
     await asUser(db,member,async()=>{
       const first=(await register()).rows[0].result;
@@ -1442,4 +1442,64 @@ test('welfare fund permissions deny members, unreviewed and disabled accounts, a
     await asUser(db,other,async()=>{assert.equal((await select()).rows.length,0);await assert.rejects(apply(db,[upsert('welfare_fund_receipts',receipt)]),/authorization/);});
     await db.exec('SET ROLE anon');await assert.rejects(select(),/permission denied/);
   }finally{await db.close();}
+});
+
+const validEvent=(id,extra={})=>({id,title:'Synthetic safe event',event_type:'conference',start_date:'2099-10-24',end_date:'2099-10-24',start_time:'18:00',end_time:'20:00',venue:'Synthetic venue',status:'upcoming',requires_registration:true,attendees:[],budget:0,expected_attendance:0,...extra});
+test('event writes validate schedules and amounts, require versions, and preserve a concurrent member RSVP',async()=>{
+ const db=await setupDatabase();try{
+  await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,phone,auth_user_id) VALUES('event-concurrent','GWCC-CONCURRENT','Own','Member','0240000001','${member}');`);
+  let original;
+  await asUser(db,root,async()=>{
+   for(const [index,changes] of [{end_date:'2099-10-23'},{start_time:'garbage'},{budget:-5},{budget:0.001},{expected_attendance:-1},{attendees:{}},{attendees:[{id:'bad',name:'Spoofed',checked_in:'yes'}]}].entries())await assert.rejects(apply(db,[upsert('events',validEvent('invalid-event-'+index,changes))]));
+   original=(await apply(db,[upsert('events',validEvent('concurrent-event'))])).rows[0].result[0].record;
+   await assert.rejects(apply(db,[upsert('events',{...original,title:'Unversioned overwrite'})]),/event version is required/);
+  });
+  await asUser(db,member,()=>db.query("SELECT public.gwcc_member_rsvp('concurrent-event')"));
+  await asUser(db,root,async()=>{
+   await assert.rejects(apply(db,[upsert('events',{...original,title:'Stale overwrite'},original.updated_at)]),/changed on another device/);
+   const current=(await db.query("SELECT to_jsonb(e) doc FROM public.events e WHERE id='concurrent-event'")).rows[0].doc;
+   assert.equal(current.attendees.length,1);
+   const saved=(await apply(db,[upsert('events',{id:current.id,title:'Fresh safe edit'},current.updated_at)])).rows[0].result[0].record;
+   assert.equal(saved.attendees.length,1);assert.equal(saved.expected_attendance,0);assert.equal(saved.title,'Fresh safe edit');
+   await assert.rejects(apply(db,[{table:'events',id:saved.id,operation:'delete',expected_updated_at:saved.updated_at}]),/must be cancelled/);
+   const checked=(await apply(db,[upsert('events',{...saved,attendees:saved.attendees.map(person=>({...person,checked_in:true}))},saved.updated_at)])).rows[0].result[0].record;
+   await assert.rejects(apply(db,[upsert('events',{...checked,attendees:[]},checked.updated_at)]),/checked-in person cannot be removed/);
+   const cancelled=(await apply(db,[upsert('events',{...checked,status:'cancelled'},checked.updated_at)])).rows[0].result[0].record;
+   assert.equal(cancelled.attendees[0].checked_in,true);
+  });
+ }finally{await db.close();}
+});
+test('drafts stay private and members cannot RSVP when disabled or already ended today',async()=>{
+ const db=await setupDatabase();try{
+  await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,phone,auth_user_id) VALUES('event-rules','GWCC-RULES','Own','Member','0240000001','${member}');`);
+  await asUser(db,root,async()=>{
+   for(const row of [validEvent('private-draft',{status:'draft'}),validEvent('disabled-rsvp',{requires_registration:false}),validEvent('open-rsvp'),validEvent('ended-today',{start_date:new Date().toISOString().slice(0,10),end_date:new Date().toISOString().slice(0,10),start_time:'00:00',end_time:'00:01'})])await apply(db,[upsert('events',row)]);
+  });
+  await asUser(db,member,async()=>{
+   const rows=(await db.query('SELECT public.gwcc_member_events() doc')).rows[0].doc;
+   assert.ok(!rows.some(row=>row.id==='private-draft'));
+   for(const id of ['private-draft','disabled-rsvp','ended-today'])await assert.rejects(db.query('SELECT public.gwcc_member_rsvp($1)',[id]),/no longer available|Registration is closed/);
+   const first=(await db.query("SELECT public.gwcc_member_rsvp('open-rsvp') doc")).rows[0].doc;
+   assert.equal(first.attendees.length,1);
+   assert.deepEqual((await db.query("SELECT public.gwcc_member_rsvp('open-rsvp') doc")).rows[0].doc,first);
+  });
+  await db.exec("UPDATE public.events SET status='draft' WHERE id='open-rsvp'");
+  await asUser(db,member,()=>assert.rejects(db.query("SELECT public.gwcc_member_rsvp('open-rsvp')"),/no longer available/));
+ }finally{await db.close();}
+});
+test('staff event registration canonicalizes members, prevents alias duplicates, and audits removals',async()=>{
+ const db=await setupDatabase();try{
+  await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,phone) VALUES('staff-event-person','GWCC-STAFF-EVENT','Canonical','Member','0240000001');`);
+  await asUser(db,root,async()=>{
+   let row=(await apply(db,[upsert('events',validEvent('staff-event'))])).rows[0].result[0].record;
+   row=(await apply(db,[upsert('events',{...row,attendees:[{id:'att-one',member_id:'GWCC-STAFF-EVENT',name:'Spoofed name',registered_at:'2000-01-01',checked_in:false}]},row.updated_at)])).rows[0].result[0].record;
+   assert.equal(row.attendees[0].member_id,'staff-event-person');assert.equal(row.attendees[0].name,'Canonical Member');assert.notEqual(row.attendees[0].registered_at,'2000-01-01');
+   await assert.rejects(apply(db,[upsert('events',{...row,attendees:[...row.attendees,{id:'att-two',member_id:'GWCC-STAFF-EVENT',name:'Duplicate',checked_in:false}]},row.updated_at)]),/already registered/);
+   await assert.rejects(apply(db,[upsert('events',{...row,attendees:row.attendees.map(person=>({...person,member_id:'someone-else'}))},row.updated_at)]),/identity and registration date cannot/);
+   row=(await apply(db,[upsert('events',{...row,attendees:[]},row.updated_at)])).rows[0].result[0].record;
+   assert.equal(row.registration_count,0);
+   const audit=(await db.query("SELECT details FROM public.audit_logs WHERE action='REMOVE_EVENT_ATTENDEE' AND record_id='staff-event'")).rows;
+   assert.equal(audit.length,1);assert.match(audit[0].details,/Canonical Member/);
+  });
+ }finally{await db.close();}
 });
