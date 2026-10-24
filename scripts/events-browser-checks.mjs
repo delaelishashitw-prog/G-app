@@ -38,6 +38,8 @@ async function setup(role='super_admin',width=1440,timeZone='Africa/Accra'){
   await route.fulfill({status:200,headers,body:JSON.stringify(result)});
  });
  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
+ // Keep same-day registration open regardless of the wall-clock time running CI.
+ await page.clock.setFixedTime(new Date(today+'T12:00:00Z'));
  await page.goto(origin+'/events');await page.getByRole('button',{name:'Schedule Program',exact:true}).waitFor();await page.getByText('Synthetic Conference Alpha',{exact:true}).first().waitFor();
  return{context,page,data,requests,errors,rejectWrites:value=>{reject=value;}};
 }

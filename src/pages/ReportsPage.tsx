@@ -1,5 +1,5 @@
-import { isActiveTransaction } from '../lib/ledgerUtils';
-import { reportExpenses } from '../lib/reportData';
+import {buildReportSnapshot, reportDatePreset, reportPeriodLabel, reportFilterLabel, type ReportFilters} from '../lib/reportSnapshot';
+import {buildCsv, ghanaToday} from '../lib/financeViewUtils';
 import React, { useState, useMemo } from 'react';
 import {
   BarChart3,
@@ -40,7 +40,6 @@ import { useToast } from '../contexts/ToastContext';
 import { ReportPdfExportModal } from '../components/ReportPdfExportModal';
 import { ReportsVisualChartsSection } from '../components/ReportsVisualChartsSection';
 import { ReportsSummaryCards } from '../components/ReportsSummaryCards';
-import { getLocalDateString } from '../lib/attendanceDateUtils';
 import {
   ReportTemplateType,
   generateChurchReportPdf,
@@ -49,23 +48,21 @@ import {
 
 export const ReportsPage: React.FC = () => {
   const {
-    members,
-    visitors,
-    attendance,
-    headcounts,
+    members: allMembers,
+    visitors: allVisitors,
+    attendance: allAttendance,
+    headcounts: allHeadcounts,
     giving:allGiving,
     expenses:legacyExpenses,
     churchFinances,
-    pledges,
+    pledges: allPledges,
     settings,
-    smallGroups,
+    smallGroups: allSmallGroups,
     ministries,
     isRefreshing,
     lastRefreshedAt,
     refreshData,
   } = useChurchData();
-  const giving=useMemo(()=>allGiving.filter(isActiveTransaction),[allGiving]);
-  const expenses=useMemo(()=>reportExpenses(legacyExpenses,churchFinances),[legacyExpenses,churchFinances]);
   const { currentUser } = useAuth();
   const { success, warning, error: toastError } = useToast();
 
@@ -73,10 +70,10 @@ export const ReportsPage: React.FC = () => {
     'financial' | 'financial_summary' | 'membership' | 'attendance' | 'visitors' | 'small_groups' | 'pledges_audit'
   >('financial');
 
-  const currentYear = new Date().getFullYear();
+  const currentYear = Number(ghanaToday().slice(0,4));
   const [activeDatePreset, setActiveDatePreset] = useState<'this_month' | 'last_month' | 'q3' | 'ytd' | 'all' | 'custom'>('ytd');
   const [startDate, setStartDate] = useState(`${currentYear}-01-01`);
-  const [endDate, setEndDate] = useState(`${currentYear}-12-31`);
+  const [endDate, setEndDate] = useState(ghanaToday);
   
   // Table search & category filter
   const [tableSearch, setTableSearch] = useState('');
@@ -87,6 +84,7 @@ export const ReportsPage: React.FC = () => {
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [modalDefaultTemplate, setModalDefaultTemplate] = useState<ReportTemplateType>('financial_executive_summary');
   const [isQuickDownloading, setIsQuickDownloading] = useState(false);
+  const [modalFilters, setModalFilters] = useState<ReportFilters>({});
 
   // Refresh handler
   const handleRefresh = async () => {
@@ -98,272 +96,44 @@ export const ReportsPage: React.FC = () => {
     }
   };
 
-  // Date Preset Switcher
+  const sources = useMemo(() => ({members: allMembers, visitors: allVisitors, attendance: allAttendance, headcounts: allHeadcounts,
+    giving: allGiving, expenses: legacyExpenses, churchFinances, pledges: allPledges, smallGroups: allSmallGroups, ministries}),
+    [allMembers, allVisitors, allAttendance, allHeadcounts, allGiving, legacyExpenses, churchFinances, allPledges, allSmallGroups, ministries]);
+  const financialReport = reportType === 'financial' || reportType === 'financial_summary';
+  const filters: ReportFilters = {startDate, endDate, search: tableSearch, category: financialReport ? financialCategoryFilter : 'ALL',
+    paymentMethod: financialReport ? paymentMethodFilter : 'ALL', ministry: reportType === 'membership' ? membershipMinistryFilter : 'ALL'};
+  const snapshot = useMemo(() => buildReportSnapshot(sources, filters),
+    [sources, startDate, endDate, tableSearch, financialReport, financialCategoryFilter, paymentMethodFilter, membershipMinistryFilter, reportType]);
+  const {members, visitors, attendance, headcounts, expenses, pledges, smallGroups} = snapshot;
+  const activeMembers = members, filteredVisitors = visitors, filteredAttendance = attendance, filteredExpenses = expenses;
+  const filteredGiving = snapshot.receipts;
+  const {income: totalIncome, expenditure: totalExp, surplus: netSurplus, tithes: tithesTotal,
+    offerings: offeringsTotal, building: buildingFundTotal, otherGiving: otherGivingTotal,
+    averageWeeklyAttendance: averageWeeklyAttendanceCount, peakWeeklyAttendance: peakWeeklyAttendanceCount} = snapshot.totals;
+  const totalMembersCount = members.length;
+  const activeMembersCount = members.filter(member => member.status === 'active').length;
+  const monthlyIncomeTotal = totalIncome, monthlyTithesTotal = tithesTotal, monthlyOfferingsTotal = offeringsTotal, monthlyBuildingFundTotal = buildingFundTotal;
+  const netQuarterlyGrowthCount = members.filter(member => {
+    const date = (member.membership_date || member.date_joined || member.created_at || '').slice(0,10);
+    return date && (!startDate || date >= startDate) && (!endDate || date <= endDate);
+  }).length;
+  const givingCategories = [...new Set([...allGiving.map(row => row.category), ...churchFinances.map(row => row.category), ...legacyExpenses.map(row => row.category)])].sort();
+  const paymentMethods = [...new Set([...allGiving.map(row => row.payment_method), ...churchFinances.map(row => row.payment_method), ...legacyExpenses.map(row => row.payment_method)])].filter(Boolean).sort();
+  const paymentMethodBreakdown = filteredGiving.reduce((totals, row) => {
+    const method = (row.payment_method || '').toLowerCase();
+    const key = method.includes('momo') || method.includes('mobile') || method.includes('telecel') ? 'momo' : method.includes('bank') || method.includes('transfer') ? 'bank' : method === 'cash' ? 'cash' : 'other';
+    totals[key] += Math.round(row.amount * 100) / 100; return totals;
+  }, {momo: 0, cash: 0, bank: 0, other: 0});
   const handleDatePreset = (preset: 'this_month' | 'last_month' | 'q3' | 'ytd' | 'all') => {
-    setActiveDatePreset(preset);
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = now.getMonth();
-
-    if (preset === 'this_month') {
-      const first = new Date(y, m, 1);
-      const last = new Date(y, m + 1, 0);
-      setStartDate(getLocalDateString(first));
-      setEndDate(getLocalDateString(last));
-    } else if (preset === 'last_month') {
-      const first = new Date(y, m - 1, 1);
-      const last = new Date(y, m, 0);
-      setStartDate(getLocalDateString(first));
-      setEndDate(getLocalDateString(last));
-    } else if (preset === 'q3') {
-      setStartDate(`${y}-07-01`);
-      setEndDate(`${y}-09-30`);
-    } else if (preset === 'ytd') {
-      setStartDate(`${y}-01-01`);
-      setEndDate(`${y}-12-31`);
-    } else if (preset === 'all') {
-      setStartDate('2025-01-01');
-      setEndDate(`${y + 1}-12-31`);
-    }
+    const range = reportDatePreset(preset); setActiveDatePreset(preset); setStartDate(range.startDate); setEndDate(range.endDate);
   };
-
-  // Filtered dataset by date
-  const filteredGivingByDate = useMemo(() => {
-    return giving.filter((g) => {
-      if (startDate && g.date < startDate) return false;
-      if (endDate && g.date > endDate) return false;
-      return true;
-    });
-  }, [giving, startDate, endDate]);
-
-  // Further filtered giving by search & categories
-  const filteredGiving = useMemo(() => {
-    return filteredGivingByDate.filter((g) => {
-      if (financialCategoryFilter !== 'ALL' && g.category !== financialCategoryFilter) return false;
-      if (paymentMethodFilter !== 'ALL' && g.payment_method !== paymentMethodFilter) return false;
-      if (tableSearch.trim()) {
-        const q = tableSearch.toLowerCase();
-        const memberName = (g.member_name || g.donor_name || '').toLowerCase();
-        const ref = (g.reference_number || '').toLowerCase();
-        const cat = (g.category || '').toLowerCase();
-        return memberName.includes(q) || ref.includes(q) || cat.includes(q);
-      }
-      return true;
-    });
-  }, [filteredGivingByDate, financialCategoryFilter, paymentMethodFilter, tableSearch]);
-
-  const filteredExpenses = useMemo(() => {
-    return expenses.filter((e) => {
-      if (startDate && e.date < startDate) return false;
-      if (endDate && e.date > endDate) return false;
-      if (tableSearch.trim()) {
-        const q = tableSearch.toLowerCase();
-        return (
-          (e.category || '').toLowerCase().includes(q) ||
-          (e.title && e.title.toLowerCase().includes(q)) ||
-          (e.description && e.description.toLowerCase().includes(q))
-        );
-      }
-      return true;
-    });
-  }, [expenses, startDate, endDate, tableSearch]);
-
-  const filteredAttendance = useMemo(() => {
-    return attendance.filter((a) => {
-      if (startDate && a.date < startDate) return false;
-      if (endDate && a.date > endDate) return false;
-      if (tableSearch.trim()) {
-        const q = tableSearch.toLowerCase();
-        const name = (a.person_name || a.member_name || a.visitor_name || '').toLowerCase();
-        const svc = (a.service_name || '').toLowerCase();
-        return name.includes(q) || svc.includes(q);
-      }
-      return true;
-    });
-  }, [attendance, startDate, endDate, tableSearch]);
-
-  const filteredVisitors = useMemo(() => {
-    return visitors.filter((v) => {
-      if (startDate && v.visit_date < startDate) return false;
-      if (endDate && v.visit_date > endDate) return false;
-      if (tableSearch.trim()) {
-        const q = tableSearch.toLowerCase();
-        return (
-          (v.full_name || '').toLowerCase().includes(q) ||
-          (v.phone && v.phone.includes(q)) ||
-          (v.prayer_request && v.prayer_request.toLowerCase().includes(q))
-        );
-      }
-      return true;
-    });
-  }, [visitors, startDate, endDate, tableSearch]);
-
-  const activeMembers = useMemo(() => {
-    return members.filter((m) => {
-      if (m.is_archived) return false;
-      if (membershipMinistryFilter !== 'ALL' && m.ministry_name !== membershipMinistryFilter) return false;
-      if (tableSearch.trim()) {
-        const q = tableSearch.toLowerCase();
-        const fullName = `${m.first_name} ${m.last_name}`.toLowerCase();
-        const id = (m.member_id || '').toLowerCase();
-        const phone = (m.phone || '').toLowerCase();
-        return fullName.includes(q) || id.includes(q) || phone.includes(q);
-      }
-      return true;
-    });
-  }, [members, membershipMinistryFilter, tableSearch]);
-
-  // Financial aggregates: Member Giving vs Church Institutional Income
-  const totalMemberGiving = useMemo(
-    () => filteredGivingByDate.reduce((s, g) => s + g.amount, 0),
-    [filteredGivingByDate]
-  );
-  // Keep totalIncome for backwards compatibility mapped to member giving
-  const totalIncome = totalMemberGiving;
-
-  // Institutional Church Income (from dedicated churchFinances records)
-  const totalChurchIncome = useMemo(
-    () => (churchFinances || [])
-      .filter((f) => {
-        const matchDate = (!startDate || f.date >= startDate) && (!endDate || f.date <= endDate);
-        return matchDate && isActiveTransaction(f) && (f.transaction_type === 'income' || f.transaction_type === 'grant');
-      })
-      .reduce((s, f) => s + (Number(f.amount) || 0), 0),
-    [churchFinances, startDate, endDate]
-  );
-
-  const totalExp = useMemo(
-    () => filteredExpenses.reduce((s, e) => s + e.amount, 0),
-    [filteredExpenses]
-  );
-  const netSurplus = totalMemberGiving + totalChurchIncome - totalExp;
-
-  const tithesTotal = useMemo(
-    () =>
-      filteredGivingByDate
-        .filter((g) => (g.category || '').toLowerCase().includes('tithe'))
-        .reduce((s, g) => s + g.amount, 0),
-    [filteredGivingByDate]
-  );
-
-  const offeringsTotal = useMemo(
-    () =>
-      filteredGivingByDate
-        .filter((g) => (g.category || '').toLowerCase().includes('offering'))
-        .reduce((s, g) => s + g.amount, 0),
-    [filteredGivingByDate]
-  );
-
-  const buildingFundTotal = useMemo(
-    () =>
-      filteredGivingByDate
-        .filter((g) => (g.category || '').toLowerCase().includes('building'))
-        .reduce((s, g) => s + g.amount, 0),
-    [filteredGivingByDate]
-  );
-
-  const otherGivingTotal = totalIncome - (tithesTotal + offeringsTotal + buildingFundTotal);
-
-  // MoMo vs Cash vs Bank Breakdown
-  const paymentMethodBreakdown = useMemo(() => {
-    let momo = 0;
-    let cash = 0;
-    let bank = 0;
-    filteredGivingByDate.forEach((g) => {
-      const pm = (g.payment_method || '').toLowerCase();
-      if (pm.includes('momo') || pm.includes('mobile')) momo += g.amount;
-      else if (pm.includes('bank') || pm.includes('transfer')) bank += g.amount;
-      else cash += g.amount;
-    });
-    return { momo, cash, bank };
-  }, [filteredGivingByDate]);
-
-  // High-level executive summary metrics
-  const totalMembersCount = useMemo(() => {
-    const registered = members.filter((m) => !m.is_archived).length;
-    return registered;
-  }, [members]);
-
-  const activeMembersCount = useMemo(() => {
-    const active = members.filter((m) => m.status === 'active' && !m.is_archived).length;
-    return active;
-  }, [members]);
-
-  const monthlyIncomeTotal = useMemo(() => {
-    return filteredGivingByDate.reduce((s, g) => s + g.amount, 0);
-  }, [filteredGivingByDate]);
-
-  const monthlyTithesTotal = useMemo(() => {
-    return tithesTotal;
-  }, [tithesTotal]);
-
-  const monthlyOfferingsTotal = useMemo(() => {
-    return offeringsTotal;
-  }, [offeringsTotal]);
-
-  const monthlyBuildingFundTotal = useMemo(() => {
-    return buildingFundTotal;
-  }, [buildingFundTotal]);
-
-  const averageWeeklyAttendanceCount = useMemo(() => {
-    if (headcounts && headcounts.length > 0) {
-      const sum = headcounts.reduce(
-        (acc, h) =>
-          acc +
-          (h.total_auditorium ||
-            h.men + h.women + h.youth + h.children + h.visitors + h.ushers_protocol),
-        0
-      );
-      return Math.round(sum / headcounts.length);
-    }
-    if (attendance && attendance.length > 0) {
-      const dates = new Set(attendance.map((a) => a.date));
-      return Math.round(attendance.length / (dates.size || 1));
-    }
-    return 0;
-  }, [headcounts, attendance]);
-
-  const peakWeeklyAttendanceCount = useMemo(() => {
-    if (headcounts && headcounts.length > 0) {
-      return Math.max(
-        ...headcounts.map(
-          (h) =>
-            h.total_auditorium ||
-            h.men + h.women + h.youth + h.children + h.visitors + h.ushers_protocol
-        )
-      );
-    }
-    if (attendance && attendance.length > 0) {
-      const countsByDate = new Map<string, number>();
-      attendance.forEach((a) => {
-        countsByDate.set(a.date, (countsByDate.get(a.date) || 0) + 1);
-      });
-      return Math.max(...Array.from(countsByDate.values()));
-    }
-    return 0;
-  }, [headcounts, attendance]);
-
-  const netQuarterlyGrowthCount = useMemo(() => {
-    const now = new Date();
-    const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1).toISOString().split('T')[0];
-    const newMembers = members.filter((m) => {
-      const joinDate = m.membership_date || (m as any).date_joined || m.created_at;
-      return joinDate && joinDate >= threeMonthsAgo && !m.is_archived;
-    }).length;
-    const convertedSouls = visitors.filter((v) => v.follow_up_status === 'converted_to_member').length;
-    return newMembers > 0 ? newMembers : convertedSouls;
-  }, [members, visitors]);
-
-  // Giving categories list for filter
-  const givingCategories = useMemo(() => {
-    const set = new Set<string>();
-    giving.forEach((g) => set.add(g.category));
-    return Array.from(set);
-  }, [giving]);
+  const currentTemplate: ReportTemplateType = ({financial: 'financial_ledger', financial_summary: 'financial_executive_summary', membership: 'membership_roster',
+    attendance: 'attendance_register', visitors: 'visitor_follow_up', small_groups: 'small_groups', pledges_audit: 'pledges_audit'} as const)[reportType];
 
   // Quick Direct PDF download for the current view
   const handleQuickExportCurrentPdf = () => {
     try {
+      if (snapshot.error) throw new Error(snapshot.error);
       setIsQuickDownloading(true);
       let template: ReportTemplateType = 'financial_ledger';
       if (reportType === 'financial_summary') template = 'financial_executive_summary';
@@ -374,19 +144,9 @@ export const ReportsPage: React.FC = () => {
       else if (reportType === 'pledges_audit') template = 'pledges_audit';
 
       const doc = generateChurchReportPdf(
+        {...sources, settings, currentUser},
         {
-          settings,
-          members,
-          visitors,
-          attendance,
-          giving,
-          expenses,
-          pledges,
-          smallGroups,
-          ministries,
-          currentUser,
-        },
-        {
+          ...filters,
           template,
           startDate,
           endDate,
@@ -415,22 +175,36 @@ export const ReportsPage: React.FC = () => {
   };
 
   const handleOpenPdfModalWithTemplate = (template: ReportTemplateType) => {
+    setModalFilters(template === currentTemplate ? filters : {});
     setModalDefaultTemplate(template);
     setIsPdfModalOpen(true);
   };
 
   const handlePrint = () => {
+    if (snapshot.error) {toastError('Reporting dates', snapshot.error); return;}
     window.print();
   };
 
   const handleExportCSV = () => {
+    if (snapshot.error) {toastError('Reporting dates', snapshot.error); return;}
     let headers: string[] = [];
     let rows: (string | number)[][] = [];
     let filename = `GWCC_Report_${reportType}_${new Date().toISOString().split('T')[0]}.csv`;
 
-    if (reportType === 'financial' || reportType === 'financial_summary') {
-      headers = ['Date', 'Category', 'Donor / Member', 'Amount (GHS)', 'Method', 'Reference'];
+    if (reportType === 'financial_summary') {
+      headers = ['Section', 'Record ID', 'Date', 'Category', 'Payer / Payee', 'Amount (GHS)', 'Method', 'Reference'];
+      rows = [
+        ...filteredGiving.map(row => ['Income', row.record_id, row.date, row.category, row.member_name || row.donor_name || 'Anonymous', row.amount.toFixed(2), row.payment_method, row.reference_number || '']),
+        ...filteredExpenses.map(row => ['Expenditure', row.id, row.date, row.category, row.recipient || row.title || '', row.amount.toFixed(2), row.payment_method, row.reference_number || '']),
+        ['Summary', '', '', 'Total income', '', totalIncome.toFixed(2), '', ''],
+        ['Summary', '', '', 'Total expenditure', '', totalExp.toFixed(2), '', ''],
+        ['Summary', '', '', 'Net surplus / deficit', '', netSurplus.toFixed(2), '', ''],
+      ];
+    } else if (reportType === 'financial') {
+      headers = ['Source', 'Record ID', 'Date', 'Category', 'Donor / Member', 'Amount (GHS)', 'Method', 'Reference'];
       rows = filteredGiving.map((g) => [
+        g.source === 'church' ? 'Church income' : 'Member giving',
+        g.record_id,
         g.date,
         g.category,
         g.member_name || g.donor_name || 'Anonymous',
@@ -492,26 +266,19 @@ export const ReportsPage: React.FC = () => {
       ]);
     }
 
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map((r) => r.map((val) => `"${val}"`).join(','))].join('\n');
-
-    const encoded = encodeURI(csvContent);
-    const a = document.createElement('a');
-    a.setAttribute('href', encoded);
-    a.setAttribute('download', filename);
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const csvContent = buildCsv([headers, ...rows]);
+    const url = URL.createObjectURL(new Blob([csvContent], {type: 'text/csv;charset=utf-8;'}));
+    const a = document.createElement('a'); a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   return (
-    <div className="space-y-6 print-container">
+    <div className="min-w-0 space-y-6 print-container">
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 no-print">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-emerald-800 text-white flex items-center justify-center shadow-xs">
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 shrink-0 rounded-xl bg-emerald-800 text-white flex items-center justify-center shadow-xs">
               <BarChart3 className="w-5 h-5" />
             </div>
             <span>Reports & Executive Intelligence</span>
@@ -536,7 +303,7 @@ export const ReportsPage: React.FC = () => {
 
           {/* Print Button */}
           <button
-            onClick={handlePrint}
+            disabled={Boolean(snapshot.error)} onClick={handlePrint}
             className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
             title="Print this view or Save as PDF via browser"
           >
@@ -546,7 +313,7 @@ export const ReportsPage: React.FC = () => {
 
           {/* Export CSV Button */}
           <button
-            onClick={handleExportCSV}
+            disabled={Boolean(snapshot.error)} onClick={handleExportCSV}
             className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
             title="Download table data in CSV spreadsheet format"
           >
@@ -557,7 +324,7 @@ export const ReportsPage: React.FC = () => {
           {/* Quick PDF Export */}
           <button
             onClick={handleQuickExportCurrentPdf}
-            disabled={isQuickDownloading}
+            disabled={isQuickDownloading || Boolean(snapshot.error)}
             className="px-3.5 py-2 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 text-xs font-bold flex items-center gap-1.5 transition shadow-2xs cursor-pointer disabled:opacity-50"
             title="Quickly download the current table as a formatted PDF"
           >
@@ -586,19 +353,26 @@ export const ReportsPage: React.FC = () => {
           >
             <FileText className="w-4 h-4 text-emerald-200" />
             <span>Export Official PDF Report</span>
-            <span className="px-1.5 py-0.5 rounded bg-emerald-950/40 text-[10px] text-emerald-200 font-mono">
-              Vector
+            <span className="hidden sm:inline px-1.5 py-0.5 rounded bg-emerald-950/40 text-[10px] text-emerald-200 font-mono">
+              PDF
             </span>
           </button>
         </div>
       </div>
 
+      <div role="status" className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600">
+        Confirmed GHS records · {reportPeriodLabel(filters)} · {reportFilterLabel(filters)}. Pending changes, voided entries and internal transfers are excluded.
+        {snapshot.excludedCurrencyCount > 0 && <span className="block mt-1">{snapshot.excludedCurrencyCount} records in other currencies are excluded; review them in Finance without assuming an exchange rate.</span>}
+        {(reportType === 'membership' || reportType === 'small_groups') && <span className="block mt-1">Directory reports show current records. Dates apply to transactions, check-ins and visits.</span>}
+        {reportType === 'pledges_audit' && <span className="block mt-1">Dates select when pledges were created. Paid amounts and balances are current cumulative totals.</span>}
+      </div>
+      {snapshot.error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{snapshot.error}</p>}
       {/* High-Level Church Summary Metrics Cards */}
       <ReportsSummaryCards
         totalMembers={totalMembersCount}
         activeMembers={activeMembersCount}
         monthlyIncome={monthlyIncomeTotal}
-        incomeLabel={activeDatePreset === 'this_month' || activeDatePreset === 'last_month' ? 'Monthly Member Giving' : 'Period Member Giving'}
+        incomeLabel="Confirmed GHS Revenue"
         averageWeeklyAttendance={averageWeeklyAttendanceCount}
         tithesIncome={monthlyTithesTotal}
         offeringsIncome={monthlyOfferingsTotal}
@@ -606,7 +380,7 @@ export const ReportsPage: React.FC = () => {
         peakWeeklyAttendance={peakWeeklyAttendanceCount}
         netQuarterlyGrowth={netQuarterlyGrowthCount}
         churchBranch={settings.branch_name || settings.church_name}
-        periodLabel={startDate && endDate ? `${startDate} to ${endDate}` : `Year to Date ${currentYear}`}
+        periodLabel={reportPeriodLabel(filters)}
         onFilterClick={(type) => {
           if (type === 'membership') setReportType('membership');
           else if (type === 'financial') setReportType('financial_summary');
@@ -722,6 +496,7 @@ export const ReportsPage: React.FC = () => {
           <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200 text-slate-600 font-medium">
             <span>From:</span>
             <input
+              aria-label="Report start date"
               type="date"
               value={startDate}
               onChange={(e) => {
@@ -732,6 +507,7 @@ export const ReportsPage: React.FC = () => {
             />
             <span className="text-slate-400">to</span>
             <input
+              aria-label="Report end date"
               type="date"
               value={endDate}
               onChange={(e) => {
@@ -890,7 +666,7 @@ export const ReportsPage: React.FC = () => {
               {formatGHS(totalIncome)}
             </div>
             <p className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
-              <span>{filteredGivingByDate.length} giving transactions recorded</span>
+              <span>{filteredGiving.length} confirmed receipts</span>
             </p>
           </div>
 
@@ -913,7 +689,7 @@ export const ReportsPage: React.FC = () => {
           {/* Card 3: Net Surplus */}
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs relative overflow-hidden">
             <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
-              <span className="font-semibold uppercase tracking-wider text-[10px]">Net Treasury Balance</span>
+              <span className="font-semibold uppercase tracking-wider text-[10px]">Net Surplus / Deficit</span>
               <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-800 flex items-center justify-center">
                 <Wallet className="w-4 h-4" />
               </div>
@@ -926,7 +702,7 @@ export const ReportsPage: React.FC = () => {
               {formatGHS(netSurplus)}
             </div>
             <p className="text-[11px] text-slate-400 mt-1">
-              <span>{netSurplus >= 0 ? 'Operating surplus in hand' : 'Operating deficit'}</span>
+              <span>{netSurplus >= 0 ? 'Operating surplus for selected records' : 'Operating deficit for selected records'}</span>
             </p>
           </div>
 
@@ -993,7 +769,7 @@ export const ReportsPage: React.FC = () => {
 
       {/* Recharts Visual Representations: Income vs Expenses & Weekly Attendance */}
       <ReportsVisualChartsSection
-        giving={giving}
+        giving={snapshot.receipts}
         expenses={expenses}
         attendance={attendance}
         headcounts={headcounts}
@@ -1037,11 +813,11 @@ export const ReportsPage: React.FC = () => {
             <p>
               Period:{' '}
               <strong className="text-slate-800">
-                {startDate && endDate ? `${startDate} to ${endDate}` : 'Complete Record'}
+                {reportPeriodLabel(filters)}
               </strong>
             </p>
             <p>
-              Report Date: <strong className="text-slate-800">{new Date().toLocaleDateString('en-GB')}</strong>
+              Report Date: <strong className="text-slate-800">{new Date().toLocaleDateString('en-GB', {timeZone: 'Africa/Accra'})}</strong>
             </p>
             <p>Currency: <strong className="text-emerald-800">Ghana Cedi (GH₵)</strong></p>
             <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
@@ -1059,10 +835,11 @@ export const ReportsPage: React.FC = () => {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-bold text-slate-700 uppercase tracking-wider">
-                  Itemized Entries ({filteredGiving.length} Transactions)
+                  Confirmed Income Entries ({filteredGiving.length} Transactions)
                 </span>
                 {/* Secondary Filters for category and method */}
                 <select
+                  aria-label="Report category"
                   value={financialCategoryFilter}
                   onChange={(e) => setFinancialCategoryFilter(e.target.value)}
                   className="px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 text-xs no-print"
@@ -1076,15 +853,13 @@ export const ReportsPage: React.FC = () => {
                 </select>
 
                 <select
+                  aria-label="Report payment method"
                   value={paymentMethodFilter}
                   onChange={(e) => setPaymentMethodFilter(e.target.value)}
                   className="px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 text-xs no-print"
                 >
                   <option value="ALL">All Methods</option>
-                  <option value="mtn_momo">MTN Mobile Money</option>
-                  <option value="telecel_cash">Telecel Cash</option>
-                  <option value="cash">Cash Offering</option>
-                  <option value="bank_transfer">Bank Transfer</option>
+                  {paymentMethods.map(method => <option key={method} value={method}>{method.replace(/_/g, ' ')}</option>)}
                 </select>
               </div>
 
@@ -1099,7 +874,7 @@ export const ReportsPage: React.FC = () => {
                   <tr>
                     <th className="p-2.5">Date</th>
                     <th className="p-2.5">Category</th>
-                    <th className="p-2.5">Contributor / Member</th>
+                    <th className="p-2.5">Payer / Contributor</th>
                     <th className="p-2.5">Payment Method</th>
                     <th className="p-2.5">Reference No.</th>
                     <th className="p-2.5 text-right">Amount (GH₵)</th>
@@ -1109,7 +884,7 @@ export const ReportsPage: React.FC = () => {
                   {filteredGiving.map((g) => (
                     <tr key={g.id} className="hover:bg-slate-50/70 transition">
                       <td className="p-2.5 font-mono">{g.date}</td>
-                      <td className="p-2.5 font-semibold text-slate-800">{g.category}</td>
+                      <td className="p-2.5 font-semibold text-slate-800">{g.category}<span className="block text-[10px] text-slate-500">{g.source === 'church' ? 'Church income' : 'Member giving'}</span></td>
                       <td className="p-2.5">{g.member_name || g.donor_name || 'Anonymous Contributor'}</td>
                       <td className="p-2.5 capitalize">{g.payment_method.replace(/_/g, ' ')}</td>
                       <td className="p-2.5 font-mono text-slate-500 text-[11px]">{g.reference_number || '-'}</td>
@@ -1121,7 +896,7 @@ export const ReportsPage: React.FC = () => {
                   {filteredGiving.length === 0 && (
                     <tr>
                       <td colSpan={6} className="p-6 text-center text-slate-400">
-                        No financial giving records found matching the active criteria.
+                        No confirmed income records found matching the active criteria.
                       </td>
                     </tr>
                   )}
@@ -1180,12 +955,13 @@ export const ReportsPage: React.FC = () => {
                       <td className="p-2.5 font-mono font-bold text-right text-emerald-800">{formatGHS(otherGivingTotal)}</td>
                       <td className="p-2.5 text-center">{Math.round((otherGivingTotal / (totalIncome || 1)) * 100)}%</td>
                     </tr>
-                  </tbody>
+                    <tr><td className="p-2.5 font-semibold">Church institutional income & grants</td><td className="p-2.5 font-mono font-bold text-right text-emerald-800">{formatGHS(snapshot.totals.churchIncome)}</td><td className="p-2.5 text-center">{Math.round(snapshot.totals.churchIncome / (totalIncome || 1) * 100)}%</td></tr>
+                </tbody>
                   <tfoot className="bg-emerald-50/50 font-bold border-t border-emerald-200">
                     <tr>
                       <td className="p-2.5 text-slate-800">TOTAL REVENUE RECORDED</td>
                       <td className="p-2.5 font-mono text-emerald-900 text-right">{formatGHS(totalIncome)}</td>
-                      <td className="p-2.5 text-center">100%</td>
+                      <td className="p-2.5 text-center">{totalIncome ? '100%' : '0%'}</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -1233,7 +1009,7 @@ export const ReportsPage: React.FC = () => {
                     <tr>
                       <td className="p-2.5 text-slate-800">TOTAL DISBURSEMENTS</td>
                       <td className="p-2.5 font-mono text-rose-900 text-right">{formatGHS(totalExp)}</td>
-                      <td className="p-2.5 text-center">100%</td>
+                      <td className="p-2.5 text-center">{totalExp ? '100%' : '0%'}</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -1279,6 +1055,7 @@ export const ReportsPage: React.FC = () => {
                   Active Communicants: <strong>{activeMembers.length} Members</strong>
                 </span>
                 <select
+                    aria-label="Report ministry"
                   value={membershipMinistryFilter}
                   onChange={(e) => setMembershipMinistryFilter(e.target.value)}
                   className="px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 text-xs no-print"
@@ -1600,13 +1377,14 @@ export const ReportsPage: React.FC = () => {
       </div>
 
       {/* PDF Export Modal */}
-      <ReportPdfExportModal
+      {isPdfModalOpen && <ReportPdfExportModal
         isOpen={isPdfModalOpen}
         onClose={() => setIsPdfModalOpen(false)}
         defaultTemplate={modalDefaultTemplate}
         initialStartDate={startDate}
         initialEndDate={endDate}
-      />
+        initialFilters={modalFilters}
+      />}
     </div>
   );
 };

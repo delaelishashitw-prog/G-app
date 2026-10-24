@@ -1,5 +1,6 @@
-import { isActiveTransaction } from '../lib/ledgerUtils';
-import { reportExpenses } from '../lib/reportData';
+import {buildReportSnapshot, reportDatePreset, reportPeriodLabel, reportFilterLabel, type ReportFilters} from '../lib/reportSnapshot';
+import {ghanaToday} from '../lib/financeViewUtils';
+import {useModalFocus} from '../hooks/useModalFocus';
 import React, { useState, useMemo } from 'react';
 import {
   X,
@@ -37,6 +38,7 @@ interface ReportPdfExportModalProps {
   defaultTemplate?: ReportTemplateType;
   initialStartDate?: string;
   initialEndDate?: string;
+  initialFilters?: ReportFilters;
 }
 
 const TEMPLATES: Array<{
@@ -128,18 +130,18 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
   defaultTemplate = 'financial_executive_summary',
   initialStartDate,
   initialEndDate,
+  initialFilters = {},
 }) => {
-  const { members, visitors, attendance, giving:allGiving, expenses:legacyExpenses, churchFinances, pledges, settings, smallGroups, ministries } = useChurchData();
-  const giving=useMemo(()=>allGiving.filter(isActiveTransaction),[allGiving]);
-  const expenses=useMemo(()=>reportExpenses(legacyExpenses,churchFinances),[legacyExpenses,churchFinances]);
+  const { members, visitors, attendance, headcounts, giving, expenses, churchFinances, pledges, settings, smallGroups, ministries } = useChurchData();
   const { currentUser } = useAuth();
   const { success, error: toastError } = useToast();
 
-  const currentYear = new Date().getFullYear();
+  const currentYear = Number(ghanaToday().slice(0,4));
+  const [reportFilters, setReportFilters] = useState<ReportFilters>(initialFilters);
   const [selectedTemplate, setSelectedTemplate] = useState<ReportTemplateType>(defaultTemplate);
-  const [startDate, setStartDate] = useState(initialStartDate || `${currentYear}-01-01`);
-  const [endDate, setEndDate] = useState(initialEndDate || `${currentYear}-12-31`);
-  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
+  const [startDate, setStartDate] = useState(initialStartDate ?? `${currentYear}-01-01`);
+  const [endDate, setEndDate] = useState(initialEndDate ?? ghanaToday());
+  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>(TEMPLATES.find(template => template.id === defaultTemplate)?.defaultOrientation || 'portrait');
   const [includeSignatures, setIncludeSignatures] = useState(true);
   const [includeSummaryKpis, setIncludeSummaryKpis] = useState(true);
   const [includeOfficialSeal, setIncludeOfficialSeal] = useState(true);
@@ -153,9 +155,11 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
     'Certified authentic ecclesiastical record prepared for church archive and ministerial review.'
   );
   const [isGenerating, setIsGenerating] = useState(false);
+  const panel = useModalFocus(isOpen, onClose);
 
   // Sync orientation when template changes
   const handleSelectTemplate = (id: ReportTemplateType) => {
+    if (id !== selectedTemplate) setReportFilters({});
     setSelectedTemplate(id);
     const tmpl = TEMPLATES.find((t) => t.id === id);
     if (tmpl) {
@@ -163,79 +167,18 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
     }
   };
 
-  // Quick Date Range Presets
   const applyDatePreset = (preset: 'this_month' | 'last_month' | 'this_quarter' | 'this_year' | 'all_time') => {
-    const today = new Date();
-    const y = today.getFullYear();
-    const m = today.getMonth();
-
-    if (preset === 'this_month') {
-      const first = new Date(y, m, 1).toISOString().split('T')[0];
-      const last = new Date(y, m + 1, 0).toISOString().split('T')[0];
-      setStartDate(first);
-      setEndDate(last);
-    } else if (preset === 'last_month') {
-      const first = new Date(y, m - 1, 1).toISOString().split('T')[0];
-      const last = new Date(y, m, 0).toISOString().split('T')[0];
-      setStartDate(first);
-      setEndDate(last);
-    } else if (preset === 'this_quarter') {
-      const qMonth = Math.floor(m / 3) * 3;
-      const first = new Date(y, qMonth, 1).toISOString().split('T')[0];
-      const last = new Date(y, qMonth + 3, 0).toISOString().split('T')[0];
-      setStartDate(first);
-      setEndDate(last);
-    } else if (preset === 'this_year') {
-      setStartDate(`${y}-01-01`);
-      setEndDate(`${y}-12-31`);
-    } else if (preset === 'all_time') {
-      setStartDate('');
-      setEndDate('');
-    }
+    const range = reportDatePreset(preset); setStartDate(range.startDate); setEndDate(range.endDate);
   };
-
-  // Filtered stats for preview
-  const previewStats = useMemo(() => {
-    const filteredGiving = giving.filter((g) => {
-      if (startDate && g.date < startDate) return false;
-      if (endDate && g.date > endDate) return false;
-      return true;
-    });
-
-    const filteredExpenses = expenses.filter((e) => {
-      if (startDate && e.date < startDate) return false;
-      if (endDate && e.date > endDate) return false;
-      return true;
-    });
-
-    const filteredAttendance = attendance.filter((a) => {
-      if (startDate && a.date < startDate) return false;
-      if (endDate && a.date > endDate) return false;
-      return true;
-    });
-
-    const filteredVisitors = visitors.filter((v) => {
-      if (startDate && v.visit_date < startDate) return false;
-      if (endDate && v.visit_date > endDate) return false;
-      return true;
-    });
-
-    const totalIncome = filteredGiving.reduce((s, g) => s + g.amount, 0);
-    const totalExp = filteredExpenses.reduce((s, e) => s + e.amount, 0);
-
-    return {
-      givingCount: filteredGiving.length,
-      totalIncome,
-      expensesCount: filteredExpenses.length,
-      totalExpense: totalExp,
-      netSurplus: totalIncome - totalExp,
-      membersCount: members.filter((m) => !m.is_archived).length,
-      attendanceCount: filteredAttendance.length,
-      visitorsCount: filteredVisitors.length,
-    };
-  }, [giving, expenses, attendance, visitors, members, startDate, endDate]);
+  const sources = {members, visitors, attendance, headcounts, giving, expenses, churchFinances, pledges, smallGroups, ministries};
+  const snapshot = useMemo(() => buildReportSnapshot(sources, {...reportFilters, startDate, endDate}),
+    [members, visitors, attendance, headcounts, giving, expenses, churchFinances, pledges, smallGroups, ministries, reportFilters, startDate, endDate]);
+  const previewStats = {givingCount: snapshot.receipts.length, totalIncome: snapshot.totals.income,
+    expensesCount: snapshot.expenses.length, totalExpense: snapshot.totals.expenditure, netSurplus: snapshot.totals.surplus,
+    membersCount: snapshot.members.length, attendanceCount: snapshot.attendance.length, visitorsCount: snapshot.visitors.length};
 
   const generateOptions = (): PdfExportOptions => ({
+    ...reportFilters,
     template: selectedTemplate,
     startDate,
     endDate,
@@ -259,18 +202,7 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
       setIsGenerating(true);
       const options = generateOptions();
       const doc = generateChurchReportPdf(
-        {
-          settings,
-          members,
-          visitors,
-          attendance,
-          giving,
-          expenses,
-          pledges,
-          smallGroups,
-          ministries,
-          currentUser,
-        },
+        {...sources, settings, currentUser},
         options
       );
 
@@ -292,18 +224,7 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
       setIsGenerating(true);
       const options = generateOptions();
       const doc = generateChurchReportPdf(
-        {
-          settings,
-          members,
-          visitors,
-          attendance,
-          giving,
-          expenses,
-          pledges,
-          smallGroups,
-          ministries,
-          currentUser,
-        },
+        {...sources, settings, currentUser},
         options
       );
 
@@ -352,16 +273,7 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
       setIsGenerating(true);
       const options = generateOptions();
       const doc = generateChurchReportPdf(
-        {
-          settings,
-          members,
-          visitors,
-          attendance,
-          giving,
-          expenses,
-          pledges,
-          currentUser,
-        },
+        {...sources, settings, currentUser},
         options
       );
 
@@ -383,7 +295,7 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/60 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-4xl my-auto overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      <div ref={panel} role="dialog" aria-modal="true" aria-label="Export official PDF report" className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-4xl my-auto overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         {/* Modal Header */}
         <div className="bg-gradient-to-r from-[#064e3b] via-[#065f46] to-[#047857] text-white p-5 sm:p-6 flex items-start justify-between">
           <div className="flex items-center gap-3.5">
@@ -398,8 +310,10 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
                 </span>
               </div>
               <p className="text-xs text-emerald-100 mt-0.5">
-                Generate formatted archival PDF reports with church letterhead, currency totals (GH₵), and sign-off blocks.
+                Generate formatted reports from confirmed GHS records.
               </p>
+              <p className="mt-1 text-xs text-emerald-100">{reportPeriodLabel({startDate, endDate})} · {reportFilterLabel(reportFilters)}</p>
+              {snapshot.error && <p role="alert" className="mt-1 text-xs text-red-100">{snapshot.error}</p>}
             </div>
           </div>
 
@@ -724,7 +638,7 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
             <button
               type="button"
               onClick={handlePreviewPdf}
-              disabled={isGenerating}
+              disabled={isGenerating || Boolean(snapshot.error)}
               className="flex-1 sm:flex-none px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-2xs"
             >
               <Eye className="w-4 h-4 text-slate-500" />
@@ -734,7 +648,7 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
             <button
               type="button"
               onClick={handlePrintPdf}
-              disabled={isGenerating}
+              disabled={isGenerating || Boolean(snapshot.error)}
               className="flex-1 sm:flex-none px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-2xs"
             >
               <Printer className="w-4 h-4 text-slate-600" />
@@ -744,7 +658,7 @@ export const ReportPdfExportModal: React.FC<ReportPdfExportModalProps> = ({
             <button
               type="button"
               onClick={handleDownloadPdf}
-              disabled={isGenerating}
+              disabled={isGenerating || Boolean(snapshot.error)}
               className="flex-1 sm:flex-none px-5 py-2.5 rounded-xl bg-[#064e3b] hover:bg-[#047857] text-white text-xs font-bold transition flex items-center justify-center gap-2 shadow-md hover:shadow-lg disabled:opacity-50"
             >
               <Download className="w-4 h-4" />

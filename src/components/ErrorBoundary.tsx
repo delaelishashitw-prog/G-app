@@ -1,5 +1,7 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { AlertTriangle, RefreshCw, Home, Trash2 } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Download, Trash2 } from 'lucide-react';
+import {clearScopedCache} from '../lib/storageScope';
+import {exportPendingChanges, getSyncStatus} from '../lib/supabase';
 
 interface Props {
   children: ReactNode;
@@ -9,6 +11,8 @@ interface State {
   hasError: boolean;
   error: Error | null;
   errorInfo: ErrorInfo | null;
+  backupSnapshot?: string;
+  recoveryMessage?: string;
 }
 
 export class ErrorBoundary extends Component<Props, State> {
@@ -28,21 +32,41 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   private handleReload = () => {
+    if (!this.canReload()) return;
     window.location.reload();
   };
 
-  private handleResetCache = () => {
-    try {
-      // Clear app state keys
-      Object.keys(localStorage).forEach((key) => {
-        if (key.startsWith('gwcc_')) {
-          localStorage.removeItem(key);
-        }
-      });
-    } catch {
-      // Ignore
+  private canReload = () => {
+    const status = getSyncStatus();
+    if ((status.pending > 0 || status.error) && this.state.backupSnapshot !== exportPendingChanges()) {
+      this.setState({recoveryMessage: 'Export the latest pending backup and keep the file before reloading. Some changes may exist only in this open tab.'});
+      return false;
     }
-    window.location.href = '/';
+    return true;
+  };
+
+  private handleExportPending = () => {
+    try {
+      const snapshot = exportPendingChanges();
+      const url = URL.createObjectURL(new Blob([snapshot], {type: 'application/json'}));
+      const link = document.createElement('a');
+      link.href = url; link.download = `gwcc-pending-${new Date().toISOString().slice(0, 10)}.json`; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      this.setState({backupSnapshot: snapshot, recoveryMessage: 'Backup download started. Keep the file before reloading; it contains private pending changes.'});
+    } catch {
+      this.setState({recoveryMessage: 'The backup could not be downloaded. Keep this tab open and contact the administrator before reloading.'});
+    }
+  };
+
+  private handleResetCache = () => {
+    if (!this.canReload()) return;
+    try {
+      clearScopedCache();
+    } catch {
+      this.setState({recoveryMessage: 'The page cache could not be cleared. Keep any pending backup and try again.'});
+      return;
+    }
+    window.location.reload();
   };
 
   public render() {
@@ -57,7 +81,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <div>
               <h1 className="text-xl font-bold text-slate-900">Application Notice</h1>
               <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-                An unexpected interface anomaly occurred. Greater Works City Church system data has been safely preserved.
+                An unexpected error stopped this page. Export any pending changes before reloading. Clearing the page cache preserves saved pending queues and sign-in settings.
               </p>
             </div>
 
@@ -70,7 +94,9 @@ export class ErrorBoundary extends Component<Props, State> {
               </div>
             )}
 
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-2">
+            {this.state.recoveryMessage && <p role="status" className="text-left text-xs text-amber-900">{this.state.recoveryMessage}</p>}
+            <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2">
+              {(getSyncStatus().pending > 0 || getSyncStatus().error) && <button type="button" onClick={this.handleExportPending} className="px-4 py-2.5 rounded-xl bg-amber-100 text-amber-950 text-xs font-bold flex items-center gap-1.5"><Download className="w-4 h-4"/>Export pending backup</button>}
               <button
                 type="button"
                 onClick={this.handleReload}
@@ -86,7 +112,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Trash2 className="w-4 h-4 text-slate-400" />
-                <span>Reset Local Cache</span>
+                <span>Clear Page Cache & Reload</span>
               </button>
             </div>
           </div>

@@ -33,9 +33,10 @@ import {
 } from 'lucide-react';
 import { GivingRecord, ExpenseRecord, AttendanceRecord, HeadcountRecord } from '../types/database.types';
 import { formatGHS } from '../lib/pdfReportGenerator';
+import {reportSum, receiptClass, reportAttendanceWeeks, type ReportReceipt} from '../lib/reportSnapshot';
 
 interface ReportsVisualChartsSectionProps {
-  giving: GivingRecord[];
+  giving: ReportReceipt[];
   expenses: ExpenseRecord[];
   attendance: AttendanceRecord[];
   headcounts?: HeadcountRecord[];
@@ -77,6 +78,9 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
       if (!isNaN(startY) && !isNaN(startM) && !isNaN(endY) && !isNaN(endM)) {
         let curY = startY;
         let curM = startM;
+        if ((endY - curY) * 12 + endM - curM > 11) {
+          const first = new Date(Date.UTC(endY, endM - 12, 1)); curY = first.getUTCFullYear(); curM = first.getUTCMonth() + 1;
+        }
         while (curY < endY || (curY === endY && curM <= endM)) {
           monthKeysSet.add(`${curY}-${String(curM).padStart(2, '0')}`);
           curM++;
@@ -135,13 +139,13 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
       const marginPercent = Math.round((netSurplus / (income || 1)) * 100);
 
       const tithes = monthGiving
-        .filter((g) => (g.category || '').toLowerCase().includes('tithe'))
+        .filter((g) => receiptClass(g) === 'tithes')
         .reduce((sum, g) => sum + g.amount, 0);
       const offerings = monthGiving
-        .filter((g) => (g.category || '').toLowerCase().includes('offering'))
+        .filter((g) => receiptClass(g) === 'offerings')
         .reduce((sum, g) => sum + g.amount, 0);
       const buildingFund = monthGiving
-        .filter((g) => (g.category || '').toLowerCase().includes('building'))
+        .filter((g) => receiptClass(g) === 'building')
         .reduce((sum, g) => sum + g.amount, 0);
       const otherGiving = Math.max(0, income - tithes - offerings - buildingFund);
 
@@ -162,163 +166,41 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
 
   // Aggregate Finance Totals
   const totalPeriodIncome = useMemo(
-    () => financialData.reduce((s, item) => s + item.income, 0),
-    [financialData]
+    () => reportSum(giving),
+    [giving]
   );
   const totalPeriodExpense = useMemo(
-    () => financialData.reduce((s, item) => s + item.expense, 0),
-    [financialData]
+    () => reportSum(expenses),
+    [expenses]
   );
   const totalPeriodSurplus = totalPeriodIncome - totalPeriodExpense;
   const overallSavingsRate = Math.round((totalPeriodSurplus / (totalPeriodIncome || 1)) * 100);
 
   // 2. WEEKLY ATTENDANCE TRENDS AGGREGATION (Computed from real Database Records)
-  const weeklyAttendanceData = useMemo(() => {
-    const weekMap = new Map<
-      string,
-      {
-        weekLabel: string;
-        weekShort: string;
-        year: number;
-        members: number;
-        visitors: number;
-        totalHeadcount: number;
-        sunday1st: number;
-        sunday2nd: number;
-        midweek: number;
-      }
-    >();
-
-    // 1. Process Headcounts
-    if (headcounts && headcounts.length > 0) {
-      headcounts.forEach((hc) => {
-        if (!hc.date) return;
-        if (startDate && hc.date < startDate) return;
-        if (endDate && hc.date > endDate) return;
-
-        const d = new Date(hc.date);
-        const y = d.getFullYear();
-        const oneJan = new Date(y, 0, 1);
-        const numberOfDays = Math.floor((d.getTime() - oneJan.getTime()) / (24 * 60 * 60 * 1000));
-        const weekNum = Math.ceil((d.getDay() + 1 + numberOfDays) / 7);
-        const weekKey = `${y}-W${String(weekNum).padStart(2, '0')}`;
-
-        const svcLower = (hc.service_name || '').toLowerCase();
-        const isMidweek = svcLower.includes('midweek') || svcLower.includes('vigil');
-        const is2nd = svcLower.includes('2nd') || svcLower.includes('second');
-
-        const mCount = (hc.men || 0) + (hc.women || 0) + (hc.youth || 0) + (hc.children || 0) + (hc.ushers_protocol || 0);
-        const vCount = hc.visitors || 0;
-        const total = hc.total_auditorium || (mCount + vCount);
-
-        const existing = weekMap.get(weekKey);
-        if (existing) {
-          existing.members += mCount;
-          existing.visitors += vCount;
-          existing.totalHeadcount += total;
-          if (isMidweek) existing.midweek += total;
-          else if (is2nd) existing.sunday2nd += total;
-          else existing.sunday1st += total;
-        } else {
-          const shortMonth = d.toLocaleDateString('en-US', { month: 'short' });
-          const day = d.getDate();
-          weekMap.set(weekKey, {
-            weekLabel: `${shortMonth} ${day}`,
-            weekShort: `Wk ${weekNum}`,
-            year: y,
-            members: mCount,
-            visitors: vCount,
-            totalHeadcount: total,
-            sunday1st: !isMidweek && !is2nd ? total : 0,
-            sunday2nd: is2nd ? total : 0,
-            midweek: isMidweek ? total : 0,
-          });
-        }
-      });
-    }
-
-    // 2. Process Individual Attendance Check-ins
-    attendance.forEach((att) => {
-      if (!att.date) return;
-      if (startDate && att.date < startDate) return;
-      if (endDate && att.date > endDate) return;
-
-      const d = new Date(att.date);
-      const y = d.getFullYear();
-      const oneJan = new Date(y, 0, 1);
-      const numberOfDays = Math.floor((d.getTime() - oneJan.getTime()) / (24 * 60 * 60 * 1000));
-      const weekNum = Math.ceil((d.getDay() + 1 + numberOfDays) / 7);
-      const weekKey = `${y}-W${String(weekNum).padStart(2, '0')}`;
-
-      const isVisitor = att.person_type === 'visitor' || Boolean(att.visitor_id);
-      const isMember = !isVisitor;
-      const svcLower = (att.service_name || '').toLowerCase();
-      const isMidweek = svcLower.includes('midweek');
-      const is2nd = svcLower.includes('2nd') || svcLower.includes('second');
-
-      const existing = weekMap.get(weekKey);
-      if (existing) {
-        if (existing.members === 0 && existing.visitors === 0) {
-          if (isMember) existing.members += 1;
-          if (isVisitor) existing.visitors += 1;
-          existing.totalHeadcount = existing.members + existing.visitors;
-        }
-      } else {
-        const shortMonth = d.toLocaleDateString('en-US', { month: 'short' });
-        const day = d.getDate();
-        weekMap.set(weekKey, {
-          weekLabel: `${shortMonth} ${day}`,
-          weekShort: `Wk ${weekNum}`,
-          year: y,
-          members: isMember ? 1 : 0,
-          visitors: isVisitor ? 1 : 0,
-          totalHeadcount: 1,
-          sunday1st: !isMidweek && !is2nd ? 1 : 0,
-          sunday2nd: is2nd ? 1 : 0,
-          midweek: isMidweek ? 1 : 0,
-        });
-      }
-    });
-
-    if (weekMap.size === 0) {
-      return [];
-    }
-
-    return Array.from(weekMap.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .slice(-10)
-      .map(([_, wk]) => {
-        const totalHeadcount = wk.totalHeadcount || (wk.members + wk.visitors);
-        const visitorRatio = Math.round((wk.visitors / (totalHeadcount || 1)) * 100);
-        return {
-          ...wk,
-          totalHeadcount,
-          visitorRatio,
-        };
-      });
-  }, [headcounts, attendance, startDate, endDate]);
+  const allAttendanceWeeks = useMemo(() => reportAttendanceWeeks(attendance, headcounts), [attendance, headcounts]);
+  const weeklyAttendanceData = allAttendanceWeeks.slice(-10);
 
   // Attendance summary metrics
   const avgWeeklyAttendance = useMemo(() => {
-    if (weeklyAttendanceData.length === 0) return 0;
-    const sum = weeklyAttendanceData.reduce((s, w) => s + w.totalHeadcount, 0);
-    return Math.round(sum / (weeklyAttendanceData.length || 1));
-  }, [weeklyAttendanceData]);
+    if (allAttendanceWeeks.length === 0) return 0;
+    const sum = allAttendanceWeeks.reduce((s, w) => s + w.totalHeadcount, 0);
+    return Math.round(sum / (allAttendanceWeeks.length || 1));
+  }, [allAttendanceWeeks]);
 
   const peakWeeklyAttendance = useMemo(() => {
-    if (weeklyAttendanceData.length === 0) return 0;
-    return Math.max(...weeklyAttendanceData.map((w) => w.totalHeadcount));
-  }, [weeklyAttendanceData]);
+    if (allAttendanceWeeks.length === 0) return 0;
+    return Math.max(...allAttendanceWeeks.map((w) => w.totalHeadcount));
+  }, [allAttendanceWeeks]);
 
   const totalWeeklySouls = useMemo(() => {
-    return weeklyAttendanceData.reduce((s, w) => s + w.totalHeadcount, 0);
-  }, [weeklyAttendanceData]);
+    return allAttendanceWeeks.reduce((s, w) => s + w.totalHeadcount, 0);
+  }, [allAttendanceWeeks]);
 
   const avgVisitorPercentage = useMemo(() => {
     if (totalWeeklySouls === 0) return 0;
-    const totalVisitors = weeklyAttendanceData.reduce((s, w) => s + w.visitors, 0);
+    const totalVisitors = allAttendanceWeeks.reduce((s, w) => s + w.visitors, 0);
     return Math.round((totalVisitors / (totalWeeklySouls || 1)) * 100);
-  }, [weeklyAttendanceData, totalWeeklySouls]);
+  }, [allAttendanceWeeks, totalWeeklySouls]);
 
   const attendanceGrowthText = useMemo(() => {
     if (weeklyAttendanceData.length < 2) {
@@ -416,7 +298,7 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
                     <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center">
                       <Coins className="w-4 h-4" />
                     </div>
-                    <h3 className="font-bold text-slate-900 text-base">Financial Income vs Expenses</h3>
+                    <h3 className="font-bold text-slate-900 text-base">Financial Income vs Expenses</h3><p className="text-[10px] text-slate-500">Latest 12 recorded months. Totals cover all selected records.</p>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">
                     Monthly treasury comparison in Ghana Cedi (GH₵)
@@ -462,19 +344,19 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
               </div>
 
               {/* Quick KPI summary badges */}
-              <div className="grid grid-cols-3 gap-2.5 mb-5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-5 text-xs">
                 <div className="bg-emerald-50/70 p-2.5 rounded-2xl border border-emerald-100">
-                  <span className="text-[10px] uppercase font-bold text-emerald-800 block">6-Mo Inflow</span>
+                  <span className="text-[10px] uppercase font-bold text-emerald-800 block">Period Inflow</span>
                   <span className="text-sm sm:text-base font-extrabold font-mono text-emerald-900">
                     {formatGHS(totalPeriodIncome)}
                   </span>
                   <span className="text-[10px] text-emerald-700 block mt-0.5 flex items-center gap-0.5">
-                    <ArrowUpRight className="w-3 h-3" /> Average +14%/mo
+                    <ArrowUpRight className="w-3 h-3" /> Confirmed receipts
                   </span>
                 </div>
 
                 <div className="bg-rose-50/70 p-2.5 rounded-2xl border border-rose-100">
-                  <span className="text-[10px] uppercase font-bold text-rose-800 block">6-Mo Outflow</span>
+                  <span className="text-[10px] uppercase font-bold text-rose-800 block">Period Outflow</span>
                   <span className="text-sm sm:text-base font-extrabold font-mono text-rose-800">
                     {formatGHS(totalPeriodExpense)}
                   </span>
@@ -656,7 +538,7 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
                     <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center">
                       <Users className="w-4 h-4" />
                     </div>
-                    <h3 className="font-bold text-slate-900 text-base">Weekly Attendance Trends</h3>
+                    <h3 className="font-bold text-slate-900 text-base">Weekly Attendance Trends</h3><p className="text-[10px] text-slate-500">Latest 10 recorded weeks. Totals cover the selected period.</p>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">
                     Worship turnout analytics: Members vs First-Time Visitors
@@ -702,7 +584,7 @@ export const ReportsVisualChartsSection: React.FC<ReportsVisualChartsSectionProp
               </div>
 
               {/* Quick KPI summary badges */}
-              <div className="grid grid-cols-3 gap-2.5 mb-5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-5 text-xs">
                 <div className="bg-emerald-50/70 p-2.5 rounded-2xl border border-emerald-100">
                   <span className="text-[10px] uppercase font-bold text-emerald-800 block">Avg Weekly Headcount</span>
                   <span className="text-sm sm:text-base font-extrabold text-emerald-950">
