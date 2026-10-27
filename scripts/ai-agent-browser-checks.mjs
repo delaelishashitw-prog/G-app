@@ -38,6 +38,16 @@ export async function checkAiAgent(browser,{origin,settings,sampleMember}) {
         assert.deepEqual(Object.keys(body),['prompt']);assert.equal(JSON.stringify(body).includes('Never send this name'),false);
         await route.fulfill({json:{text:'Synthetic sermon draft',model:'synthetic-model',status:'draft'}});return;
       }
+      if(path==='/api/ai/pastoral-overview') {
+        assert.ok(['pastor','super_admin'].includes(role),'Unauthorized pastoral overview request');
+        assert.deepEqual(body,{},'Pastoral overview must not send browser records or model prompts');
+        await route.fulfill({json:{
+          visitors:{total:3,awaitingFollowUp:2,contacted:1,returning:0,converted:0,closed:0,other:0},
+          myTasks:{open:1,overdue:1,visitor:1,pastoral:0,general:0},
+          asOf:today,generatedAt:new Date().toISOString(),status:'recorded',
+          scope:'Authorized summary counts only',
+        }});return;
+      }
       assert.ok(['/api/ai/attendance-insights','/api/ai/attendance-report'].includes(path),'Unapproved action');
       assert.deepEqual(Object.keys(body).sort(),['endDate','startDate']);
       if(path.endsWith('attendance-insights')&&holdSummary)await new Promise(resolve=>releaseSummary=resolve);
@@ -51,7 +61,18 @@ export async function checkAiAgent(browser,{origin,settings,sampleMember}) {
     try {
       await page.goto(origin+'/assistant');await page.getByRole('heading',{name:'GWCC Pastoral AI Agent & Studio'}).waitFor();
       assert.equal(await page.getByText(/gemini-3.8|Gemini 3.8/).count(),0);
+      const pastoralPanel=page.getByRole('region',{name:'Pastoral intelligence overview'});
       const panel=page.getByRole('region',{name:'Attendance Intelligence'});
+      if(['pastor','super_admin'].includes(role)) {
+        await pastoralPanel.waitFor();
+        await pastoralPanel.getByText('Visitors awaiting follow-up',{exact:true}).waitFor();
+        await pastoralPanel.getByText('2',{exact:true}).waitFor();
+        assert.ok(requests.some(item=>item.path==='/api/ai/pastoral-overview'));
+        assert.equal(await pastoralPanel.getByText('Never send this name').count(),0);
+        assert.equal(await pastoralPanel.getByText('0240000000').count(),0);
+      } else {
+        assert.equal(await pastoralPanel.count(),0,'Non-pastoral staff must not see the pastoral summary');
+      }
       if(role==='finance_officer') {assert.equal(await panel.count(),0);assert.equal(requests.length,0);continue;}
       await panel.waitFor();assert.equal(await page.getByLabel('Attendance start date').inputValue(),start);
       await panel.getByRole('button',{name:'View attendance summary',exact:true}).click();
