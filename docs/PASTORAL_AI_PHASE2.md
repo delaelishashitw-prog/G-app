@@ -38,3 +38,10 @@ Read-only inspection found **one connected Supabase project** (`noskcrmvnancdyhv
 7. Only after role and preview checks pass, review the draft PR and separately approve promotion/merge. The current read-only code does not perform any AI-scheduled actions.
 
 **Current status:** code and browser-fixture checks passed in GitHub Actions using synthetic data, and a Vercel preview is READY. **Authenticated integration against an independent staging database has not been run.**
+
+## Branch-scoped Supabase staging configuration (27 October 2026)
+
+- Created independent Supabase project `GWCC Staging` (`gvnkviqnjyrsilorlofx`), eu-west-1. Applied all 32 schema migrations; all 31 public application tables have RLS enabled. No member, visitor, attendance, profile or task records were copied.
+- Added **branch-scoped Preview-only** Vercel overrides for `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY` on Git branch `feature/pastoral-ai-phase2`. Values point at the staging Supabase project and are not recorded in Git. Existing production/ordinary preview variables were not edited.
+- Changing Vercel environment variables does not retroactively change already built deployments: a new preview build is required, and its environment and Vercel protection must be verified before treating it as staging.
+- No staging Auth users, Edge Functions, real church data or messages have been created. Test account authorization, preview deployment, redirection and role behavior still require independent verification.
