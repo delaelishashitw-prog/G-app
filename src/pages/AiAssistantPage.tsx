@@ -2,6 +2,7 @@ import { authenticatedFetch } from '../lib/apiClient';
 import { useAuth } from '../contexts/AuthContext';
 import React, { useRef, useState } from 'react';
 import { AttendanceInsightsPanel } from '../components/AttendanceInsightsPanel';
+import { PastoralIntelligencePanel } from '../components/PastoralIntelligencePanel';
 import {
   Sparkles,
   BookOpen,
@@ -34,6 +35,7 @@ const AiAssistantWorkspace: React.FC = () => {
   const { hasRole, currentUser } = useAuth();
   // Only improve discoverability here: the backend remains the authority.
   const canReadAttendanceInsights = hasRole(['super_admin', 'senior_pastor', 'administrator', 'pastor', 'attendance_officer']);
+  const canReadPastoralOverview = hasRole(['super_admin', 'senior_pastor', 'administrator', 'pastor']);
 
   const [activeCategory, setActiveCategory] = useState<'sermon' | 'pastoral' | 'comms' | 'cells' | 'custom'>('sermon');
   const [promptInput, setPromptInput] = useState('');
@@ -198,6 +200,7 @@ const AiAssistantWorkspace: React.FC = () => {
         </div>
       </div>
 
+      {canReadPastoralOverview && <PastoralIntelligencePanel key={`overview:${currentUser.id}:${currentUser.role}`} />}
       {canReadAttendanceInsights && <AttendanceInsightsPanel key={`${currentUser.id}:${currentUser.role}`} />}
       {/* Main Categories Selector */}
       <div className="flex border-b border-slate-200 gap-2 overflow-x-auto pb-px">
