@@ -57,3 +57,10 @@ Read-only database checks on the staging project confirmed:
 - A separate, transactional test temporarily inserted one fictional task assigned to a different identity and verified the administrator's two assigned open tasks stayed unchanged, that unrelated pastors could not view the other task, and that an assigned pastor could. The test was explicitly rolled back; a subsequent database query verified zero temporary tasks remain (3 persistent test tasks and 4 visitors).
 
 **Not yet verified:** actual end-to-end requests authenticated as real different roles, MFA enrollments for additional roles, and production-like API authorization regression under active sessions. These require separate staging Auth accounts; do not claim full role-security acceptance until that check passes. Production is unchanged and PR remains unmerged.
+
+## Additional role regression coverage (28 October 2026)
+
+- Staging Auth currently has only one approved account: the verified `super_admin`. No real sign-in accounts for `pastor`, `administrator`, `finance_officer`, or `member` have been created. Do not claim these roles were exercised in an authenticated end-to-end session.
+- Expanded `tests/aiPastoralOverview.test.js` to assert the four authorized roles are allowed by the handler; five excluded roles are denied before querying; owned active and overdue tasks exclude other users' tasks and completed/cancelled tasks; malformed task responses and failed visitor queries are rejected.
+- These are **mocked handler regression tests**, not substitutes for real Supabase Auth role tests. The draft PR must not be promoted until independent authenticated staging checks run.
+- No production settings or records were changed. No permanent Auth test users were provisioned.
