@@ -45,3 +45,15 @@ Read-only inspection found **one connected Supabase project** (`noskcrmvnancdyhv
 - Added **branch-scoped Preview-only** Vercel overrides for `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY` on Git branch `feature/pastoral-ai-phase2`. Values point at the staging Supabase project and are not recorded in Git. Existing production/ordinary preview variables were not edited.
 - Changing Vercel environment variables does not retroactively change already built deployments: a new preview build is required, and its environment and Vercel protection must be verified before treating it as staging.
 - No staging Auth users, Edge Functions, real church data or messages have been created. Test account authorization, preview deployment, redirection and role behavior still require independent verification.
+
+## Staging fixture and ownership QA (28 October 2026)
+
+**Verified, staging only:** the deployment for `feature/pastoral-ai-phase2` displayed the expected aggregate counts after four fictional visitor records and three fictional follow-up tasks were created in `GWCC Staging` (`gvnkviqnjyrsilorlofx`). The signed-in, MFA-verified staging super administrator confirmed dashboard values of 4 visitors, 2 awaiting follow-up, 2 assigned open tasks, and 1 assigned overdue task. One completed task is excluded from open counts. No messages were sent, no production records copied.
+
+Read-only database checks on the staging project confirmed:
+- The authorization helper `gwcc_private.task_kind_allowed` denies pastoral task kinds to ordinary members, finance officers and administrators; pastors can handle pastoral tasks, while general church administrators can handle visitor tasks.
+- The task visibility helper `gwcc_private.task_visible` restricts a pastor's unassigned pastoral task visibility while allowing tasks assigned to that pastor; global pastor/admin roles follow the specifically intended scopes. For the actual staging fixtures, 2 open tasks belong to the staging super administrator and none to a different, nonexistent test identity.
+- Anonymous role has **no direct SELECT grant** on visitors or `gwcc_documents` and **no EXECUTE grant** on `gwcc_follow_up_list`.
+- A separate, transactional test temporarily inserted one fictional task assigned to a different identity and verified the administrator's two assigned open tasks stayed unchanged, that unrelated pastors could not view the other task, and that an assigned pastor could. The test was explicitly rolled back; a subsequent database query verified zero temporary tasks remain (3 persistent test tasks and 4 visitors).
+
+**Not yet verified:** actual end-to-end requests authenticated as real different roles, MFA enrollments for additional roles, and production-like API authorization regression under active sessions. These require separate staging Auth accounts; do not claim full role-security acceptance until that check passes. Production is unchanged and PR remains unmerged.
