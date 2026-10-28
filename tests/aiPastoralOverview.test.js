@@ -84,3 +84,53 @@ test('aggregate helpers ignore tasks assigned to other people', () => {
     { assigned_to_id: 'someone-else', kind: 'pastoral', status: 'open', due_date: '2020-01-01' },
   ], 'user-1', '2026-10-27'), { open: 0, overdue: 0, visitor: 0, pastoral: 0, general: 0 });
 });
+
+test('overview permits each approved pastoral role with an authorized session', async () => {
+  for (const role of ['super_admin', 'senior_pastor', 'administrator', 'pastor']) {
+    const result = await harness({ role }).run();
+    assert.equal(result.status, 200, role);
+    assert.equal(result.checks, 2, role);
+    assert.deepEqual(result.data.visitors, {
+      total: 0, awaitingFollowUp: 0, contacted: 0,
+      returning: 0, converted: 0, closed: 0, other: 0,
+    }, role);
+  }
+});
+
+test('overview denies every excluded role before querying visitors or tasks', async () => {
+  for (const role of ['finance_officer', 'attendance_officer', 'data_entry', 'ministry_leader', 'member']) {
+    const result = await harness({ role }).run();
+    assert.equal(result.status, 403, role);
+    assert.equal(result.queriedVisitors, 0, role);
+    assert.equal(result.queriedTasks, 0, role);
+    assert.equal(result.checks, 1, role);
+  }
+});
+
+test('assigned task summary counts only the current assignee and open states', () => {
+  const tasks = [
+    { assigned_to_id: 'user-1', kind: 'visitor', status: 'open', due_date: '2026-10-26' },
+    { assigned_to_id: 'user-1', kind: 'general', status: 'in_progress', due_date: '2026-11-01' },
+    { assigned_to_id: 'user-1', kind: 'pastoral', status: 'completed', due_date: '2020-01-01' },
+    { assigned_to_id: 'other-user', kind: 'pastoral', status: 'open', due_date: '2020-01-01' },
+    { assigned_to_id: 'user-1', kind: 'pastoral', status: 'cancelled', due_date: '2020-01-01' },
+  ];
+  assert.deepEqual(summarizeAssignedTasks(tasks, 'user-1', '2026-10-28'), {
+    open: 2, overdue: 1, visitor: 1, pastoral: 0, general: 1,
+  });
+});
+
+test('malformed task responses fail closed without a usable report', async () => {
+  for (const tasks of [null, {}, 'not a list', [null]]) {
+    const result = await harness({ tasks }).run();
+    assert.equal(result.status, 503);
+    assert.equal(result.data.status, undefined);
+  }
+});
+
+test('visitor database failures prevent any follow-up query and report', async () => {
+  const result = await harness({ visitorError: { code: '42501' } }).run();
+  assert.equal(result.status, 503);
+  assert.equal(result.queriedVisitors, 1);
+  assert.equal(result.queriedTasks, 0);
+});
