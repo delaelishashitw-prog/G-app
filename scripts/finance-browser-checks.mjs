@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {watchSyncStatus,waitForSync} from './sync-browser-utils.mjs';
+import {watchSyncStatus,waitForSync,retrySyncOrAwait} from './sync-browser-utils.mjs';
 import {accountEffect} from '../src/lib/ledgerUtils.ts';
 
 const modal=(page,title)=>page.getByRole('heading',{name:title,exact:true}).locator('xpath=ancestor::div[contains(@class,"fixed")][1]');
@@ -106,7 +106,7 @@ export async function checkChurchFinance(browser,{origin,settings}){
     const expense=modal(page,'Request Church Expenditure');await expense.getByLabel('Expense Purpose / Item Title *',{exact:true}).fill('Overdraft check');await expense.getByLabel('Amount (GH₵) *',{exact:true}).fill('2000');await expense.locator('button[type="submit"]').click();
     await page.getByText('Payment request saved',{exact:true}).waitFor();await page.getByText('Synthetic finance cloud unavailable',{exact:true}).first().waitFor();
     assert.equal(data.church_accounts[0].current_balance,1000.25);
-    setReject(false);await page.getByRole('button',{name:'Retry sync',exact:true}).click();await waitForSync(page);
+    setReject(false);await retrySyncOrAwait(page);
     const own=page.getByRole('article').filter({has:page.getByRole('heading',{name:'Overdraft check',exact:true})});
     await own.getByText('You requested this payment. Another finance staff member must review it.',{exact:true}).waitFor();assert.equal(await own.getByRole('button',{name:'Approve request',exact:true}).count(),0);
     const review=page.getByRole('article').filter({has:page.getByRole('heading',{name:'Independent request',exact:true})});
@@ -128,7 +128,7 @@ export async function checkChurchFinance(browser,{origin,settings}){
     assert.equal(await page.getByRole('button',{name:'Print Receipt',exact:true}).isDisabled(),true);
     assert.equal(await page.getByRole('button',{name:'Copy receipt or voucher',exact:true}).isDisabled(),true);
     await page.getByRole('button',{name:'Close receipt or voucher',exact:true}).click();
-    setReject(false);await page.getByRole('button',{name:'Retry sync',exact:true}).click();await waitForSync(page);
+    setReject(false);await retrySyncOrAwait(page);
     await page.getByRole('button',{name:/Income & Expense Ledger/}).click();
     await page.getByRole('row').filter({has:page.getByText('Pending browser receipt',{exact:true})}).getByRole('button',{name:'Print Official Church Income Receipt',exact:true}).click();
     await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent.includes('Print Receipt')&&!button.disabled));

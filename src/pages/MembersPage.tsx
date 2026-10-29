@@ -940,9 +940,9 @@ export const MembersPage: React.FC = () => {
               </p>
             </div>
 
-            <div className="flex items-center flex-wrap gap-2.5">
+            <div className="flex items-center flex-wrap min-w-0 max-w-full gap-2.5">
               {/* View Mode Switcher */}
-              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 shadow-2xs">
+              <div className="flex flex-wrap max-w-full items-center bg-slate-100 p-1 rounded-xl border border-slate-200 shadow-2xs">
                 <button
                   onClick={() => handleSetViewMode('cards')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${

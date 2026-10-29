@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { watchSyncStatus, waitForSync, readSavedOutbox } from './sync-browser-utils.mjs';
+import { watchSyncStatus, waitForSync, readSavedOutbox, retrySyncOrAwait } from './sync-browser-utils.mjs';
 
 export async function checkReliableOperations(browser,{origin,settings,sampleMember}) {
   const owner='61616161-6161-4161-8161-616161616161',now=new Date().toISOString();
@@ -74,7 +74,7 @@ export async function checkReliableOperations(browser,{origin,settings,sampleMem
     await page.getByText('Saved on this device; awaiting cloud confirmation.',{exact:true}).first().waitFor();
     const saved=await readSavedOutbox(page,owner),assetBatch=saved.batches.find(batch=>batch.changes.some(change=>change.table==='assets'));
     assert.ok(assetBatch);assert.equal(data.assets.length,0);
-    await page.reload();await page.getByText('Synthetic retry asset',{exact:true}).first().waitFor();failCloud=false;await page.getByRole('button',{name:'Retry sync',exact:true}).click();await waitForSync(page);
+    await page.reload();await page.getByText('Synthetic retry asset',{exact:true}).first().waitFor();failCloud=false;await retrySyncOrAwait(page);
     assert.equal(data.assets.length,1);const attempts=requests.filter(body=>body.p_changes.some(c=>c.table==='assets'));for(const attempt of attempts)assert.deepEqual(attempt,attempts[0]);
     }
     await page.goto(origin+'/members');await page.getByRole('button',{name:'Portal activation',exact:true}).click();
@@ -84,7 +84,7 @@ export async function checkReliableOperations(browser,{origin,settings,sampleMem
     for(const label of ['Needs email','Not invited','Needs linking','Invitation pending','Ready to sign in','Needs review'])await dialog.getByRole('button',{name:new RegExp(label)}).waitFor();
     await dialog.getByRole('button',{name:/Invitation pending/}).click();await dialog.getByText('Pending Member',{exact:false}).first().waitFor();assert.equal(await dialog.getByRole('listitem').count(),1);
     await dialog.getByRole('button',{name:/All members/}).click();await dialog.getByLabel('Search activation list').fill('Verified Member');assert.equal(await dialog.getByRole('listitem').count(),1);await dialog.getByLabel('Search activation list').fill('');
-    await page.setViewportSize({width:390,height:844});await dialog.screenshot({path:'/tmp/gwcc-activation-mobile.png'});const layout=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,overflow:[...document.querySelectorAll('body *')].filter(el=>el.getBoundingClientRect().right>innerWidth+2).slice(0,8).map(el=>({tag:el.tagName,classes:el.className,width:el.getBoundingClientRect().width,right:el.getBoundingClientRect().right}))}));if(layout.scroll>layout.width+2)console.error('Mobile overflow:',JSON.stringify(layout));assert.ok(layout.scroll<=layout.width+2);
+    await page.setViewportSize({width:390,height:844});await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth+2,null,{timeout:5000});await dialog.screenshot({path:'/tmp/gwcc-activation-mobile.png'});const layout=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,overflow:[...document.querySelectorAll('body *')].filter(el=>el.getBoundingClientRect().right>innerWidth+2).slice(0,8).map(el=>({tag:el.tagName,classes:el.className,width:el.getBoundingClientRect().width,right:el.getBoundingClientRect().right}))}));if(layout.scroll>layout.width+2)console.error('Mobile overflow:',JSON.stringify(layout));assert.ok(layout.scroll<=layout.width+2);
     activationError=true;await dialog.getByRole('button',{name:'Refresh status',exact:true}).click();await dialog.getByRole('alert').waitFor();assert.equal(await dialog.getByRole('list',{name:'Member activation list'}).count(),0);
     activationError=false;activationEmpty=true;await dialog.getByRole('button',{name:'Refresh status',exact:true}).click();await dialog.getByText('No members match this selection.',{exact:true}).waitFor();
     await dialog.getByRole('button',{name:'Close member activation',exact:true}).click();profile.role='administrator';await page.reload();await page.locator('main').waitFor();assert.equal(await page.getByRole('button',{name:'Portal activation',exact:true}).count(),0);
