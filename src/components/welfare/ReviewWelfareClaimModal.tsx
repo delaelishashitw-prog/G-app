@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, CheckCircle2, XCircle, AlertCircle, HeartHandshake, FileText, ArrowRight, Printer } from 'lucide-react';
 import { useChurchData } from '../../contexts/ChurchDataContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import { WelfareClaim, WelfareClaimStatus } from '../../types/database.types';
 import { assessWelfareStanding } from '../../features/welfare/welfareEligibility';
@@ -19,8 +20,10 @@ export const ReviewWelfareClaimModal: React.FC<ReviewWelfareClaimModalProps> = (
   onClose,
   onOpenDisburseModal,
 }) => {
-  const { updateWelfareClaim, welfareContributions, members, settings } = useChurchData();
+  const { updateWelfareClaim, welfareContributions, members } = useChurchData();
   const { success, error: toastError } = useToast();
+  const { currentUser } = useAuth();
+  const isWelfareOfficer = currentUser.role === 'welfare_officer';
   const member = claim?.beneficiary_type !== 'external_community'
     ? members.find(m => m.id === claim?.member_id || m.member_id === claim?.member_id) : undefined;
   const standing = member ? assessWelfareStanding(member, welfareContributions) : null;
@@ -72,7 +75,7 @@ export const ReviewWelfareClaimModal: React.FC<ReviewWelfareClaimModalProps> = (
       amount_approved: isNaN(approvedVal) ? undefined : approvedVal,
       pastoral_notes: pastoralNotes.trim() || undefined,
       date_reviewed: new Date().toISOString().split('T')[0],
-      reviewed_by: settings.senior_pastor || 'Pastoral Oversight & Welfare Board',
+      reviewed_by: `${currentUser.first_name} ${currentUser.last_name}`.trim(),
     });
 
     success('Claim Review Updated', `Application ${claim.claim_number} marked as ${status.replace('_', ' ').toUpperCase()}`);
@@ -213,6 +216,7 @@ export const ReviewWelfareClaimModal: React.FC<ReviewWelfareClaimModalProps> = (
               <select
                 aria-label="Evaluation decision"
                 value={status}
+                disabled={isWelfareOfficer && claim.status === 'disbursed'}
                 onChange={(e) => setStatus(e.target.value as WelfareClaimStatus)}
                 className="w-full text-sm rounded-xl border border-slate-300 py-2.5 px-3 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 font-semibold"
               >
@@ -220,7 +224,7 @@ export const ReviewWelfareClaimModal: React.FC<ReviewWelfareClaimModalProps> = (
                 <option value="under_review">Under Investigation / Review</option>
                 <option value="approved">Approved for Disbursement</option>
                 <option value="declined">Declined</option>
-                <option value="disbursed">Already Disbursed</option>
+                <option value="disbursed" disabled={isWelfareOfficer && claim.status !== 'disbursed'}>Already Disbursed</option>
               </select>
             </div>
 
@@ -260,9 +264,11 @@ export const ReviewWelfareClaimModal: React.FC<ReviewWelfareClaimModalProps> = (
             />
           </div>
 
+          {isWelfareOfficer && <p className="text-xs text-slate-600">Finance staff process approved relief payments through Church Finance.</p>}
+
           {/* Actions */}
           <div className="pt-3 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-100">
-            {claim.status === 'approved' && status === claim.status && amountApproved === String(claim.amount_approved) ? (
+            {!isWelfareOfficer && claim.status === 'approved' && status === claim.status && amountApproved === String(claim.amount_approved) ? (
               <button
                 type="button"
                 onClick={() => {

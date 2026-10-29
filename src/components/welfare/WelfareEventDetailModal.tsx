@@ -77,7 +77,10 @@ export const WelfareEventDetailModal: React.FC<WelfareEventDetailModalProps> = (
   const canManageStaff =
     isSuperAdminOrPastor ||
     currentUser?.role === 'pastor' ||
-    currentUser?.role === 'finance_officer';
+    currentUser?.role === 'finance_officer' ||
+    currentUser?.role === 'welfare_officer';
+
+  const canManageAppeal = isSuperAdminOrPastor || currentUser.role === 'welfare_officer';
 
   // Get contributions for this event
   const eventContributions = useMemo(() => {
@@ -396,7 +399,7 @@ export const WelfareEventDetailModal: React.FC<WelfareEventDetailModalProps> = (
                 </div>
               )}
 
-              {onEditEvent && isSuperAdminOrPastor && (
+              {onEditEvent && canManageAppeal && (
                 <button
                   onClick={() => onEditEvent(event)}
                   className="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-300 shadow-2xs transition flex items-center gap-1.5"
@@ -416,7 +419,7 @@ export const WelfareEventDetailModal: React.FC<WelfareEventDetailModalProps> = (
                 Export CSV
               </button>
 
-              {isSuperAdminOrPastor && event.status === 'open' && (
+              {canManageAppeal && event.status === 'open' && (
                 <button
                   onClick={() => setIsConfirmingClose(true)}
                   className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-xl transition"
@@ -425,7 +428,7 @@ export const WelfareEventDetailModal: React.FC<WelfareEventDetailModalProps> = (
                 </button>
               )}
 
-              {isSuperAdminOrPastor && event.status === 'closed' && (
+              {canManageAppeal && event.status === 'closed' && (
                 <button
                   onClick={handleReopenEvent}
                   className="px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl transition"
@@ -624,7 +627,7 @@ export const WelfareEventDetailModal: React.FC<WelfareEventDetailModalProps> = (
                         {canManageStaff && (
                           <td className="px-3 py-2.5 text-right whitespace-nowrap">
                             <div className="flex items-center justify-end gap-1.5">
-                              {onEditContribution && (
+                              {onEditContribution && (currentUser.role !== 'welfare_officer' || (!c.finance_linked && !c.finance_transaction_id)) && (
                                 <button
                                   onClick={() => onEditContribution(c)}
                                   className="p-1 text-slate-400 hover:text-emerald-700 rounded-md transition"
@@ -633,13 +636,13 @@ export const WelfareEventDetailModal: React.FC<WelfareEventDetailModalProps> = (
                                   <Edit className="w-3.5 h-3.5" />
                                 </button>
                               )}
-                              <button
+                              {currentUser.role !== 'welfare_officer' && <button
                                 onClick={() => setContributionToDelete(c)}
                                 className="p-1 text-slate-400 hover:text-rose-600 rounded-md transition"
                                 title="Delete contribution"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              </button>}
                             </div>
                           </td>
                         )}

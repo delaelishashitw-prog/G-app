@@ -53,6 +53,7 @@ const ROLE_LABELS: Record<UserRole, { title: string; color: string }> = {
   ministry_leader: { title: 'Ministry Leader', color: 'bg-emerald-500/10 text-emerald-700 border-emerald-200' },
   attendance_officer: { title: 'Attendance Officer', color: 'bg-teal-500/10 text-teal-700 border-teal-200' },
   data_entry: { title: 'Data Entry', color: 'bg-slate-500/10 text-slate-700 border-slate-200' },
+  welfare_officer: { title: 'Welfare Officer', color: 'bg-rose-500/10 text-rose-700 border-rose-200' },
   member: { title: 'Church Member', color: 'bg-emerald-500/10 text-emerald-800 border-emerald-300' },
 };
 
@@ -303,7 +304,7 @@ export const Header: React.FC<HeaderProps> = ({
         </Link>
 
         {/* Quick Action Dropdown */}
-        <div className="relative">
+        {currentRole !== 'welfare_officer' && <div className="relative">
           <button
             onClick={() => setQuickMenuOpen(!quickMenuOpen)}
             className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg bg-[#064e3b] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold shadow-xs transition"
@@ -373,7 +374,7 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             </>
           )}
-        </div>
+        </div>}
 
         {/* Dark / Light Theme Toggle Button */}
         <button

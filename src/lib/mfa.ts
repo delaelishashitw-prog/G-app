@@ -11,7 +11,7 @@ export async function readSecurityStatus(client:SupabaseClient,role:UserRole):Pr
     || !Number.isInteger(data.verified_factors) || data.verified_factors<0 || !USER_ROLES.includes(data.role)){
     throw new Error('Account security could not be checked. Please reconnect and try again.');
   }
-  if((['super_admin','senior_pastor','administrator','finance_officer'].includes(role)||data.verified_factors>0) && !data.required){
+  if((['super_admin','senior_pastor','administrator','finance_officer','welfare_officer'].includes(role)||data.verified_factors>0) && !data.required){
     throw new Error('The account security policy needs an administrator review.');
   }
   return data;

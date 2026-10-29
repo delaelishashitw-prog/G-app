@@ -1,7 +1,7 @@
 import type { WelfareFundReceipt } from '../../types/database.types';
 import { ghanaToday } from '../../lib/financeViewUtils';
 
-export const WELFARE_FUND_READ_ROLES = ['super_admin', 'senior_pastor', 'administrator', 'finance_officer', 'pastor'];
+export const WELFARE_FUND_READ_ROLES = ['super_admin', 'senior_pastor', 'administrator', 'finance_officer', 'pastor', 'welfare_officer'];
 export const WELFARE_FUND_WRITE_ROLES = ['super_admin', 'senior_pastor', 'finance_officer'];
 export const WELFARE_FUND_VOID_ROLES = ['super_admin', 'senior_pastor'];
 export const welfareFundSources = {

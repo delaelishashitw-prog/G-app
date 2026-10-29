@@ -132,6 +132,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
     'settings',
     'audit_logs',
   ],
+  welfare_officer: ['welfare'],
   finance_officer: [
     'dashboard',
     'ai_assistant',

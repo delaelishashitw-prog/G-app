@@ -65,6 +65,11 @@ export const AppLayout: React.FC = () => {
     }
   };
 
+  const handleQuickAction = (type: 'member' | 'visitor' | 'giving' | 'attendance' | 'event') => {
+    const modules = { member: 'members', visitor: 'visitors', giving: 'giving', attendance: 'attendance', event: 'events' };
+    if (canAccess(modules[type])) setQuickActionType(type);
+  };
+
   // Keyboard shortcut system for navigation speed and productivity
   const { shortcuts } = useKeyboardShortcuts({
     onOpenSearch: () => setSearchOpen(true),
@@ -72,7 +77,7 @@ export const AppLayout: React.FC = () => {
     onOpenShortcutsHelp: () => setShortcutsHelpOpen(true),
     onToggleSidebar: () => setSidebarCollapsed((prev) => !prev),
     onRefreshData: handleGlobalRefresh,
-    onQuickAction: (type) => setQuickActionType(type),
+    onQuickAction: handleQuickAction,
     isAnyModalOpen,
     onCloseAllModals: handleCloseAllModals,
   });
@@ -87,6 +92,10 @@ export const AppLayout: React.FC = () => {
   // Members can ONLY view their personal member portal - protect admin back-office!
   if (currentRole === 'member') {
     return <Navigate to="/portal" replace />;
+  }
+
+  if (currentRole === 'welfare_officer' && location.pathname === '/') {
+    return <Navigate to="/welfare" replace />;
   }
 
   // Route-level authorization module resolution
@@ -140,8 +149,8 @@ export const AppLayout: React.FC = () => {
           onToggleMobileMenu={() => setMobileMenuOpen(true)}
           onOpenSearch={() => setSearchOpen(true)}
           onOpenNotifications={() => setNotificationsOpen(true)}
-          onOpenQuickAction={(type) => setQuickActionType(type)}
-          onOpenAssistant={() => setAiAssistantOpen(true)}
+          onOpenQuickAction={handleQuickAction}
+          onOpenAssistant={canAccess('ai_assistant') ? () => setAiAssistantOpen(true) : undefined}
           onOpenShortcutsHelp={() => setShortcutsHelpOpen(true)}
         />
 
@@ -184,10 +193,10 @@ export const AppLayout: React.FC = () => {
               </p>
               <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
                 <Link
-                  to="/"
+                  to={currentRole === 'welfare_officer' ? '/welfare' : '/'}
                   className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition shadow-xs"
                 >
-                  Return to Dashboard
+                  {currentRole === 'welfare_officer' ? 'Return to Welfare & Relief' : 'Return to Dashboard'}
                 </Link>
                 {isSimulating && (
                   <button
@@ -239,27 +248,27 @@ export const AppLayout: React.FC = () => {
       </div>
 
       {/* Floating AI Pastoral Assistant Trigger */}
-      <button
+      {canAccess('ai_assistant') && <button
         onClick={() => setAiAssistantOpen(true)}
         className="fixed bottom-6 right-6 z-40 p-3.5 bg-gradient-to-r from-emerald-900 to-[#064e3b] hover:from-emerald-800 hover:to-[#047857] text-white rounded-full shadow-2xl hover:shadow-emerald-900/50 flex items-center gap-2 border-2 border-emerald-400/40 hover:scale-105 transition duration-200 group cursor-pointer"
         title="Open Pastoral AI Assistant"
       >
         <Sparkles className="w-5 h-5 text-emerald-300 group-hover:rotate-12 transition-transform animate-pulse" />
         <span className="text-xs font-bold hidden sm:inline pr-1">Ask AI Assistant</span>
-      </button>
+      </button>}
 
       {/* Modals */}
       <GlobalSearchModal
         isOpen={searchOpen}
         onClose={() => setSearchOpen(false)}
-        onQuickAction={(type) => setQuickActionType(type)}
-        onOpenAssistant={() => setAiAssistantOpen(true)}
+        onQuickAction={handleQuickAction}
+        onOpenAssistant={canAccess('ai_assistant') ? () => setAiAssistantOpen(true) : undefined}
         onOpenShortcutsHelp={() => setShortcutsHelpOpen(true)}
         onToggleSidebar={() => setSidebarCollapsed((prev) => !prev)}
         onRefreshData={handleGlobalRefresh}
       />
       <NotificationModal isOpen={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
-      <AiAssistantModal isOpen={aiAssistantOpen} onClose={() => setAiAssistantOpen(false)} />
+      <AiAssistantModal isOpen={aiAssistantOpen && canAccess('ai_assistant')} onClose={() => setAiAssistantOpen(false)} />
       <KeyboardShortcutsModal
         isOpen={shortcutsHelpOpen}
         onClose={() => setShortcutsHelpOpen(false)}

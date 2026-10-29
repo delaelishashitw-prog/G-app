@@ -50,6 +50,7 @@ export const RecordWelfareEventContributionModal: React.FC<
     updateEventContribution,
   } = useChurchData();
   const { currentUser } = useAuth();
+  const canPostToFinance = currentUser.role !== 'welfare_officer';
   const { success, warning, error: toastError } = useToast();
 
   const activeMembers = members.filter((m) => !m.is_archived);
@@ -72,7 +73,7 @@ export const RecordWelfareEventContributionModal: React.FC<
   const [paymentStatus, setPaymentStatus] = useState<'confirmed' | 'pending' | 'failed' | 'voided'>('confirmed');
 
   // Finance Integration State
-  const [linkToChurchFinance, setLinkToChurchFinance] = useState(true);
+  const [linkToChurchFinance, setLinkToChurchFinance] = useState(canPostToFinance);
   const [selectedAccountId, setSelectedAccountId] = useState('');
 
   // Duplicate Submission Confirmation State
@@ -134,11 +135,11 @@ export const RecordWelfareEventContributionModal: React.FC<
       setReferenceNo('');
       setNotes('');
       setPaymentStatus('confirmed');
-      setLinkToChurchFinance(true);
+      setLinkToChurchFinance(canPostToFinance);
       setShowDuplicateWarning(false);
       setConfirmDuplicateProceed(false);
     }
-  }, [isOpen, contributionToEdit, preselectedEventId, preselectedMemberId, welfareEvents, members, churchAccounts]);
+  }, [isOpen, contributionToEdit, preselectedEventId, preselectedMemberId, welfareEvents, members, churchAccounts, canPostToFinance]);
 
   // When selected member changes, update contributor name and phone
   const handleMemberSelect = (selectedId: string) => {
@@ -642,7 +643,7 @@ export const RecordWelfareEventContributionModal: React.FC<
           </div>
 
           {/* Finance Integration Option */}
-          {!contributionToEdit && paymentStatus === 'confirmed' && (
+          {canPostToFinance && !contributionToEdit && paymentStatus === 'confirmed' && (
             <div className="p-3.5 bg-emerald-50/70 rounded-xl border border-emerald-200 space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -679,6 +680,8 @@ export const RecordWelfareEventContributionModal: React.FC<
               )}
             </div>
           )}
+
+          {!canPostToFinance && <p className="text-xs text-slate-600">This records the welfare contribution. Finance staff handle treasury posting.</p>}
 
           {/* Footer Buttons */}
           <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-3">

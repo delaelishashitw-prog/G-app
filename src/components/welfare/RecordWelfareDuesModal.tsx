@@ -77,7 +77,7 @@ export const RecordWelfareDuesModal: React.FC<RecordWelfareDuesModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-      <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+      <div role="dialog" aria-modal="true" aria-label="Record Welfare Dues" className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="px-6 py-4 bg-emerald-800 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
