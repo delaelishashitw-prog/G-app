@@ -8,6 +8,13 @@ jobs:
     runs-on: ubuntu-latest
     environment: gwcc-staging-security
     timeout-minutes: 12
+    env:
+      GWCC_STAGING_API_ORIGIN: https://g-app-git-feature-pastoral-ai-phase2-dickedem.vercel.app
+      GWCC_STAGING_SUPABASE_URL: https://gvnkviqnjyrsilorlofx.supabase.co
+      GWCC_STAGING_FULL_MATRIX: 'true'
+      GWCC_STAGING_ANON_KEY: ${{ secrets.GWCC_STAGING_ANON_KEY }}
+      GWCC_STAGING_VERCEL_BYPASS_SECRET: ${{ secrets.GWCC_STAGING_VERCEL_BYPASS_SECRET }}
+      GWCC_STAGING_TEST_USERS: ${{ secrets.GWCC_STAGING_TEST_USERS }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
