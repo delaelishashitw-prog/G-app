@@ -1,113 +1,11 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type {
-  AssetMaintenanceLog,
-  ChurchAsset,
   FoundationCohort,
   FoundationStudent,
   FoundationStudentStatus,
-  Member,
   RosterAssignment,
   RosterConflict,
 } from '../../types/database.types';
-
-export function addAsset(
-  data: Omit<ChurchAsset, 'id' | 'created_at'>,
-  setAssets: Dispatch<SetStateAction<ChurchAsset[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void
-): ChurchAsset {
-  const newAsset: ChurchAsset = {
-    ...data,
-    id: `ast-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-
-  setAssets((prev) => [newAsset, ...prev]);
-  logAction(
-    'CREATE_ASSET',
-    'Inventory',
-    `Registered asset [${data.asset_tag}] ${data.name} (${data.category}) valued at GH₵ ${data.purchase_cost.toFixed(2)}`,
-    newAsset.id
-  );
-  return newAsset;
-}
-
-export function updateAsset(
-  id: string,
-  updates: Partial<ChurchAsset>,
-  setAssets: Dispatch<SetStateAction<ChurchAsset[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void
-) {
-  setAssets((prev) =>
-    prev.map((asset) => {
-      if (asset.id !== id) return asset;
-
-      const updated = {
-        ...asset,
-        ...updates,
-        updated_at: new Date().toISOString(),
-      };
-      logAction(
-        'UPDATE_ASSET',
-        'Inventory',
-        `Updated asset [${asset.asset_tag}] ${asset.name} (Condition: ${updates.current_condition || asset.current_condition})`,
-        id
-      );
-      return updated;
-    })
-  );
-}
-
-export function deleteAsset(
-  id: string,
-  assets: ChurchAsset[],
-  setAssets: Dispatch<SetStateAction<ChurchAsset[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void
-) {
-  const toDelete = assets.find((asset) => asset.id === id);
-  setAssets((prev) => prev.filter((asset) => asset.id !== id));
-  if (toDelete) {
-    logAction(
-      'DELETE_ASSET',
-      'Inventory',
-      `Decommissioned/deleted asset [${toDelete.asset_tag}] ${toDelete.name}`,
-      id
-    );
-  }
-}
-
-export function addAssetMaintenanceLog(
-  assetId: string,
-  logData: Omit<AssetMaintenanceLog, 'id'>,
-  setAssets: Dispatch<SetStateAction<ChurchAsset[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void
-) {
-  const newLog: AssetMaintenanceLog = {
-    ...logData,
-    id: `mlog-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-  };
-
-  setAssets((prev) =>
-    prev.map((asset) => {
-      if (asset.id !== assetId) return asset;
-
-      const existingLogs = asset.maintenance_logs || [];
-      const updated = {
-        ...asset,
-        last_service_date: logData.service_date,
-        maintenance_logs: [newLog, ...existingLogs],
-        updated_at: new Date().toISOString(),
-      };
-      logAction(
-        'RECORD_MAINTENANCE',
-        'Inventory',
-        `Logged ${logData.service_type} for asset [${asset.asset_tag}] ${asset.name} by ${logData.technician_vendor} (GH₵ ${logData.cost.toFixed(2)})`,
-        assetId
-      );
-      return updated;
-    })
-  );
-}
 
 export function addRosterAssignment(
   data: Omit<RosterAssignment, 'id' | 'created_at'>,
@@ -364,38 +262,6 @@ export function toggleFoundationModule(
         status: student.status === 'graduated' ? 'graduated' : nextStatus,
       };
       logAction('TOGGLE_FOUNDATION_MODULE', 'Discipleship', `Updated ${student.member_name} module ${moduleNumber} completion state (${completedModules.length}/5)`, studentId);
-      return updated;
-    })
-  );
-}
-
-export function graduateFoundationStudent(
-  studentId: string,
-  certificateNo: string | undefined,
-  setFoundationStudents: Dispatch<SetStateAction<FoundationStudent[]>>,
-  setMembers: Dispatch<SetStateAction<Member[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void
-) {
-  const today = new Date().toISOString().split('T')[0];
-  const certNumber = certificateNo || `GWCC-FS-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
-
-  setFoundationStudents((prev) =>
-    prev.map((student) => {
-      if (student.id !== studentId) return student;
-
-      const updated: FoundationStudent = {
-        ...student,
-        status: 'graduated',
-        graduation_date: today,
-        certificate_no: certNumber,
-        completed_modules: [1, 2, 3, 4, 5],
-      };
-      setMembers((members) =>
-        members.map((member) =>
-          member.id === student.member_id ? { ...member, membership_class_completed: true } : member
-        )
-      );
-      logAction('GRADUATE_FOUNDATION_STUDENT', 'Discipleship', `Graduated ${student.member_name} from Foundation School with Certificate ${certNumber}`, studentId);
       return updated;
     })
   );

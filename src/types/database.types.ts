@@ -840,6 +840,7 @@ export interface AssetMaintenanceLog {
 }
 
 export interface ChurchAsset {
+  _sync_status?: 'pending';
   id: string;
   asset_tag: string;
   name: string;
@@ -933,6 +934,7 @@ export interface FoundationCohort {
 }
 
 export interface FoundationStudent {
+  updated_at?: string;
   _sync_status?: 'pending';
   id: string;
   cohort_id: string;

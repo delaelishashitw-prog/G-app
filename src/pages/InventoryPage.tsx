@@ -1,3 +1,4 @@
+import { OPERATION_SAVE_NOTICE } from '../features/operations/durableOperations';
 import React, { useState, useMemo } from 'react';
 import {
   Package,
@@ -115,11 +116,11 @@ export const InventoryPage: React.FC = () => {
     setIsAddEditOpen(true);
   };
 
-  const handleSaveAsset = (assetData: Omit<ChurchAsset, 'id' | 'created_at'>) => {
+  const handleSaveAsset = async (assetData: Omit<ChurchAsset, 'id' | 'created_at'>, requestId:string) => {
     if (assetToEdit) {
-      updateAsset(assetToEdit.id, assetData);
+      await updateAsset(assetToEdit.id, assetData,assetToEdit.updated_at);
     } else {
-      addAsset(assetData);
+      await addAsset(assetData,requestId);
     }
   };
 
@@ -358,7 +359,7 @@ export const InventoryPage: React.FC = () => {
                       </span>
                     </td>
                     <td className="py-3.5 px-4 font-semibold text-slate-900 max-w-xs">
-                      <div className="truncate">{asset.name}</div>
+                      <div className="truncate">{asset.name}</div>{asset._sync_status==='pending'&&<p className="text-xs text-amber-800 mt-1">Awaiting cloud confirmation</p>}
                       {(asset.brand || asset.model) && (
                         <div className="text-[10px] text-slate-400 font-normal">
                           {asset.brand} {asset.model} {asset.serial_number ? `• S/N: ${asset.serial_number}` : ''}
@@ -424,7 +425,7 @@ export const InventoryPage: React.FC = () => {
 
                 <h4 className="text-sm font-bold text-slate-900 group-hover:text-emerald-800 transition line-clamp-2">
                   {asset.name}
-                </h4>
+                </h4>{asset._sync_status==='pending'&&<p className="text-xs text-amber-800">Awaiting cloud confirmation</p>}
 
                 <p className="text-[11px] text-slate-500 mt-1">
                   {CATEGORY_NAMES[asset.category] || asset.category} • {asset.department}
@@ -486,15 +487,15 @@ export const InventoryPage: React.FC = () => {
         <AssetDetailModal
           isOpen={!!selectedAssetForDetail}
           onClose={() => setSelectedAssetForDetail(null)}
-          asset={selectedAssetForDetail}
+          asset={assets.find(row=>row.id===selectedAssetForDetail.id)||selectedAssetForDetail}
           onEdit={(a) => {
             setSelectedAssetForDetail(null);
             handleOpenEdit(a);
           }}
-          onDelete={(id) => {
-            deleteAsset(id);
+          onDelete={async (id) => {
+            await deleteAsset(id);
             setSelectedAssetForDetail(null);
-            toastSuccess('Asset Deleted', 'Asset record has been permanently removed.');
+            toastSuccess('Asset deletion queued', OPERATION_SAVE_NOTICE);
           }}
           onRecordMaintenance={addAssetMaintenanceLog}
         />

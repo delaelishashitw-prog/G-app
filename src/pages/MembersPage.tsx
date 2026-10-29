@@ -1,3 +1,4 @@
+import { MemberPortalAccessModal } from '../components/members/MemberPortalAccessModal';
 import React, { useState, useMemo } from 'react';
 import {
   Users,
@@ -72,6 +73,8 @@ import {
   getMemberAgeGroup,
 } from '../lib/familyUtils';
 
+const MemberActivationPanel=React.lazy(()=>import('../components/members/MemberActivationPanel'));
+
 export const MemberAvatar: React.FC<{
   photoUrl?: string;
   firstName: string;
@@ -131,7 +134,7 @@ export const MembersPage: React.FC = () => {
     toggleFoundationModule,
     graduateFoundationStudent,
   } = useChurchData();
-  const { canAccess, currentRole } = useAuth();
+  const { canAccess, currentRole, currentUser } = useAuth();
   const { success, error, warning, info } = useToast();
 
   const handleRefresh = async () => {
@@ -266,6 +269,9 @@ export const MembersPage: React.FC = () => {
   const [memberToArchive, setMemberToArchive] = useState<Member | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);
   const [isFoundationSchoolOpen, setIsFoundationSchoolOpen] = useState(false);
+  const [activationOpen,setActivationOpen]=useState(false);
+  const [activationMember,setActivationMember]=useState<Member|null>(null);
+  const [activationRefresh,setActivationRefresh]=useState(0);
   const [isBulkOperationsOpen, setIsBulkOperationsOpen] = useState(false);
   const [isBatchArchiveOpen, setIsBatchArchiveOpen] = useState(false);
   const [isPrintDirectoryOpen, setIsPrintDirectoryOpen] = useState(false);
@@ -934,9 +940,9 @@ export const MembersPage: React.FC = () => {
               </p>
             </div>
 
-            <div className="flex items-center flex-wrap gap-2.5">
+            <div className="flex items-center flex-wrap min-w-0 max-w-full gap-2.5">
               {/* View Mode Switcher */}
-              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 shadow-2xs">
+              <div className="flex flex-wrap max-w-full items-center bg-slate-100 p-1 rounded-xl border border-slate-200 shadow-2xs">
                 <button
                   onClick={() => handleSetViewMode('cards')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
@@ -990,6 +996,7 @@ export const MembersPage: React.FC = () => {
                 <span>Demographics</span>
               </button>
 
+              {currentRole==='super_admin'&&<button type="button" onClick={()=>setActivationOpen(true)} className="px-3.5 py-2 rounded-xl border border-emerald-300 bg-white text-emerald-950 text-xs font-bold">Portal activation</button>}
               {/* Discipleship & Foundation School Button */}
               <button
                 type="button"
@@ -2069,6 +2076,11 @@ export const MembersPage: React.FC = () => {
         />
       )}
 
+      {activationOpen&&currentRole==='super_admin'&&<React.Suspense fallback={<p role="status">Loading activation dashboard…</p>}><MemberActivationPanel key={`${currentUser.id}:${currentRole}`} refreshKey={activationRefresh} onClose={()=>setActivationOpen(false)} onManage={id=>{
+        const member=members.find(row=>row.id===id);
+        if(member)setActivationMember(member);else error('Refresh the member directory before reviewing this account.');
+      }} /></React.Suspense>}
+      {activationMember&&currentRole==='super_admin'&&<MemberPortalAccessModal key={`${currentUser.id}:${activationMember.id}`} member={activationMember} onClose={()=>{setActivationMember(null);setActivationRefresh(value=>value+1);}} />}
       {/* MODAL 5: FOUNDATION SCHOOL & DISCIPLESHIP */}
       <FoundationSchoolModal
         isOpen={isFoundationSchoolOpen}
