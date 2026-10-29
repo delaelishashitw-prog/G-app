@@ -100,7 +100,15 @@ export async function checkMemberDirectory(browser,{origin,settings,sampleMember
   const retries=f.writes.filter(body=>body.p_operation_id===memberBatch.id);assert.ok(retries.length>=2);assert.deepEqual(retries.at(-1),retries[0]);
   await f.page.getByRole('button',{name:'Back to Members',exact:true}).click();
   f.loseNextReply();modal=await register(f,'Interrupted','Member');await modal.getByRole('button',{name:'Register Church Member',exact:true}).click();
-  await f.page.getByText('Synthetic confirmation interrupted',{exact:false}).first().waitFor();await f.page.reload();await waitForSync(f.page);
+  // The cloud accepts the write before its reply is lost. Background retry may clear the
+  // short-lived error message before Playwright observes it; verify the durable outcome.
+  for(let attempt=0;attempt<150&&!f.tables.members.some(row=>row.first_name==='Interrupted');attempt++)
+   await new Promise(resolve=>setTimeout(resolve,100));
+  const interruptedCalls=f.writes.filter(body=>body.p_changes.some(change=>change.table==='members'&&change.record?.first_name==='Interrupted'));
+  assert.ok(interruptedCalls.length>=1,'The interrupted registration reached the synthetic cloud');
+  assert.ok(interruptedCalls.every(body=>body.p_operation_id===interruptedCalls[0].p_operation_id),'Lost-response retries retain the original operation ID');
+  assert.equal(f.tables.members.filter(row=>row.first_name==='Interrupted').length,1,'The lost reply must not create duplicate cloud members');
+  await f.page.reload();await waitForSync(f.page);
   assert.equal(f.tables.members.filter(row=>row.first_name==='Interrupted').length,1,'Lost confirmations cannot create a second member');
   console.info('Directory phase complete');await close(f.context);f=await fixture();await open(f);await waitForSync(f.page);
   stage='editing';console.info('Directory: edit retry checks starting');
