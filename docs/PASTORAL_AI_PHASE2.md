@@ -1,5 +1,16 @@
 # GWCC Pastoral AI — Phase 2 (development branch only)
 
+## Current release review (29 October 2026)
+
+**Status: automated verification passed; draft PR #32 remains unmerged; no production rollout authorized.** Older dated sections below are historical setup/QA snapshots, not the current account-creation status.
+
+- The Phase 2 feature branch is 18 commits ahead of `main` and not behind as of review. GitHub Actions **Verify app** run **#142**, commit `245939ec49557002c3ad820568f3d6f709bf6bfb`, completed successfully: 284 unit tests passed, all browser smoke tests including Events and Member Directory passed, schema-generation diff check passed, and the production-dependency audit reported 0 vulnerabilities. Vercel commit status is successful. These test runs use synthetic fixtures.
+- Isolated staging project `GWCC Staging` (`gvnkviqnjyrsilorlofx`) has a verified Super Administrator, two approved Pastor test accounts, two approved Administrator test accounts, and one linked Member Portal test account. Accounts were created via Supabase Auth, not by writing directly to `auth.users`. User-confirmed browser tests: Super Administrator Pastoral Intelligence, Pastor AI Assistant access, Administrator AI Assistant access after MFA, Member Portal access, and member redirect away from staff-only Assistant. The second Administrator had one verified MFA factor and an `aal2` session at inspection.
+- Read-only security review verified `gwcc_follow_up_list` invokes `gwcc_private.follow_up_list`, whose query filters tasks with `gwcc_private.task_visible` and checks staff security state. Synthetic task visibility checks showed that Administrator and Member cannot see a Pastor's pastoral task, while the assigned Pastor can. Direct `gwcc_documents` and `visitors` SELECT policies rely on `gwcc_can_read`; under the reviewed function, Administrator does not receive direct permission to read follow-up task documents.
+- **Remaining live release acceptance:** a deliberate end-to-end HTTP/API test with authenticated staging identities confirming `403` for Member and excluded staff on `/api/ai/pastoral-overview`, `200` for each permitted role after MFA where required, and confidential pastoral-task denial for Administrator through the actual app/RPC. Confirm suspended/unreviewed accounts and role revocation fail closed, preview deployment is still protected and points to staging, and check there are no private fields in responses. The successful browser navigation and SQL helper checks are not substitutes for those account-specific negative tests.
+- PR #32 had no submitted review or inline review threads at this check. Obtain an independent security/code review and explicit production release approval before changing draft status, merging or deploying. **Do not merge into `main` automatically.** Production frontend and Supabase remain unchanged by these Phase 2 staging checks.
+
+
 This release adds a separate AI UI permission and a read-only Pastoral Intelligence panel.
 
 ## Security boundary
