@@ -4,6 +4,7 @@ import path from 'node:path';
 import { aiHandler } from './server/ai.js';
 import { attendanceInsightsHandler } from './server/aiAttendance.js';
 import { attendanceReportHandler } from './server/aiAttendanceReport.js';
+import { pastoralOverviewHandler } from './server/aiPastoralOverview.js';
 import { staffHandler } from './server/staff.js';
 import { smsHandler } from './server/sms.js';
 
@@ -16,6 +17,7 @@ app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 app.all('/api/ai/assistant', aiHandler);
 app.all('/api/ai/attendance-insights', attendanceInsightsHandler);
 app.all('/api/ai/attendance-report', attendanceReportHandler);
+app.all('/api/ai/pastoral-overview', pastoralOverviewHandler);
 app.all('/api/staff', staffHandler);
 app.all('/api/sms', smsHandler);
 app.use('/api', (_req,res) => res.status(404).json({ error:'Endpoint not found' }));

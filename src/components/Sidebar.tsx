@@ -173,7 +173,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           name: 'AI Pastoral Assistant',
           path: '/assistant',
           icon: Sparkles,
-          module: 'dashboard',
+          module: 'ai_assistant',
           badge: 'AI',
           badgeColor: 'bg-emerald-400 text-slate-950 font-bold',
         },
