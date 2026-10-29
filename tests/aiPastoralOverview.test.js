@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { pastoralOverviewHandler, summarizeVisitors, summarizeAssignedTasks } from '../server/aiPastoralOverview.js';
 
-function harness({ role = 'pastor', body = {}, visitorRows = [], tasks = [], visitorError = null, taskError = null } = {}) {
+function harness({ role = 'pastor', body = {}, visitorRows = [], tasks = [], visitorError = null, taskError = null, recheckProfile = null } = {}) {
   let queriedVisitors = 0, queriedTasks = 0, checks = 0;
   const client = {
     from(name) {
@@ -24,7 +24,7 @@ function harness({ role = 'pastor', body = {}, visitorRows = [], tasks = [], vis
   const authorization = async (_req, options) => {
     checks++;
     assert.deepEqual([...options.roles], ['super_admin','senior_pastor','administrator','pastor']);
-    return { client, profile: { role, id: 'user-1' } };
+    return { client, profile: checks > 1 && recheckProfile ? recheckProfile : { role, id: 'user-1' } };
   };
   const result = { status: 0, data: null, headers: {} };
   const res = {
@@ -133,4 +133,27 @@ test('visitor database failures prevent any follow-up query and report', async (
   assert.equal(result.status, 503);
   assert.equal(result.queriedVisitors, 1);
   assert.equal(result.queriedTasks, 0);
+});
+
+
+test('overview denies a switched identity on the final authorization check', async () => {
+  const result = await harness({
+    role: 'pastor',
+    visitorRows: [{ id: 'v1', follow_up_status: 'new' }],
+    recheckProfile: { role: 'administrator', id: 'different-user' },
+  }).run();
+  assert.equal(result.status, 403);
+  assert.equal(result.checks, 2);
+  assert.equal(result.data.visitors, undefined);
+  assert.equal(result.data.myTasks, undefined);
+});
+
+test('overview denies an account that becomes unavailable at the final security check', async () => {
+  const result = await harness({
+    role: 'administrator',
+    recheckProfile: { role: 'administrator', id: null },
+  }).run();
+  assert.equal(result.status, 403);
+  assert.equal(result.checks, 2);
+  assert.equal(result.data.visitors, undefined);
 });
