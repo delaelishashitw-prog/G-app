@@ -7,7 +7,7 @@ This test package provides **real HTTP/API checks**, not mocked browser authoriz
 - GitHub Actions workflow: `.github/workflows/staging-pastoral-security.yml`, **manually triggered only**.
 - Staging test runner: `scripts/staging-pastoral-security.mjs`.
 - Unit tests: `tests/stagingPastoralSecurity.test.js` (run by ordinary `npm test`).
-- The workflow currently has **no secret injection**. Running it before connecting the secrets will fail at configuration validation. This is deliberate; a missing secret must never silently count as a pass. **Never paste credentials or MFA secrets into code, workflow YAML, issue comments, chat, or logs.**
+- The workflow now declares staging-only environment variables and references GitHub environment secrets. **The secrets themselves have not been configured or verified.** Running without them fails at configuration validation. A missing secret must never silently count as a pass. **Never paste credentials or MFA secrets into code, workflow YAML, issue comments, chat, or logs.**
 - A repository administrator must configure a dedicated `gwcc-staging-security` GitHub Actions environment with required reviewers, environment secrets, and the runner's env mappings. Do not enable this on untrusted pull-request code.
 - Use **distinct, synthetic staging-only accounts** for every tested role. Prefer dedicated CI service testers rather than human accounts.
 
@@ -21,7 +21,7 @@ Configure these *environment secrets*:
 | `GWCC_STAGING_VERCEL_BYPASS_SECRET` | Dedicated Vercel Automation Bypass secret for protected staging preview, not production |
 | `GWCC_STAGING_TEST_USERS` | JSON object of staging-only synthetic test credentials; never production credentials |
 
-Set the workflow step environment to read the three secret values and provide two *literal* non-secret URLs. An administrator can add this `env` block to the workflow's `staging-security` job after approving the setup:
+The workflow's `staging-security` job already contains this non-secret staging URL mapping and references protected environment secrets:
 
 ```yaml
     env:
@@ -72,8 +72,8 @@ The suite does **not** test revocation of active sessions by mutating users in C
 ## Execution
 
 1. Complete protected GitHub environment and dedicated staging account setup.
-2. Review the code changes and merge the separate test PR only after checking there are no secrets.
-3. In GitHub **Actions**, choose **Staging pastoral security acceptance** → **Run workflow** on the reviewed branch.
+2. Review and merge the test-only PR after verifying that no secrets are in Git and that the branch has been reconciled with the current `main` branch. GitHub's manual `workflow_dispatch` workflows normally need to exist on the default branch before they can be selected in the Actions UI.
+3. Configure the protected environment and secrets before selecting **Staging pastoral security acceptance** → **Run workflow** on the reviewed commit.
 4. Verify every expected role check is recorded as PASS; any FAIL or missing secret means **not accepted**.
 5. Record the run URL and commit, then decide on release remediation without changing production during the test.
 
