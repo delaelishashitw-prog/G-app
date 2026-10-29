@@ -3,6 +3,7 @@ export type UserRole =
   | 'senior_pastor'
   | 'administrator'
   | 'finance_officer'
+  | 'welfare_officer'
   | 'pastor'
   | 'ministry_leader'
   | 'attendance_officer'

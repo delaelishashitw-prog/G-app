@@ -1629,3 +1629,60 @@ test('graduation repair restores only the derived member flag, preserves history
     assert.equal((await db.query("SELECT count(*)::int AS n FROM public.audit_logs WHERE action='REPAIR_FOUNDATION_COMPLETION' AND record_id='completion-repair'")).rows[0].n,1);
   }finally{await db.close();}
 });
+
+test('welfare officers can record dues and review relief with MFA, without treasury, staff or unrelated record access',async()=>{
+  const db=await setupDatabase();
+  try {
+    await db.exec("INSERT INTO public.members(id,member_id,first_name,last_name,email,phone,status,is_archived) VALUES('officer-member','GWCC-OFFICER','Synthetic','Beneficiary','beneficiary@example.test','0240000000','active',false)");
+    await asUser(db,root,async()=>{
+      const result=(await db.query('SELECT public.gwcc_manage_profile($1,$2) p',[other,JSON.stringify({role:'welfare_officer',first_name:'Synthetic',last_name:'Officer'})])).rows[0].p;
+      assert.equal(result.role,'welfare_officer');assert.ok(result.authorization_reviewed_at);
+    });
+    await asUser(db,other,async()=>{
+      const security=(await db.query('SELECT public.gwcc_security_status() s')).rows[0].s;
+      assert.equal(security.required,true);assert.equal(security.satisfied,false);
+      assert.equal((await db.query("SELECT public.gwcc_can_read('welfare_claims') ok")).rows[0].ok,false);
+      await assert.rejects(apply(db,[upsert('welfare_contributions',{id:'pre-mfa',amount:20})]),/authorized|authorization/);
+    },{role:'authenticated',aal:'aal1',session_id:other});
+    await asUser(db,other,async()=>{
+      const read=['members','welfare_contributions','welfare_claims','welfare_events','welfare_event_contributions','welfare_fund_receipts'];
+      const write=read.filter(t=>!['members','welfare_fund_receipts'].includes(t));
+      for(const table of [...read,'profiles','settings','audit_logs','church_accounts','church_finances','giving','pledges','pastoral_care','prayer_requests','visitors','communications','attendance','services','events','assets','foundation_students']){
+        const flags=(await db.query('SELECT public.gwcc_can_read($1) r, public.gwcc_can_write($1) w',[table])).rows[0];
+        assert.equal(flags.r,read.includes(table),`read ${table}`);assert.equal(flags.w,write.includes(table),`write ${table}`);
+      }
+      assert.equal((await db.query('SELECT id FROM public.members')).rows.length,1);
+      const dues={id:'officer-dues',member_id:'officer-member',member_name:'Synthetic Beneficiary',amount:20,date:'2026-10-29',month:'2026-10',payment_method:'cash',recorded_by:'Forged reviewer'};
+      const request=[upsert('welfare_contributions',dues)],id=operation();
+      const result=(await apply(db,request,id)).rows[0].result;
+      assert.equal(result[0].record.recorded_by,'Synthetic Officer');
+      assert.deepEqual((await apply(db,request,id)).rows[0].result,result);
+      assert.equal((await db.query('SELECT count(*)::int n FROM public.welfare_contributions')).rows[0].n,1);
+      for(const patch of [{amount:-1},{amount:0},{amount:'NaN'},{amount:0.001},{member_id:'missing'},{month:'2026-99'}])await assert.rejects(apply(db,[upsert('welfare_contributions',{...dues,...patch,id:crypto.randomUUID()})]));
+      await assert.rejects(apply(db,[{table:'welfare_contributions',id:dues.id,operation:'delete'}]),/preserve records/);
+      const claim={id:'officer-claim',claim_number:'BEN-OFFICER',beneficiary_type:'church_member',member_id:'officer-member',member_name:'Synthetic Beneficiary',category:'emergency_relief',title:'Synthetic relief',description:'Synthetic request',amount_requested:50,amount_approved:0,status:'pending',date_submitted:'2026-10-29'};
+      let saved=(await apply(db,[upsert('welfare_claims',claim)])).rows[0].result[0].record;
+      saved=(await apply(db,[upsert('welfare_claims',{...saved,status:'approved',amount_approved:30,reviewed_by:'Senior Pastor',date_reviewed:'1900-01-01'},saved.updated_at)])).rows[0].result[0].record;
+      assert.equal(saved.reviewed_by,'Synthetic Officer');assert.notEqual(saved.date_reviewed,'1900-01-01');assert.equal(saved.amount_approved,30);
+      for(const patch of [{amount_disbursed:1},{disbursements:[{amount:1,finance_transaction_id:'fake'}]},{finance_account_id:'bank'},{disbursement_date:'2026-10-29'},{status:'disbursed'}])await assert.rejects(apply(db,[upsert('welfare_claims',{...saved,...patch},saved.updated_at)]),/finance|payment|payout/);
+      await assert.rejects(apply(db,[{table:'welfare_claims',id:saved.id,operation:'delete'}]),/preserve records/);
+      const event={id:'officer-appeal',title:'Synthetic appeal',category:'emergency_relief',member_id:'officer-member',member_name:'Synthetic Beneficiary',description:'Synthetic appeal',end_date:'2026-11-30',minimum_contribution:20,status:'open',created_by:'Synthetic Officer'};
+      await apply(db,[upsert('welfare_events',event)]);
+      const contribution={id:'officer-appeal-receipt',event_id:event.id,member_id:'officer-member',contributor_name:'Synthetic Beneficiary',amount:20,payment_date:'2026-10-29',payment_method:'cash',payment_status:'confirmed',recorded_by:'Forged actor',finance_linked:false};
+      const appealReceipt=(await apply(db,[upsert('welfare_event_contributions',contribution)])).rows[0].result[0].record;
+      assert.equal(appealReceipt.recorded_by,'Synthetic Officer');
+      for(const patch of [{finance_linked:true},{finance_transaction_id:'receipt'},{finance_account_id:'bank'}])await assert.rejects(apply(db,[upsert('welfare_event_contributions',{...appealReceipt,...patch},appealReceipt.updated_at)]),/Finance staff/);
+      await assert.rejects(apply(db,[{table:'welfare_events',id:event.id,operation:'delete'}]),/preserve records/);
+      await assert.rejects(db.query('SELECT public.gwcc_manage_profile($1,$2)',[other,JSON.stringify({role:'super_admin'})]),/super administrator/);
+      for(const table of ['church_finances','church_accounts','giving','members','welfare_fund_receipts'])await assert.rejects(apply(db,[upsert(table,{id:`officer-denied-${table}`,amount:20})]),/authorized|authorization/);
+    });
+    assert.equal((await db.query("SELECT count(*)::int n FROM public.audit_logs WHERE actor_id=$1 AND module='welfare_contributions'",[other])).rows[0].n,1);
+    for(const updates of ['authorization_reviewed_at=NULL','authorization_reviewed_at=now(),is_active=false']){
+      await db.exec(`UPDATE public.profiles SET ${updates} WHERE id='${other}'`);
+      await asUser(db,other,async()=>{assert.equal((await db.query("SELECT public.gwcc_can_read('welfare_claims') ok")).rows[0].ok,false);});
+    }
+    const migration=fs.readdirSync('supabase/migrations').find(name=>name.endsWith('_welfare_officer_access.sql'));
+    await db.exec(fs.readFileSync(`supabase/migrations/${migration}`,'utf8'));
+    assert.equal((await db.query("SELECT has_function_privilege('authenticated','gwcc_private.prepare_welfare_officer_mutation(text,text,jsonb,jsonb)','EXECUTE') ok")).rows[0].ok,false);
+  }finally{await db.close();}
+});

@@ -2,7 +2,7 @@ import type { SupabaseClient, User } from '@supabase/supabase-js';
 import type { UserProfile, UserRole } from '../types/database.types';
 import {authRequestError} from './authConnectivity';
 
-export const USER_ROLES: UserRole[] = ['super_admin', 'senior_pastor', 'administrator', 'finance_officer', 'pastor', 'ministry_leader', 'attendance_officer', 'data_entry', 'member'];
+export const USER_ROLES: UserRole[] = ['super_admin', 'senior_pastor', 'administrator', 'finance_officer', 'welfare_officer', 'pastor', 'ministry_leader', 'attendance_officer', 'data_entry', 'member'];
 
 /** Authorization comes exclusively from the protected profile, never user_metadata. */
 export async function readVerifiedProfile(client: SupabaseClient, user: User): Promise<UserProfile> {

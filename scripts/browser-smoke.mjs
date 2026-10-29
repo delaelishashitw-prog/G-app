@@ -6,6 +6,7 @@ import {checkAppReviewCorrections} from './app-review-browser-checks.mjs';
 import {checkAuthLinks} from './auth-links-browser-checks.mjs';
 import {checkAiAgent} from './ai-agent-browser-checks.mjs';
 import assert from 'node:assert/strict';
+import {checkWelfareOfficer} from './welfare-officer-browser-checks.mjs';
 import {spawn} from 'node:child_process';
 import {chromium} from 'playwright';
 import {initialSettings,sampleMembers} from '../src/lib/initialData.ts';
@@ -43,7 +44,9 @@ try{
   }
   const invalidJson=await fetch(`${origin}/api/staff`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{bad'});assert.equal(invalidJson.status,400);
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{channel:'chromium'}),args:['--no-sandbox']});
-  if(process.env.TEST_SCOPE==='operations'){
+  if(process.env.TEST_SCOPE==='welfare-officer'){
+    await checkWelfareOfficer(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  }else if(process.env.TEST_SCOPE==='operations'){
     await checkReliableOperations(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   }else if(process.env.TEST_SCOPE==='reports'){
     await checkReportsAndRecovery(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
@@ -55,6 +58,7 @@ try{
     await checkEvents(browser,{origin});
   }else if(process.env.TEST_SCOPE==='welfare-funds'){
     await checkWelfareFunds(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  await checkWelfareOfficer(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   }else if(process.env.TEST_SCOPE==='ai'){
     await checkAiAgent(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   }else if(process.env.TEST_SCOPE==='auth-links'){
@@ -262,6 +266,7 @@ try{
   await checkEvents(browser,{origin});
   await checkPledges(browser,{origin});
   await checkWelfareFunds(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  await checkWelfareOfficer(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   console.info(`Browser smoke passed: mobile authorization, ${pages.length} signed-in pages, member invitation/linking/suspension guards/password help/password setup/portal, welfare arrears/defaulter filters/CSV/partial claim approval/member portal, durable draft retry, and logout cache clearing.`);
   }
 }finally{

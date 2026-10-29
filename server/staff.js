@@ -4,7 +4,7 @@ import process from 'node:process';
 import { authorizeRequest, serverSupabaseConfig, HttpError, requirePost, sendError } from './security.js';
 import { handleMemberAccess } from './memberAccess.js';
 
-const roles = ['super_admin','senior_pastor','administrator','finance_officer','pastor','ministry_leader','attendance_officer','data_entry','member'];
+const roles = ['super_admin','senior_pastor','administrator','finance_officer','welfare_officer','pastor','ministry_leader','attendance_officer','data_entry','member'];
 const safeFields = ['first_name','last_name','phone','department','job_title','employment_type','avatar_url','role','is_active','has_login_account','member_id'];
 
 export async function staffHandler(req, res, dependencies = {}) {

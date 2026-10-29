@@ -107,7 +107,8 @@ export const WelfarePage: React.FC = () => {
     currentUser?.role === 'super_admin' ||
     currentUser?.role === 'senior_pastor' ||
     currentUser?.role === 'administrator' ||
-    currentUser?.role === 'pastor';
+    currentUser?.role === 'pastor' ||
+    currentUser?.role === 'welfare_officer';
 
   // Search & Filter state for claims
   const [claimSearch, setClaimSearch] = useState('');
@@ -814,7 +815,7 @@ export const WelfarePage: React.FC = () => {
                 New Event Appeal
               </button>
 
-              {welfareEvents.length > 0 && canManageEvents && (
+              {welfareEvents.length > 0 && canManageEvents && currentUser.role !== 'welfare_officer' && (
                 <button
                   onClick={() => setIsConfirmingClearAllEvents(true)}
                   className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl border border-rose-200 shadow-2xs transition flex items-center gap-1.5"
@@ -980,7 +981,7 @@ export const WelfarePage: React.FC = () => {
                           <Printer className="w-3.5 h-3.5" />
                         </button>
 
-                        {canManageEvents && (
+                        {canManageEvents && currentUser.role !== 'welfare_officer' && (
                           <button
                             onClick={() => setEventToDelete(evt)}
                             className="p-1.5 text-slate-400 hover:text-rose-600 bg-white hover:bg-rose-50 border border-slate-200 hover:border-rose-300 rounded-lg transition"
@@ -1264,7 +1265,7 @@ export const WelfarePage: React.FC = () => {
                                 >
                                   Review
                                 </button>
-                                {(claim.status === 'approved' || claim.status === 'disbursed') && (
+                                {currentUser.role !== 'welfare_officer' && (claim.status === 'approved' || claim.status === 'disbursed') && (
                                   <button
                                     onClick={() => setSelectedClaimForVoucher(claim)}
                                     title="View / Authorize Payment Voucher"

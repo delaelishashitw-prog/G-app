@@ -121,7 +121,7 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    const restrictedRoles: UserRole[] = ['super_admin', 'administrator', 'senior_pastor', 'pastor', 'finance_officer'];
+    const restrictedRoles: UserRole[] = ['super_admin', 'administrator', 'senior_pastor', 'pastor', 'finance_officer', 'welfare_officer'];
     if (restrictedRoles.includes(regRole)) {
       setErrorMessage(
         'For security reasons, Administrative, Pastoral, and Treasury roles cannot be self-provisioned. Please contact the Church Administrator or select a Ministry Leader or Assistant role to request access.'
@@ -259,7 +259,7 @@ export const LoginPage: React.FC = () => {
             </span>
             <p className="text-sm font-bold text-white flex items-center gap-1.5">
               <Shield className="w-3.5 h-3.5 text-emerald-300" />
-              <span>8 Staff Roles</span>
+              <span>9 Staff Roles</span>
             </p>
             <p className="text-[11px] text-emerald-200/70">Granular Department Rights</p>
           </div>
@@ -593,7 +593,7 @@ export const LoginPage: React.FC = () => {
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="p-2 rounded-xl bg-white border border-slate-200/70 shadow-2xs">
                     <p className="text-[10px] font-bold text-slate-700">Role-Based Access</p>
-                    <p className="text-[9px] text-slate-500 font-medium">8 Staff Tiers</p>
+                    <p className="text-[9px] text-slate-500 font-medium">9 Staff Tiers</p>
                   </div>
                   <div className="p-2 rounded-xl bg-white border border-slate-200/70 shadow-2xs">
                     <p className="text-[10px] font-bold text-slate-700">Encrypted Transport</p>

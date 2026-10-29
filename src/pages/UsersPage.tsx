@@ -185,6 +185,20 @@ export const UsersPage: React.FC = () => {
       boundaries: 'Read-only access on member registry (for donor linking only); no access to pastoral counseling.',
     },
     {
+      role: 'welfare_officer',
+      title: 'Welfare Officer',
+      desc: 'Welfare dues, relief applications and contribution appeals',
+      category: 'Administrative',
+      badgeColor: 'bg-rose-100 text-rose-900 border-rose-200',
+      typicalHolders: 'Welfare Secretary, Welfare Committee Coordinator',
+      keyPrivileges: [
+        'Record member welfare dues and appeal contributions',
+        'Review relief claims and record committee decisions',
+        'Manage welfare appeals and view welfare reports',
+      ],
+      boundaries: 'Welfare only. Treasury posting and payouts remain with finance staff; no staff administration or pastoral case access. Two-factor sign-in is required.',
+    },
+    {
       role: 'pastor',
       title: 'Associate Pastor',
       desc: 'Pastoral care, counseling sessions, home visitations, hospital visits, intercessory watch, and visitor care',
