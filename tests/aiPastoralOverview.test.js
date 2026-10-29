@@ -148,6 +148,18 @@ test('overview denies a switched identity on the final authorization check', asy
   assert.equal(result.data.myTasks, undefined);
 });
 
+test('overview denies role changes even when the user ID remains the same', async () => {
+  const result = await harness({
+    role: 'pastor',
+    visitorRows: [{ id: 'v1', follow_up_status: 'new' }],
+    recheckProfile: { role: 'administrator', id: 'user-1' },
+  }).run();
+  assert.equal(result.status, 403);
+  assert.equal(result.checks, 2);
+  assert.equal(result.data.visitors, undefined);
+  assert.equal(result.data.myTasks, undefined);
+});
+
 test('overview denies an account that becomes unavailable at the final security check', async () => {
   const result = await harness({
     role: 'administrator',
