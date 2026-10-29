@@ -8,7 +8,8 @@ const tomorrowDate=new Date(today+'T12:00:00Z');tomorrowDate.setUTCDate(tomorrow
 async function setup(role='super_admin',width=1440,timeZone='Africa/Accra'){
  const profile={id:owner,email:'events@example.test',first_name:'Synthetic',last_name:'Reviewer',role,is_active:true,has_login_account:true,authorization_reviewed_at:now};
  const user={id:owner,email:profile.email,email_confirmed_at:now,role:'authenticated',aud:'authenticated',app_metadata:{provider:'email'},user_metadata:{}};
- const exp=Math.floor(Date.now()/1000)+3600,token=`${Buffer.from('{"alg":"HS256"}').toString('base64url')}.${Buffer.from(JSON.stringify({sub:owner,role:'authenticated',aal:'aal2',session_id:owner,exp})).toString('base64url')}.synthetic-signature`;
+ // The synthetic session must survive the test browser's fixed noon clock, even in morning CI runs.
+ const exp=Math.floor(Math.max(Date.now(),Date.parse(today+'T12:00:00Z'))/1000)+3600,token=`${Buffer.from('{"alg":"HS256"}').toString('base64url')}.${Buffer.from(JSON.stringify({sub:owner,role:'authenticated',aal:'aal2',session_id:owner,exp})).toString('base64url')}.synthetic-signature`;
  const session={user,access_token:token,refresh_token:'synthetic-event-review-refresh',expires_at:exp,expires_in:3600,token_type:'bearer'};
  const event=(id,title,type,date)=>({id,title,event_type:type,start_date:date,end_date:date,start_time:'18:00',end_time:'20:00',venue:'Synthetic External Park',status:'upcoming',requires_registration:true,attendees:id==='alpha'?[{id:'att-test',name:'Synthetic Volunteer',checked_in:false,registered_at:now}]:[],registration_count:id==='alpha'?1:0,expected_attendance:50,budget:0,created_at:now,updated_at:now});
  const data={settings:[{id:'gwcc_global_settings',...initialSettings}],members:[{...sampleMembers[0],id:'review-member',member_id:'GWCC-REVIEW',first_name:'Synthetic',last_name:'Member',is_archived:false,auth_user_id:null}],events:[event('alpha','Synthetic Conference Alpha','conference',today),event('beta','Synthetic Youth Beta','youth',tomorrow)],services:[]};
@@ -40,6 +41,7 @@ async function setup(role='super_admin',width=1440,timeZone='Africa/Accra'){
  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
  // Keep same-day registration open regardless of the wall-clock time running CI.
  await page.clock.setFixedTime(new Date(today+'T12:00:00Z'));
+ assert.ok(exp>await page.evaluate(()=>Math.floor(Date.now()/1000)),'Synthetic auth must stay valid after fixing the events browser clock');
  await page.goto(origin+'/events');await page.getByRole('button',{name:'Schedule Program',exact:true}).waitFor();await page.getByText('Synthetic Conference Alpha',{exact:true}).first().waitFor();
  return{context,page,data,requests,errors,rejectWrites:value=>{reject=value;}};
 }
