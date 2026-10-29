@@ -87,7 +87,9 @@ export async function pastoralOverviewHandler(req, res, dependencies = {}) {
     const myTasks = await readAssignedTaskSummary(access.client, access.profile.id, today);
     // Recheck revocation and MFA status after external I/O, without charging again.
     const refreshed = await authorize(req, { roles: PASTORAL_OVERVIEW_ROLES, bucket: null });
-    if (refreshed.profile?.id !== access.profile.id) throw new HttpError(403, 'Your session changed. Refresh the page.');
+    if (refreshed.profile?.id !== access.profile.id || refreshed.profile?.role !== access.profile.role) {
+      throw new HttpError(403, 'Your account permissions changed. Refresh the page.');
+    }
     res.status(200).json({
       visitors, myTasks, asOf: today, generatedAt: new Date().toISOString(),
       scope: 'Your authorized visitor totals and tasks assigned to you. No personal details are included.',
