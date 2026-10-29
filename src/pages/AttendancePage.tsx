@@ -133,6 +133,7 @@ export const AttendancePage: React.FC = () => {
   const [isPrintRegisterOpen, setIsPrintRegisterOpen] = useState(false);
   const [digitalPassMember, setDigitalPassMember] = useState<Member | null>(null);
   const [isChildSafetyModalOpen, setIsChildSafetyModalOpen] = useState(false);
+  const [childSafetyView, setChildSafetyView] = useState<'checkin' | 'checkout'>('checkin');
   const [selectedChildRecordForPass, setSelectedChildRecordForPass] = useState<ChildCheckInRecord | null>(null);
 
   // In-app confirmations (replaces window.confirm)
@@ -522,8 +523,10 @@ export const AttendancePage: React.FC = () => {
           <button
             onClick={() => {
               setSelectedChildRecordForPass(null);
+              setChildSafetyView('checkin');
               setIsChildSafetyModalOpen(true);
             }}
+            disabled={!canRecordSession}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-bold transition shadow-xs"
           >
             <ShieldCheck className="w-4 h-4" />
@@ -839,8 +842,10 @@ export const AttendancePage: React.FC = () => {
                   type="button"
                   onClick={() => {
                     setSelectedChildRecordForPass(null);
+                    setChildSafetyView('checkin');
                     setIsChildSafetyModalOpen(true);
                   }}
+                  disabled={!canRecordSession}
                   className="w-full py-1.5 px-3 bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs rounded-xl shadow-xs transition"
                 >
                   + Check In Child
@@ -867,6 +872,7 @@ export const AttendancePage: React.FC = () => {
                 type="button"
                 onClick={() => {
                   setSelectedChildRecordForPass(null);
+                  setChildSafetyView('checkout');
                   setIsChildSafetyModalOpen(true);
                 }}
                 className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5"
@@ -2093,11 +2099,15 @@ export const AttendancePage: React.FC = () => {
         </div>
       )}
       {/* Child Safety & Pickup Tags Modal */}
-      <ChildSafetyPickupModal
+      {isChildSafetyModalOpen && <ChildSafetyPickupModal
+        key={`${selectedServiceId}:${selectedDate}:${selectedChildRecordForPass?.id || childSafetyView}`}
+        serviceId={selectedServiceId}
+        date={selectedDate}
+        initialView={childSafetyView}
         isOpen={isChildSafetyModalOpen}
         onClose={() => setIsChildSafetyModalOpen(false)}
         targetRecord={selectedChildRecordForPass}
-      />
+      />}
     </div>
   );
 };

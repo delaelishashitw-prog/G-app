@@ -1,3 +1,5 @@
+import { attendanceSessionError } from '../../features/attendance/attendanceInsights';
+import { useModalFocus } from '../../hooks/useModalFocus';
 import { findPickup } from '../../lib/childSafety';
 import { useAuth } from '../../contexts/AuthContext';
 import React, { useState } from 'react';
@@ -24,12 +26,18 @@ interface ChildSafetyPickupModalProps {
   isOpen: boolean;
   onClose: () => void;
   targetRecord?: ChildCheckInRecord | null;
+  serviceId: string;
+  date: string;
+  initialView?: 'checkin' | 'checkout';
 }
 
 export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
   isOpen,
   onClose,
   targetRecord,
+  serviceId,
+  date,
+  initialView = 'checkin',
 }) => {
   const {
     services,
@@ -40,17 +48,17 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
     summonChildParent,
     settings,
   } = useChurchData();
-  const {currentUser}=useAuth();
+  const {currentUser,isAuthenticated,canAccess}=useAuth();
   const [busy,setBusy]=useState(false);
   const { success, warning, error: toastError } = useToast();
 
   const [activeView, setActiveView] = useState<'pass' | 'checkin' | 'checkout'>(
-    targetRecord ? 'pass' : 'checkin'
+    targetRecord?.service_id === serviceId && targetRecord.date === date ? 'pass' : initialView
   );
 
   // Selected or active record for the pass view
   const [activeRecord, setActiveRecord] = useState<ChildCheckInRecord | null>(
-    targetRecord || childCheckIns[0] || null
+    targetRecord?.service_id === serviceId && targetRecord.date === date ? targetRecord : null
   );
 
   // Check-in form states
@@ -64,7 +72,11 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
   const [hasAllergyAlert, setHasAllergyAlert] = useState(false);
   const [allergyNotes, setAllergyNotes] = useState('');
   const [specialInstructions, setSpecialInstructions] = useState('');
-  const [selectedServiceId, setSelectedServiceId] = useState(services[0]?.id || 'srv-1');
+  const selectedService = services.find(service => service.id === serviceId);
+  const sessionError = attendanceSessionError(selectedService, date);
+  const canCheckIn = isAuthenticated && canAccess('attendance') && !sessionError;
+  const sessionRecords = childCheckIns.filter(record => record.service_id === serviceId && record.date === date);
+  const panel = useModalFocus(isOpen, () => { if (!busy) onClose(); });
 
   // Checkout form states
   const [checkoutCode, setCheckoutCode] = useState('');
@@ -103,19 +115,20 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
       return;
     }
 
-    const currentService = services.find((s) => s.id === selectedServiceId) || services[0];
-    const nowTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-
-    if(!currentService){toastError('Choose a service','Create a service before checking in children.');return;}
+    if (!canCheckIn || !selectedService) {
+      toastError('Check-in unavailable', sessionError || 'Attendance staff access is required.');
+      return;
+    }
+    const nowTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Accra' });
     setBusy(true);
     try {
     const newRecord = await checkInChild({
       child_name: childName.trim(),
       age_group: ageGroup,
       class_room: classRoom,
-      service_id: currentService.id,
-      service_name: currentService.name,
-      date: new Date().toISOString().split('T')[0],
+      service_id: selectedService.id,
+      service_name: selectedService.name,
+      date,
       check_in_time: nowTime,
       parent_name: parentName.trim(),
       parent_phone: parentPhone.trim(),
@@ -142,7 +155,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
   const handleProcessCheckout = async (e:React.FormEvent) => {
     e.preventDefault();setBusy(true);
     try {
-      const found=findPickup(childCheckIns,checkoutCode,collectorName);
+      const found=findPickup(sessionRecords,checkoutCode,collectorName);
       await checkOutChild(found.id,{checked_out_to_person:collectorName.trim(),verified_by_leader:currentUser.id});
       success('Pickup Confirmed',`${found.child_name} released to ${collectorName.trim()}.`);
       setActiveRecord({...found,status:'checked_out'});setCheckoutCode('');setCollectorName('');setActiveView('pass');
@@ -163,10 +176,10 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-      <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+      <div ref={panel} role="dialog" aria-modal="true" aria-label="Child safety and pickup" className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header Bar */}
-        <div className="no-print px-6 py-3.5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
-          <div className="flex items-center gap-2">
+        <div className="no-print px-6 py-3.5 bg-slate-900 text-white flex flex-wrap items-start justify-between gap-3 border-b border-slate-800">
+          <div className="flex min-w-0 flex-1 items-start gap-2">
             <ShieldCheck className="w-5 h-5 text-emerald-400" />
             <h3 className="text-sm font-bold tracking-tight">Sunday School Child Safety & Security Passes</h3>
           </div>
@@ -182,6 +195,8 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
             )}
             <button
               onClick={onClose}
+              disabled={busy}
+              aria-label="Close child safety"
               className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
             >
               <X className="w-5 h-5" />
@@ -189,10 +204,16 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
           </div>
         </div>
 
+        <div aria-label="Child safety session" className="no-print border-b border-slate-200 bg-emerald-50 px-6 py-3 text-xs text-emerald-950 break-words">
+          <strong>{selectedService?.name || targetRecord?.service_name || 'Service unavailable'}</strong> · {date || 'Choose a valid service date'} (GMT)
+          {sessionError && <p role="alert" className="mt-1 text-rose-800">{sessionError}</p>}
+        </div>
+
         {/* View Switcher Bar (Hidden on print) */}
-        <div className="no-print px-6 py-2 bg-slate-100 border-b border-slate-200 flex items-center justify-between text-xs font-bold">
-          <div className="flex items-center gap-2">
+        <div className="no-print px-6 py-2 bg-slate-100 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs font-bold">
+          <div className="flex flex-wrap items-center gap-2">
             <button
+              disabled={busy || !canCheckIn}
               onClick={() => setActiveView('checkin')}
               className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
                 activeView === 'checkin'
@@ -204,6 +225,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
               Check-in Child
             </button>
             <button
+              disabled={busy || !activeRecord}
               onClick={() => setActiveView('pass')}
               className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
                 activeView === 'pass'
@@ -215,6 +237,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
               Wearable Tag & Parent Stub
             </button>
             <button
+              disabled={busy}
               onClick={() => setActiveView('checkout')}
               className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
                 activeView === 'checkout'
@@ -277,6 +300,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                           {activeRecord.child_name}
                         </h2>
                         <p className="text-xs font-semibold text-slate-600">{activeRecord.class_room}</p>
+                        <p className="text-xs text-slate-600">{activeRecord.service_name} · {activeRecord.date} (GMT)</p>
                       </div>
 
                       {/* Security Code Badge */}
@@ -324,6 +348,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                           <span className="text-xs font-black uppercase text-slate-900">{settings.church_name}</span>
                         </div>
                         <h3 className="text-sm font-bold text-emerald-800 mt-1">Parent Official Pickup Pass</h3>
+                        <p className="text-xs text-slate-600">{activeRecord.service_name} · {activeRecord.date} (GMT)</p>
                         <p className="text-xs text-slate-600">Child: <strong className="text-slate-900">{activeRecord.child_name}</strong></p>
                       </div>
 
@@ -352,6 +377,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
           {/* VIEW 2: NEW CHILD CHECK-IN */}
           {activeView === 'checkin' && (
             <form onSubmit={handleCreateCheckIn} className="space-y-4">
+              <fieldset disabled={busy || !canCheckIn} className="contents">
               {/* Quick parent autofill from church members */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
@@ -378,6 +404,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                   </label>
                   <input
                     type="text"
+                    aria-label="Child full name"
                     placeholder="e.g. Samuel Mensah"
                     value={childName}
                     onChange={(e) => setChildName(e.target.value)}
@@ -411,6 +438,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                   </label>
                   <input
                     type="text"
+                    aria-label="Parent or guardian name"
                     placeholder="e.g. Kwame Mensah"
                     value={parentName}
                     onChange={(e) => setParentName(e.target.value)}
@@ -425,6 +453,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                   </label>
                   <input
                     type="tel"
+                    aria-label="Parent phone contact"
                     placeholder="+233 24 000 0000"
                     value={parentPhone}
                     onChange={(e) => setParentPhone(e.target.value)}
@@ -504,6 +533,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                   Generate Security Passes
                 </button>
               </div>
+              </fieldset>
             </form>
           )}
 
@@ -520,6 +550,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                 <input
                   type="text"
                   placeholder="GWCC- followed by 12 characters"
+                  aria-label="Pickup security code"
                   value={checkoutCode}
                   onChange={(e) => setCheckoutCode(e.target.value)}
                   required
@@ -535,6 +566,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                   <input
                     type="text"
                     placeholder="e.g. Parent name or authorized person"
+                    aria-label="Pickup collector name"
                     value={collectorName}
                     onChange={(e) => setCollectorName(e.target.value)}
                     className="w-full text-sm rounded-xl border border-slate-300 py-2 px-3"
