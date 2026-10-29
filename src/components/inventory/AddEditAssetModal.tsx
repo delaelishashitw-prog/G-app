@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import { useModalFocus } from '../../hooks/useModalFocus';
+import { OPERATION_SAVE_NOTICE } from '../../features/operations/durableOperations';
+import React, { useRef, useState } from 'react';
 import {
   X,
   Package,
@@ -18,7 +20,7 @@ import { useToast } from '../../contexts/ToastContext';
 interface AddEditAssetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (assetData: Omit<ChurchAsset, 'id' | 'created_at'>) => void;
+  onSave: (assetData: Omit<ChurchAsset, 'id' | 'created_at'>, requestId: string) => Promise<unknown>;
   assetToEdit?: ChurchAsset | null;
 }
 
@@ -57,13 +59,19 @@ export const AddEditAssetModal: React.FC<AddEditAssetModalProps> = ({
   const [purchaseCost, setPurchaseCost] = useState(assetToEdit?.purchase_cost ? String(assetToEdit.purchase_cost) : '');
   const [currentCondition, setCurrentCondition] = useState<AssetCondition>(assetToEdit?.current_condition || 'working');
   const [location, setLocation] = useState(assetToEdit?.location || 'Main Sanctuary Auditorium');
-  const [custodianName, setCustodianName] = useState(assetToEdit?.custodian_name || 'Brother Kwame Mensah');
+  const [custodianName, setCustodianName] = useState(assetToEdit?.custodian_name || '');
   const [nextServiceDate, setNextServiceDate] = useState(assetToEdit?.next_service_date || '');
   const [notes, setNotes] = useState(assetToEdit?.notes || '');
 
+  const requestId = useRef(crypto.randomUUID());
+  const busy = useRef(false);
+  const [saving,setSaving] = useState(false);
+  const [saveError,setSaveError] = useState('');
+  const dialog=useModalFocus(isOpen,()=>{if(!busy.current)onClose();});
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    if(busy.current){e.preventDefault();return;}
     e.preventDefault();
 
     if (!name.trim()) {
@@ -77,7 +85,9 @@ export const AddEditAssetModal: React.FC<AddEditAssetModalProps> = ({
       return;
     }
 
-    onSave({
+    busy.current=true;setSaving(true);setSaveError('');
+    try {
+    await onSave({
       asset_tag: assetTag.trim().toUpperCase(),
       name: name.trim(),
       category,
@@ -93,17 +103,19 @@ export const AddEditAssetModal: React.FC<AddEditAssetModalProps> = ({
       next_service_date: nextServiceDate || undefined,
       notes: notes.trim() || undefined,
       maintenance_logs: assetToEdit?.maintenance_logs || [],
-    });
+    },requestId.current);
 
     toastSuccess(
       assetToEdit ? 'Asset Updated' : 'Asset Registered',
-      `${name} [${assetTag}] has been saved into the church registry.`
+      OPERATION_SAVE_NOTICE
     );
     onClose();
+    } catch(error) { setSaveError(error instanceof Error ? error.message : 'The asset could not be saved. Keep this form open and retry.'); }
+    finally {busy.current=false;setSaving(false);}
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
+    <div ref={dialog} role="dialog" aria-modal="true" aria-label="Asset registration" className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
       <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-4 max-h-[94vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="px-6 py-4 bg-[#064e3b] text-white flex items-center justify-between shrink-0">
@@ -121,7 +133,7 @@ export const AddEditAssetModal: React.FC<AddEditAssetModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            disabled={saving} onClick={onClose}
             className="p-1.5 text-white/80 hover:text-white rounded-lg transition hover:bg-emerald-800"
           >
             <X className="w-5 h-5" />
@@ -129,7 +141,9 @@ export const AddEditAssetModal: React.FC<AddEditAssetModalProps> = ({
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 text-xs overflow-y-auto flex-1">
+        <form aria-busy={saving} onSubmit={handleSubmit} className="p-6 space-y-4 text-xs overflow-y-auto flex-1">
+          {saveError && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{saveError}</p>}
+          <fieldset disabled={saving} className="contents">
           {/* Tag & Name */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
@@ -347,20 +361,20 @@ export const AddEditAssetModal: React.FC<AddEditAssetModalProps> = ({
           <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={onClose}
+              disabled={saving} onClick={onClose}
               className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 font-bold hover:bg-slate-50 transition"
             >
               Cancel
             </button>
             <button
-              type="submit"
+              type="submit" disabled={saving}
               className="inline-flex items-center gap-2 px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl shadow-xs transition"
             >
               <Save className="w-4 h-4" />
               <span>{assetToEdit ? 'Save Changes' : 'Register Asset'}</span>
             </button>
           </div>
-        </form>
+        </fieldset></form>
       </div>
     </div>
   );

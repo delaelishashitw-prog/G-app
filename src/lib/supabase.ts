@@ -990,6 +990,7 @@ export const pendingSyncRecord=(table:string,id:string):Record<string,unknown>|u
   const change=outbox?.pendingChanges.find(change=>change.table===table&&change.id===id&&change.operation==='upsert');
   return change?.record ? structuredClone(change.record) : undefined;
 };
+export const pendingSyncDelete=(table:string,id:string):boolean=>Boolean(outbox?.pendingChanges.some(change=>change.table===table&&change.id===id&&change.operation==='delete'));
 export const pendingMemberRecord=(id:string)=>pendingSyncRecord('members',id) as unknown as Member|undefined;
 /** Preserve a failed device admission without changing any retained operation ID or body. */
 export async function preservePendingSync():Promise<SyncResult>{

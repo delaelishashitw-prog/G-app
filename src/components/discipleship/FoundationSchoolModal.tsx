@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { OPERATION_SAVE_NOTICE } from '../../features/operations/durableOperations';
+import React, { useRef, useState } from 'react';
 import {
   X,
   GraduationCap,
@@ -34,7 +35,7 @@ interface FoundationSchoolModalProps {
   onCreateCohort: (cohortData: Omit<FoundationCohort, 'id' | 'created_at'>) => void;
   onEnrollStudent: (studentData: Omit<FoundationStudent, 'id' | 'created_at'>) => void;
   onToggleModule: (studentId: string, moduleNumber: number) => void;
-  onGraduateStudent: (studentId: string, certificateNo?: string) => void;
+  onGraduateStudent: (studentId: string, certificateNo?: string) => Promise<FoundationStudent>;
 }
 
 const MODULES_INFO = [
@@ -63,6 +64,17 @@ export const FoundationSchoolModal: React.FC<FoundationSchoolModalProps> = ({
   const [selectedCohortFilter, setSelectedCohortFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const graduating=useRef(false);
+  const [graduatingId,setGraduatingId]=useState('');
+  const [graduationError,setGraduationError]=useState('');
+  const graduate=async(student:FoundationStudent)=>{
+    if(graduating.current)return;
+    graduating.current=true;setGraduatingId(student.id);setGraduationError('');
+    try{await onGraduateStudent(student.id,student.certificate_no);toastSuccess('Graduation saved',OPERATION_SAVE_NOTICE);}
+    catch(error){setGraduationError(error instanceof Error?error.message:'Graduation could not be saved. Keep this page open and retry.');}
+    finally{graduating.current=false;setGraduatingId('');}
+  };
 
   // Certificate modal state
   const [certificateStudent, setCertificateStudent] = useState<FoundationStudent | null>(null);
@@ -272,6 +284,7 @@ export const FoundationSchoolModal: React.FC<FoundationSchoolModalProps> = ({
                   </div>
                 </div>
 
+                {graduationError && <p role="alert" className="text-sm text-rose-800 p-3 bg-rose-50 rounded-lg">{graduationError}</p>}
                 {/* Students List */}
                 {filteredStudents.length === 0 ? (
                   <div className="p-8 text-center bg-slate-50 border border-slate-200 rounded-xl text-slate-500">
@@ -301,7 +314,7 @@ export const FoundationSchoolModal: React.FC<FoundationSchoolModalProps> = ({
                                 </h4>
                                 {std.status === 'graduated' ? (
                                   <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 font-bold rounded-full text-[10px] border border-emerald-200">
-                                    ★ Graduated
+                                    {std._sync_status==='pending'?'Graduation awaiting cloud confirmation':'★ Graduated'}
                                   </span>
                                 ) : std.status === 'ready_for_baptism' ? (
                                   <span className="px-2 py-0.5 bg-sky-100 text-sky-800 font-bold rounded-full text-[10px] border border-sky-200">
@@ -319,10 +332,11 @@ export const FoundationSchoolModal: React.FC<FoundationSchoolModalProps> = ({
                             </div>
 
                             <div className="flex items-center gap-2">
+                              {std.status === 'graduated' && !members.find(member=>member.id===std.member_id)?.membership_class_completed && <button type="button" disabled={Boolean(graduatingId)} onClick={()=>void graduate(std)} className="px-3 py-1 border border-amber-400 rounded-lg text-xs text-amber-900">Update member completion</button>}
                               {std.status === 'graduated' ? (
                                 <button
                                   type="button"
-                                  onClick={() => setCertificateStudent(std)}
+                                  disabled={std._sync_status==='pending'} onClick={() => setCertificateStudent(std)}
                                   className="px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold rounded-lg border border-emerald-200 text-xs flex items-center gap-1.5 transition"
                                 >
                                   <Award className="w-3.5 h-3.5" />
@@ -331,11 +345,11 @@ export const FoundationSchoolModal: React.FC<FoundationSchoolModalProps> = ({
                               ) : (
                                 <button
                                   type="button"
-                                  onClick={() => onGraduateStudent(std.id)}
+                                  disabled={Boolean(graduatingId)} onClick={() => void graduate(std)}
                                   className="px-3 py-1 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 transition shadow-xs"
                                 >
                                   <Award className="w-3.5 h-3.5" />
-                                  <span>Graduate & Certify</span>
+                                  <span>{graduatingId===std.id?'Saving graduation…':'Graduate & Certify'}</span>
                                 </button>
                               )}
                             </div>

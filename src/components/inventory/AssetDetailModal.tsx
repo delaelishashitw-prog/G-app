@@ -1,5 +1,5 @@
 import { escapeHtml } from '../../lib/escapeHtml';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   X,
   Package,
@@ -27,8 +27,8 @@ interface AssetDetailModalProps {
   onClose: () => void;
   asset: ChurchAsset;
   onEdit: (asset: ChurchAsset) => void;
-  onDelete: (assetId: string) => void;
-  onRecordMaintenance: (assetId: string, logData: Omit<AssetMaintenanceLog, 'id'>) => void;
+  onDelete: (assetId: string) => Promise<void>;
+  onRecordMaintenance: (assetId: string, logData: Omit<AssetMaintenanceLog, 'id'>, requestId:string, expectedVersion?:string) => Promise<unknown>;
 }
 
 const CATEGORY_NAMES: Record<string, string> = {
@@ -50,6 +50,8 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
 }) => {
   const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleting=useRef(false);
+  const [deleteBusy,setDeleteBusy]=useState(false),[deleteError,setDeleteError]=useState('');
 
   if (!isOpen) return null;
 
@@ -158,7 +160,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                 <Printer className="w-5 h-5" />
               </button>
               <button
-                onClick={onClose}
+                disabled={deleteBusy} onClick={onClose}
                 className="p-1.5 text-white/80 hover:text-white rounded-lg transition hover:bg-emerald-800"
               >
                 <X className="w-5 h-5" />
@@ -327,13 +329,18 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
           {/* Footer Actions */}
           <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
             <div>
+              {deleteError && <p role="alert" className="text-sm text-rose-800 mb-2">{deleteError}</p>}
               {confirmDelete ? (
                 <div className="flex items-center gap-2">
                   <span className="text-rose-600 font-bold text-xs">Delete this asset?</span>
                   <button
-                    onClick={() => {
-                      onDelete(asset.id);
-                      onClose();
+                    disabled={deleteBusy}
+                    onClick={async () => {
+                      if(deleting.current)return;
+                      deleting.current=true;setDeleteBusy(true);setDeleteError('');
+                      try{await onDelete(asset.id);onClose();}
+                      catch(error){setDeleteError(error instanceof Error?error.message:'The deletion could not be saved.');}
+                      finally{deleting.current=false;setDeleteBusy(false);}
                     }}
                     className="px-2.5 py-1 bg-rose-600 text-white rounded-lg font-bold hover:bg-rose-700 transition"
                   >
@@ -372,7 +379,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
               </button>
               <button
                 type="button"
-                onClick={onClose}
+                disabled={deleteBusy} onClick={onClose}
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl shadow-xs transition"
               >
                 Close

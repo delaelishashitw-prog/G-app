@@ -1581,3 +1581,51 @@ test('pledges preserve historical balances and enforce versioned receipt-backed 
     assert.equal((await db.query("SELECT count(*)::int n FROM public.audit_logs WHERE action='VOID_PLEDGE_PAYMENT'")).rows[0].n,1);
   } finally {await db.close();}
 });
+
+test('portal activation is a read-only MFA-guarded snapshot with correct account states and no Auth secrets',async()=>{
+  const db=await setupDatabase();
+  const ready='44444444-4444-4444-8444-444444444444';
+  try{
+    await db.exec(`INSERT INTO auth.users(id,email,email_confirmed_at) VALUES('${ready}','ready@example.test',now()); UPDATE auth.users SET email_confirmed_at=NULL WHERE id='${other}';`);
+    await asUser(db,root,async()=>{
+      const rows=[['activation-email',null],['activation-new','new@example.test'],['activation-link','member@example.test'],['activation-pending','other@example.test'],['activation-ready','ready@example.test'],['activation-staff','root@example.test'],['activation-conflict','other@example.test'],['activation-archived','archived@example.test']];
+      await apply(db,rows.map(([id,email])=>upsert('members',{id,first_name:'Synthetic',last_name:id,email,phone:'0240000000',is_archived:id==='activation-archived'})));
+      for(const [id,user,email] of [['activation-pending',other,'other@example.test'],['activation-ready',ready,'ready@example.test']])
+        await db.query('SELECT public.gwcc_link_member_login($1,$2,$3)',[id,user,email]);
+      const before=(await db.query('SELECT count(*) AS n FROM public.audit_logs')).rows[0].n;
+      const result=(await db.query('SELECT public.gwcc_member_activation_overview() AS snapshot')).rows[0].snapshot;
+      const states=Object.fromEntries(result.members.map(row=>[row.id,row.state]));
+      assert.equal(states['activation-email'],'needs_email');assert.equal(states['activation-new'],'not_invited');assert.equal(states['activation-link'],'needs_link');
+      assert.equal(states['activation-pending'],'pending');assert.equal(states['activation-ready'],'ready');assert.equal(states['activation-staff'],'review');assert.equal(states['activation-conflict'],'review');assert.equal(states['activation-archived'],undefined);
+      for(const row of result.members)assert.deepEqual(Object.keys(row).sort(),['email','id','member_id','name','reason','state']);
+      assert.equal((await db.query('SELECT count(*) AS n FROM public.audit_logs')).rows[0].n,before);
+    });
+    for(const role of ['member','administrator','pastor','finance_officer']){
+      await db.query('UPDATE public.profiles SET role=$1,authorization_reviewed_at=now() WHERE id=$2',[role,root]);
+      await asUser(db,root,async()=>assert.rejects(db.query('SELECT public.gwcc_member_activation_overview()'),/super administrator/));
+    }
+    await db.query("UPDATE public.profiles SET role='super_admin' WHERE id=$1",[root]);
+    await asUser(db,root,async()=>assert.rejects(db.query('SELECT public.gwcc_member_activation_overview()'),/two-factor/),{role:'authenticated',aal:'aal1',session_id:root});
+    await db.exec('SET ROLE anon');await assert.rejects(db.query('SELECT public.gwcc_member_activation_overview()'),/permission denied/);await db.exec('RESET ROLE');
+    await db.query('UPDATE public.profiles SET is_active=false WHERE id=$1',[root]);
+    await asUser(db,root,async()=>assert.rejects(db.query('SELECT public.gwcc_member_activation_overview()'),/super administrator/));
+  }finally{await db.close();}
+});
+
+test('graduation repair restores only the derived member flag, preserves history and is idempotently audited',async()=>{
+  const db=await setupDatabase();
+  try{
+    await asUser(db,root,async()=>{
+      await apply(db,[upsert('members',{id:'completion-repair',first_name:'Synthetic',last_name:'Graduate',phone:'0240000000',membership_class_completed:false})]);
+      await apply(db,[upsert('foundation_students',{id:'completion-student',member_id:'completion-repair',status:'graduated',graduation_date:'2020-01-01',certificate_no:'KEEP-ORIGINAL',completed_modules:[1,2,3,4,5]})]);
+    });
+    const before=(await db.query("SELECT to_jsonb(m)-'updated_at'-'membership_class_completed' AS record FROM public.members m WHERE id='completion-repair'")).rows[0].record;
+    const history=(await db.query("SELECT data FROM public.gwcc_documents WHERE id='completion-student' AND namespace='foundation_students'")).rows[0].data;
+    const migration=fs.readdirSync('supabase/migrations').find(file=>file.endsWith('_reliable_operations_portal_activation.sql'));
+    const sql=fs.readFileSync(`supabase/migrations/${migration}`,'utf8');await db.exec(sql);await db.exec(sql);
+    const after=(await db.query("SELECT to_jsonb(m)-'updated_at'-'membership_class_completed' AS record,membership_class_completed AS completed FROM public.members m WHERE id='completion-repair'")).rows[0];
+    assert.deepEqual(after.record,before);assert.equal(after.completed,true);
+    assert.deepEqual((await db.query("SELECT data FROM public.gwcc_documents WHERE id='completion-student' AND namespace='foundation_students'")).rows[0].data,history);
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM public.audit_logs WHERE action='REPAIR_FOUNDATION_COMPLETION' AND record_id='completion-repair'")).rows[0].n,1);
+  }finally{await db.close();}
+});

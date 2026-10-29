@@ -1,3 +1,4 @@
+import { saveAsset as saveAssetRecord, removeAsset as removeAssetRecord, saveMaintenance, graduateStudent, type OperationWriter } from '../features/operations/durableOperations';
 import {validateCellReport,type CellMeetingReport} from '../lib/cellReports';
 import { validateWelfareFundReceipt, WELFARE_FUND_READ_ROLES, WELFARE_FUND_WRITE_ROLES, WELFARE_FUND_VOID_ROLES, type WelfareFundInput } from '../features/welfare/welfareFund';
 import { withSyncTransaction, hasPendingChanges } from '../lib/supabase';
@@ -124,7 +125,7 @@ import {
 import { PLEDGE_WRITE_ROLES, buildPledgePayment, requireConfirmedPledge, validateCampaign, validatePledge, type PledgeInput, type PledgePaymentInput, type PledgePaymentResult } from '../features/pledges/pledgeStore';
 import { preserveEvent, requireConfirmedEvent } from '../features/events/eventStore';
 import { canEditMembers, canArchiveMembers, foundationEnrollmentId } from '../features/members/memberRules';
-import {pendingSyncRecord,pendingMemberRecord,preservePendingSync,sanitizeMemberForSupabase} from '../lib/supabase';
+import {pendingSyncDelete,pendingSyncRecord,pendingMemberRecord,preservePendingSync,sanitizeMemberForSupabase} from '../lib/supabase';
 import { EVENT_WRITE_ROLES } from '../features/events/eventRules';
 import {
   addMinistry as addMinistryRecord,
@@ -153,18 +154,13 @@ import {
   deleteEventContribution as deleteEventContributionRecord,
 } from '../features/welfare/welfareStore';
 import {
-  addAsset as addAssetRecord,
-  addAssetMaintenanceLog as addAssetMaintenanceLogRecord,
   addRosterAssignment as addRosterAssignmentRecord,
   batchAddOrUpdateRosterAssignments as batchAddOrUpdateRosterAssignmentsRecord,
   buildRosterConflicts as buildRosterConflictsRecord,
   createFoundationCohort as createFoundationCohortRecord,
-  deleteAsset as deleteAssetRecord,
   deleteRosterAssignment as deleteRosterAssignmentRecord,
   enrollMemberInFoundationSchool as enrollMemberInFoundationSchoolRecord,
-  graduateFoundationStudent as graduateFoundationStudentRecord,
   toggleFoundationModule as toggleFoundationModuleRecord,
-  updateAsset as updateAssetRecord,
   updateFoundationCohort as updateFoundationCohortRecord,
   updateFoundationStudent as updateFoundationStudentRecord,
   updateRosterAssignment as updateRosterAssignmentRecord,
@@ -391,10 +387,10 @@ interface ChurchDataContextType {
 
   // Church Assets & Equipment Inventory
   assets: ChurchAsset[];
-  addAsset: (asset: Omit<ChurchAsset, 'id' | 'created_at'>) => ChurchAsset;
-  updateAsset: (id: string, updates: Partial<ChurchAsset>) => void;
-  deleteAsset: (id: string) => void;
-  addAssetMaintenanceLog: (assetId: string, log: Omit<AssetMaintenanceLog, 'id'>) => void;
+  addAsset: (asset: Omit<ChurchAsset, 'id' | 'created_at'>, requestId: string) => Promise<ChurchAsset>;
+  updateAsset: (id: string, updates: Partial<ChurchAsset>, expectedVersion?:string) => Promise<ChurchAsset>;
+  deleteAsset: (id: string) => Promise<void>;
+  addAssetMaintenanceLog: (assetId: string, log: Omit<AssetMaintenanceLog, 'id'>, requestId: string, expectedVersion?:string) => Promise<ChurchAsset>;
 
   // Volunteer & Multi-Department Duty Roster
   rosterAssignments: RosterAssignment[];
@@ -413,7 +409,7 @@ interface ChurchDataContextType {
   bulkEnrollMembersInFoundationSchool: (cohortId:string,memberIds:string[]) => Promise<number>;
   updateFoundationStudent: (id: string, updates: Partial<FoundationStudent>) => void;
   toggleFoundationModule: (studentId: string, moduleNumber: number) => void;
-  graduateFoundationStudent: (studentId: string, certificateNo?: string) => void;
+  graduateFoundationStudent: (studentId: string, certificateNo?: string) => Promise<FoundationStudent>;
 
   // Supabase Integration State & Actions
   isSupabaseConfigured: boolean;
@@ -675,7 +671,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // Modules previously stored only on one device now use the same durable outbox.
   useEffect(()=>{
     if(!isAuthenticated || dataOwner!==`${currentUser.id}:${currentUser.role}` || currentUser.role==='member')return;
-    for(const key of ['assets', 'departmentBudgets', 'rosterAssignments', 'foundationCohorts', 'foundationStudents', 'pastoralVisitations', 'counselingSessions', 'intercessorySlots']) {
+    for(const key of ['departmentBudgets', 'rosterAssignments', 'foundationCohorts', 'foundationStudents', 'pastoralVisitations', 'counselingSessions', 'intercessorySlots']) {
       const table=SYNC_TABLES.find(item=>item.key===key)?.table;if(!table)continue;
       const after=(currentData as any)[key] || [];
       if(incomingDocuments.current[key]) {
@@ -1665,25 +1661,45 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const deleteChildCheckIn = (_id: string) => { throw new Error('Child check-in history is preserved.'); };
 
-  // CHURCH ASSETS & INVENTORY
-  const addAsset = (
-    data: Omit<ChurchAsset, 'id' | 'created_at'>
-  ): ChurchAsset => addAssetRecord(data, setAssets, logAction);
-
-  const updateAsset = (id: string, updates: Partial<ChurchAsset>) => {
-    updateAssetRecord(id, updates, setAssets, logAction);
+  // Publish state only after the exact operation has been durably admitted.
+  const operationWriter = (): OperationWriter => {
+    const identity = memberIdentity;
+    return {
+      persist: dbSyncUpsertBatch, remove: dbSyncDelete,
+      pending: pendingSyncRecord as OperationWriter['pending'], pendingDelete: pendingSyncDelete,
+      retry: preservePendingSync, current: () => memberIdentityRef.current === identity,
+      log: logAction,
+      apply: (table, rows, removedId) => {
+        const key = table === 'foundation_students' ? 'foundationStudents' : table;
+        if (key === 'members') { commitMembers(previous => {
+          const changed = new Map(rows.map(row => [row.id, row]));
+          return previous.map(row => (changed.get(row.id) || row) as Member);
+        }); return; }
+        const previous = (currentDataRef.current as any)[key] || [];
+        const changed = new Map(rows.map(row => [row.id, row]));
+        const next = [...rows.filter(row => !previous.some((old:any) => old.id === row.id)),
+          ...previous.filter((row:any) => row.id !== removedId).map((row:any) => changed.get(row.id) || row)];
+        incomingDocuments.current[key] = next;
+        (currentDataRef.current as any)[key] = next;
+        setterRef.current[key]?.(next);
+      },
+    };
   };
-
-  const deleteAsset = (id: string) => {
-    deleteAssetRecord(id, assets, setAssets, logAction);
+  const operationWrites = React.useRef(new Set<string>());
+  const writeAsset = async <T,>(id:string, work:()=>Promise<T>):Promise<T> => {
+    if(!isAuthenticated || !['super_admin','senior_pastor','administrator'].includes(currentUser.role)) throw new Error('Inventory editing authorization is required.');
+    const key = `${memberIdentity}:asset:${id}`;
+    if(operationWrites.current.has(key)) throw new Error('This asset is already being saved.');
+    operationWrites.current.add(key);
+    try { return await work(); } finally { operationWrites.current.delete(key); }
   };
-
-  const addAssetMaintenanceLog = (
-    assetId: string,
-    logData: Omit<AssetMaintenanceLog, 'id'>
-  ) => {
-    addAssetMaintenanceLogRecord(assetId, logData, setAssets, logAction);
-  };
+  const addAsset = (data:Omit<ChurchAsset,'id'|'created_at'>,requestId:string) =>
+    writeAsset(requestId,()=>saveAssetRecord(data,currentDataRef.current.assets,operationWriter(),requestId,true));
+  const updateAsset = (id:string,updates:Partial<ChurchAsset>,expectedVersion?:string) =>
+    writeAsset(id,()=>saveAssetRecord(updates,currentDataRef.current.assets,operationWriter(),id,false,expectedVersion));
+  const deleteAsset = (id:string) => writeAsset(id,()=>removeAssetRecord(id,currentDataRef.current.assets,operationWriter()));
+  const addAssetMaintenanceLog = (assetId:string,data:Omit<AssetMaintenanceLog,'id'>,requestId:string,expectedVersion?:string) =>
+    writeAsset(assetId,()=>saveMaintenance(assetId,data,currentDataRef.current.assets,operationWriter(),requestId,expectedVersion));
 
   // MULTI-DEPARTMENT DUTY ROSTER
   const addRosterAssignment = (
@@ -1766,7 +1782,10 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   const graduateFoundationStudent = (studentId: string, certificateNo?: string) => {
-    graduateFoundationStudentRecord(studentId, certificateNo, setFoundationStudents, setMembers, logAction);
+    const student=currentDataRef.current.foundationStudents.find(row=>row.id===studentId);
+    if(!student) return Promise.reject(new Error('Student record not found. Refresh before graduating.'));
+    return writeMembers([student.member_id],false,()=>graduateStudent(studentId,certificateNo,
+      currentDataRef.current.foundationStudents,membersRef.current,operationWriter(),sanitizeMemberForSupabase));
   };
 
   // RESET
