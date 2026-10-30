@@ -959,7 +959,7 @@ export const AttendancePage: React.FC = () => {
                                 type="button"
                                 onClick={() => {
                                   summonChildParent(rec.id, 'Summoned to Sunday School');
-                                  warning('Parent Alert Sent', `Summoned ${rec.parent_name} (${rec.parent_phone})`);
+                                  warning('Parent contact recorded', `Call ${rec.parent_name} at ${rec.parent_phone}. No message has been sent.`);
                                 }}
                                 className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold rounded-lg text-[11px] transition flex items-center gap-1 border border-amber-200"
                                 title="Summon Parent from Main Sanctuary"
@@ -2092,12 +2092,16 @@ export const AttendancePage: React.FC = () => {
           </div>
         </div>
       )}
-      {/* Child Safety & Pickup Tags Modal */}
-      <ChildSafetyPickupModal
-        isOpen={isChildSafetyModalOpen}
-        onClose={() => setIsChildSafetyModalOpen(false)}
-        targetRecord={selectedChildRecordForPass}
-      />
+      {/* Unmount between openings so a previous child's pickup tag never persists. */}
+      {isChildSafetyModalOpen && (
+        <ChildSafetyPickupModal
+          isOpen={isChildSafetyModalOpen}
+          onClose={() => setIsChildSafetyModalOpen(false)}
+          targetRecord={selectedChildRecordForPass}
+          serviceId={selectedServiceId}
+          date={selectedDate}
+        />
+      )}
     </div>
   );
 };
