@@ -81,6 +81,41 @@ export async function checkChurchFinance(browser,{origin,settings}){
     await page.goto(origin+'/church-finance');await page.getByText('Synthetic Bank',{exact:true}).first().waitFor();
     return {context,page,data,requests,actions,errors,setReject:value=>{rejectWrites=value;}};
   }
+  const durability=await setup();
+  try{
+    const {page,requests,data,setReject}=durability;
+    await page.getByRole('button',{name:'Record Income',exact:true}).click();
+    const income=modal(page,'Record Church Income');
+    await income.getByLabel('Revenue Title / Purpose *',{exact:true}).fill('Durable device income');
+    await income.getByLabel('Amount (GH₵) *',{exact:true}).fill('12.34');
+    await page.evaluate(()=>{window.__financeOriginalPut=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=function(value,...args){if(this.name==='outboxes'&&value.batches?.length)throw new DOMException('Synthetic finance device full','QuotaExceededError');return window.__financeOriginalPut.call(this,value,...args);};});
+    await income.locator('button[type="submit"]').click();
+    await page.getByText(/Synthetic finance device full/).first().waitFor();
+    assert.equal(await income.isVisible(),true,'Storage failure must keep the income form open.');
+    assert.equal(await income.getByLabel('Amount (GH₵) *',{exact:true}).inputValue(),'12.34');
+    assert.equal(requests.length,0,'No cloud request can precede durable device admission.');
+    assert.equal(data.church_accounts[0].current_balance,1000.25);
+    await page.evaluate(()=>{IDBObjectStore.prototype.put=window.__financeOriginalPut;});
+    await income.locator('button[type="submit"]').click();
+    await page.getByText('Income awaiting confirmation',{exact:true}).waitFor();
+    await page.getByText('Synthetic finance cloud unavailable',{exact:true}).first().waitFor();
+    await page.getByRole('button',{name:'Close receipt or voucher',exact:true}).click();
+    setReject(false);await retrySyncOrAwait(page);
+    assert.equal(data.church_finances.filter(row=>row.title==='Durable device income').length,1);
+    await page.goto(origin+'/giving');
+    await page.getByRole('button',{name:'Record Member Giving',exact:true}).click();
+    await page.getByPlaceholder('e.g. Visitor Kwesi Badu',{exact:true}).fill('Synthetic giving donor');
+    await page.getByPlaceholder('0.00',{exact:true}).fill('7.50');
+    setReject(true);
+    await page.getByRole('button',{name:'Save Giving Record',exact:true}).click();
+    await page.getByText('Receipt awaiting confirmation',{exact:true}).waitFor();
+    assert.equal(await page.getByRole('button',{name:'Print / PDF',exact:true}).isDisabled(),true);
+    assert.equal(await page.getByText('Awaiting cloud confirmation. An official receipt will be available after the church database confirms this giving entry.',{exact:true}).isVisible(),true);
+    setReject(false);await page.evaluate(()=>window.dispatchEvent(new Event('online')));await waitForSync(page);
+    await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Print / PDF'&&!button.disabled));
+    assert.equal(data.giving.filter(row=>row.donor_name==='Synthetic giving donor').length,1);
+    assert.deepEqual(durability.errors,[]);
+  }finally{await durability.context.close();}
   const noCash=await setup(false);
   try{
     await noCash.page.getByRole('button',{name:/Sunday Cash Counter/}).click();

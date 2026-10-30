@@ -145,6 +145,7 @@ export const FinancePage: React.FC = () => {
     services,
     settings,
     recordGiving,
+    recordGivingBatch,
     updateGiving,
     deleteGiving,
     recordExpense,
@@ -733,7 +734,7 @@ export const FinancePage: React.FC = () => {
     info('Counter Reset', 'All bill counts, digital collections, and notes have been cleared.');
   };
 
-  const handleSaveCounterOffering = () => {
+  const handleSaveCounterOffering = async () => {
     if (calculatedCashTotal <= 0 && digitalSettlementTotal <= 0 && foreignConvertedGhs <= 0) {
       error('Empty Tally', 'Please enter bill counts or digital settlements before recording.');
       return;
@@ -743,7 +744,7 @@ export const FinancePage: React.FC = () => {
 
     // Record Cash Offering
     if (calculatedCashTotal > 0) {
-      recordGiving({
+      await recordGiving({
         donor_name: `${counterServiceName} (Cash Bowl Collection)`,
         category: 'Offering',
         amount: calculatedCashTotal,
@@ -759,7 +760,7 @@ export const FinancePage: React.FC = () => {
 
     // Record MoMo & Digital Giving
     if (counterMoMoTotal > 0) {
-      recordGiving({
+      await recordGiving({
         donor_name: `${counterServiceName} (MTN MoMo Settlement)`,
         category: 'Offering',
         amount: counterMoMoTotal,
@@ -774,7 +775,7 @@ export const FinancePage: React.FC = () => {
     }
 
     if (counterTelecelTotal > 0) {
-      recordGiving({
+      await recordGiving({
         donor_name: `${counterServiceName} (Telecel Cash Settlement)`,
         category: 'Offering',
         amount: counterTelecelTotal,
@@ -789,7 +790,7 @@ export const FinancePage: React.FC = () => {
     }
 
     if (foreignConvertedGhs > 0) {
-      recordGiving({
+      await recordGiving({
         donor_name: `${counterServiceName} (Foreign Currencies)`,
         category: 'Offering',
         amount: foreignConvertedGhs,
@@ -873,10 +874,8 @@ export const FinancePage: React.FC = () => {
   };
 
   // Fast Batch Entry Callback
-  const handleSaveBatchRecords = (records: any[]) => {
-    records.forEach((rec) => {
-      recordGiving(rec);
-    });
+  const handleSaveBatchRecords = async (records: any[]) => {
+    await recordGivingBatch(records);
 
     const sum = records.reduce((s, r) => s + r.amount, 0);
     setIsBatchModalOpen(false);
@@ -887,7 +886,7 @@ export const FinancePage: React.FC = () => {
   };
 
   // Form Submits
-  const handleGivingSubmit = (e: React.FormEvent) => {
+  const handleGivingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const amt = parseFloat(givingForm.amount);
     if (isNaN(amt) || amt <= 0) return;
@@ -915,7 +914,7 @@ export const FinancePage: React.FC = () => {
       }
     }
 
-    const rec = recordGiving({
+    const rec = await recordGiving({
       member_id: finalMemberId || undefined,
       member_name: memberName || undefined,
       tithe_number: titheNum || undefined,
@@ -991,10 +990,10 @@ export const FinancePage: React.FC = () => {
   };
 
   // Delete Action
-  const executeDelete = () => {
+  const executeDelete = async () => {
     if (!deleteConfirm) return;
     if (deleteConfirm.type === 'giving') {
-      deleteGiving(deleteConfirm.id);
+      await deleteGiving(deleteConfirm.id);
       success('Record Deleted', 'The giving record has been removed.');
     } else {
       deleteExpense(deleteConfirm.id);
@@ -2503,8 +2502,8 @@ export const FinancePage: React.FC = () => {
         <EditGivingModal
           record={editingGivingRecord}
           members={members}
-          onSave={(id, updates) => {
-            updateGiving(id, updates);
+          onSave={async (id, updates) => {
+            await updateGiving(id, updates);
             setEditingGivingRecord(null);
             success('Record Updated', 'The giving record has been saved.');
           }}

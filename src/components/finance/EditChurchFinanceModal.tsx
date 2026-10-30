@@ -8,7 +8,7 @@ interface EditChurchFinanceModalProps {
   record: ChurchFinanceRecord;
   churchAccounts: ChurchAccount[];
   seniorPastor: string;
-  onSave: (updates: Partial<ChurchFinanceRecord>) => void;
+  onSave: (updates: Partial<ChurchFinanceRecord>) => Promise<void>;
   onClose: () => void;
 }
 
@@ -38,7 +38,7 @@ export const EditChurchFinanceModal: React.FC<EditChurchFinanceModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
@@ -59,7 +59,7 @@ export const EditChurchFinanceModal: React.FC<EditChurchFinanceModalProps> = ({
 
     setIsSubmitting(true);
     try {
-      onSave({
+      await onSave({
         title: title.trim(),
         amount: roundedAmt,
         transaction_type: transactionType,
@@ -98,7 +98,7 @@ export const EditChurchFinanceModal: React.FC<EditChurchFinanceModalProps> = ({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            disabled={isSubmitting} onClick={onClose}
             className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -113,7 +113,7 @@ export const EditChurchFinanceModal: React.FC<EditChurchFinanceModalProps> = ({
         )}
 
         {isCashCount&&<p className="text-sm rounded-lg bg-amber-50 text-amber-950 p-3 mb-3">To correct this cash count’s amount, date, account or denominations, void it and post a replacement sheet. Its descriptive details can be edited here.</p>}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4"><fieldset disabled={isSubmitting} className="contents">
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
               Transaction Title / Purpose *
@@ -293,7 +293,7 @@ export const EditChurchFinanceModal: React.FC<EditChurchFinanceModalProps> = ({
               <span>{isSubmitting ? 'Saving...' : 'Save Changes'}</span>
             </button>
           </div>
-        </form>
+        </fieldset></form>
       </div>
     </div>
   );

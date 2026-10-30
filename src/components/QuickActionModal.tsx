@@ -26,6 +26,9 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
     createEvent,
   } = useChurchData();
 
+  const givingId=useRef(crypto.randomUUID());
+  const givingBusy=useRef(false);
+  const [givingSaving,setGivingSaving]=useState(false);
   const memberBusy = useRef(false);
   const memberId=useRef(crypto.randomUUID());
   useEffect(()=>{if(isOpen)memberId.current=crypto.randomUUID();},[isOpen,type]);
@@ -160,7 +163,7 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
     showSuccess(`Visitor ${visitorForm.full_name} registered successfully!`);
   };
 
-  const handleGivingSubmit = (e: React.FormEvent) => {
+  const handleGivingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const amt = parseFloat(givingForm.amount);
     if (isNaN(amt) || amt <= 0) return;
@@ -188,7 +191,8 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
       }
     }
 
-    recordGiving({
+    if(givingBusy.current)return;givingBusy.current=true;setGivingSaving(true);
+    try {await recordGiving({
       member_id: memberId || undefined,
       member_name: memberName || undefined,
       tithe_number: titheNum || undefined,
@@ -201,8 +205,10 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
       payment_channel: givingForm.payment_channel,
       reference_number: givingForm.reference_number || undefined,
       notes: givingForm.notes || undefined,
-    });
-    showSuccess(`Recorded GH₵ ${amt.toFixed(2)} (${givingForm.category})${titheNum ? ` • Tithe #${titheNum}` : ''}!`);
+    },givingId.current);
+    givingId.current=crypto.randomUUID();
+    showSuccess(`Saved on this device; awaiting cloud confirmation: GH₵ ${amt.toFixed(2)} (${givingForm.category})${titheNum ? ` • Tithe #${titheNum}` : ''}!`);
+    }catch(cause){toastError('Giving not saved',(cause as Error).message);}finally{givingBusy.current=false;setGivingSaving(false);}
   };
 
   const handleAttendanceSubmit = (e: React.FormEvent) => {
@@ -267,7 +273,7 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
             </div>
           </div>
           <button
-            onClick={() => { if (!eventSaving.current) onClose(); }}
+            onClick={() => { if (!eventSaving.current && !givingBusy.current) onClose(); }}
             className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg"
           >
             <X className="w-5 h-5" />
@@ -479,7 +485,7 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
           )}
 
           {type === 'giving' && (
-            <form onSubmit={handleGivingSubmit} className="space-y-4">
+            <form onSubmit={handleGivingSubmit} className="space-y-4"><fieldset disabled={givingSaving} className="contents">
               {/* Dual Mode Switcher */}
               <div className="bg-slate-100 p-1 rounded-xl flex items-center gap-1 border border-slate-200">
                 <button
@@ -732,13 +738,13 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ isOpen, type
 
               <div className="pt-2">
                 <button
-                  type="submit"
+                  type="submit" disabled={givingSaving}
                   className="w-full py-2.5 bg-amber-700 hover:bg-amber-800 text-white font-semibold text-sm rounded-xl transition shadow-md"
                 >
                   Record Giving Record (GH₵)
                 </button>
               </div>
-            </form>
+            </fieldset></form>
           )}
 
           {type === 'attendance' && (

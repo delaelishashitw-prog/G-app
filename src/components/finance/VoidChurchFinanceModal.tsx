@@ -5,7 +5,7 @@ import { formatGHS } from '../../lib/currencyUtils';
 
 interface VoidChurchFinanceModalProps {
   record: ChurchFinanceRecord;
-  onVoid: (reason: string) => void;
+  onVoid: (reason: string) => Promise<void>;
   onClose: () => void;
 }
 
@@ -20,7 +20,7 @@ export const VoidChurchFinanceModal: React.FC<VoidChurchFinanceModalProps> = ({
 
   const isInc = record.transaction_type === 'income' || record.transaction_type === 'grant';
 
-  const handleConfirm = (e: React.FormEvent) => {
+  const handleConfirm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reason.trim()) {
       setErrorMsg('A valid reason for voiding this transaction is required for council audit.');
@@ -29,7 +29,7 @@ export const VoidChurchFinanceModal: React.FC<VoidChurchFinanceModalProps> = ({
 
     setIsSubmitting(true);
     try {
-      onVoid(reason.trim());
+      await onVoid(reason.trim());
       onClose();
     } catch (err: any) {
       setErrorMsg(err?.message || 'Failed to void transaction.');
@@ -52,7 +52,7 @@ export const VoidChurchFinanceModal: React.FC<VoidChurchFinanceModalProps> = ({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            disabled={isSubmitting} onClick={onClose}
             className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -94,7 +94,7 @@ export const VoidChurchFinanceModal: React.FC<VoidChurchFinanceModalProps> = ({
           </div>
         )}
 
-        <form onSubmit={handleConfirm} className="space-y-4">
+        <form onSubmit={handleConfirm} className="space-y-4"><fieldset disabled={isSubmitting} className="contents">
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
               Reason for Voiding *
@@ -127,7 +127,7 @@ export const VoidChurchFinanceModal: React.FC<VoidChurchFinanceModalProps> = ({
               <span>{isSubmitting ? 'Voiding...' : 'Confirm Void'}</span>
             </button>
           </div>
-        </form>
+        </fieldset></form>
       </div>
     </div>
   );

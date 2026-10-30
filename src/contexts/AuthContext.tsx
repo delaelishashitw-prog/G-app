@@ -7,6 +7,7 @@ import { readVerifiedProfile, GUEST_PROFILE, clearLegacyCredentials } from '../l
 import {readSecurityStatus, type SecurityStatus} from '../lib/mfa';
 import { apiRequest } from '../lib/apiClient';
 import {authRequestError,isTemporaryAuthFailure,unexpiredVerifiedSession,verifiedSessionExpiresAt} from '../lib/authConnectivity';
+import { MEMBER_DIRECTORY_COLUMNS, memberForRole } from '../lib/memberPrivacy';
 
 interface AuthContextType {
   currentUser: UserProfile;
@@ -235,9 +236,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if(!directoryError&&data)directory=data;
         }
         if(profile.role==='member'){
-          const {data,error:memberError,status}=await client.from('members').select('*').eq('auth_user_id',user.id).maybeSingle();
+          const {data,error:memberError,status}=await client.from('members').select(MEMBER_DIRECTORY_COLUMNS).eq('auth_user_id',user.id).maybeSingle();
           if(memberError)throw authRequestError(memberError,status);
-          member=data||null;
+          member=data?memberForRole(data as unknown as Member,profile.role):null;
         }
       }
       if(ticket!==generation.current)return;

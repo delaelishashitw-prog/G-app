@@ -1,8 +1,12 @@
+import {writeFinance as writeFinancePlan, type FinanceStage} from '../features/finance/durableFinance';
+import {planAccountChange,planBudgetChange} from '../lib/ledgerUtils';
+import {sanitizeRecordForSupabase} from '../lib/supabase';
 import { saveAsset as saveAssetRecord, removeAsset as removeAssetRecord, saveMaintenance, graduateStudent, type OperationWriter } from '../features/operations/durableOperations';
 import {validateCellReport,type CellMeetingReport} from '../lib/cellReports';
 import { validateWelfareFundReceipt, WELFARE_FUND_READ_ROLES, WELFARE_FUND_WRITE_ROLES, WELFARE_FUND_VOID_ROLES, type WelfareFundInput } from '../features/welfare/welfareFund';
 import { withSyncTransaction, hasPendingChanges } from '../lib/supabase';
-import { createPickupToken, findPickup } from '../lib/childSafety';
+import { saveChildCheckIn, saveChildCheckout, type ChildInput } from '../features/attendance/childCheckInStore';
+import { pendingSyncRecords } from '../lib/supabase';
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
   Member,
@@ -105,7 +109,6 @@ import {
 } from '../features/attendance/attendanceStore';
 import {
   deleteExpense as deleteExpenseRecord,
-  deleteGiving as deleteGivingRecord,
   voidGiving as voidGivingRecord,
   recordExpense as recordExpenseRecord,
   recordGiving as recordGivingRecord,
@@ -113,10 +116,8 @@ import {
   updateGiving as updateGivingRecord,
   addChurchAccount as addChurchAccountRecord,
   updateChurchAccount as updateChurchAccountRecord,
-  deleteChurchAccount as deleteChurchAccountRecord,
   recordChurchFinance as recordChurchFinanceRecord,
   updateChurchFinance as updateChurchFinanceRecord,
-  deleteChurchFinance as deleteChurchFinanceRecord,
   voidChurchFinance as voidChurchFinanceRecord,
   transferBetweenAccounts as transferBetweenAccountsRecord,
   addDepartmentBudget as addDepartmentBudgetRecord,
@@ -126,6 +127,7 @@ import { PLEDGE_WRITE_ROLES, buildPledgePayment, requireConfirmedPledge, validat
 import { preserveEvent, requireConfirmedEvent } from '../features/events/eventStore';
 import { canEditMembers, canArchiveMembers, foundationEnrollmentId } from '../features/members/memberRules';
 import {pendingSyncDelete,pendingSyncRecord,pendingMemberRecord,preservePendingSync,sanitizeMemberForSupabase} from '../lib/supabase';
+import { memberForRole } from '../lib/memberPrivacy';
 import { EVENT_WRITE_ROLES } from '../features/events/eventRules';
 import {
   addMinistry as addMinistryRecord,
@@ -233,10 +235,11 @@ interface ChurchDataContextType {
 
   // Finance & Giving
   giving: GivingRecord[];
-  recordGiving: (record: Omit<GivingRecord, 'id' | 'created_at'>) => GivingRecord;
-  updateGiving: (id: string, updates: Partial<GivingRecord>) => void;
-  deleteGiving: (id: string) => void;
-  voidGiving: (id: string, reason: string) => void;
+  recordGiving: (record: Omit<GivingRecord, 'id' | 'created_at'>,requestId?:string) => Promise<GivingRecord>;
+  recordGivingBatch: (records:Array<Omit<GivingRecord,'id'|'created_at'>&{id:string}>)=>Promise<GivingRecord[]>;
+  updateGiving: (id: string, updates: Partial<GivingRecord>) => Promise<void>;
+  deleteGiving: (id: string) => Promise<void>;
+  voidGiving: (id: string, reason: string) => Promise<void>;
   expenses: ExpenseRecord[];
   recordExpense: (record: Omit<ExpenseRecord, 'id' | 'created_at'>) => ExpenseRecord;
   updateExpense: (id: string, updates: Partial<ExpenseRecord>) => void;
@@ -244,15 +247,15 @@ interface ChurchDataContextType {
 
   // Dedicated Church Finance & Accounts
   churchAccounts: ChurchAccount[];
-  addChurchAccount: (account: Omit<ChurchAccount, 'id' | 'created_at' | 'updated_at'>) => ChurchAccount;
-  updateChurchAccount: (id: string, updates: Partial<ChurchAccount>) => void;
-  deleteChurchAccount: (id: string) => void;
+  addChurchAccount: (account: Omit<ChurchAccount, 'id' | 'created_at' | 'updated_at'>,requestId?:string) => Promise<ChurchAccount>;
+  updateChurchAccount: (id: string, updates: Partial<ChurchAccount>) => Promise<void>;
+  deleteChurchAccount: (id: string) => Promise<void>;
   churchFinances: ChurchFinanceRecord[];
-  recordChurchFinance: (record: Omit<ChurchFinanceRecord, 'id' | 'created_at' | 'updated_at'>) => ChurchFinanceRecord;
-  updateChurchFinance: (id: string, updates: Partial<ChurchFinanceRecord>) => void;
-  deleteChurchFinance: (id: string) => void;
-  voidChurchFinance: (id: string, reason: string) => void;
-  transferBetweenAccounts: (fromAccountId: string, toAccountId: string, amount: number, notes?: string) => { success: boolean; message: string };
+  recordChurchFinance: (record: Omit<ChurchFinanceRecord, 'id' | 'created_at' | 'updated_at'>,requestId?:string) => Promise<ChurchFinanceRecord>;
+  updateChurchFinance: (id: string, updates: Partial<ChurchFinanceRecord>) => Promise<void>;
+  deleteChurchFinance: (id: string) => Promise<void>;
+  voidChurchFinance: (id: string, reason: string) => Promise<void>;
+  transferBetweenAccounts: (fromAccountId: string, toAccountId: string, amount: number, notes?: string,requestId?:string) => Promise<{ success: boolean; message: string }>;
   departmentBudgets: DepartmentBudget[];
   updateDepartmentBudget: (id: string, updates: Partial<DepartmentBudget>) => void;
   addDepartmentBudget: (budget: Omit<DepartmentBudget, 'id' | 'created_at' | 'updated_at'>) => DepartmentBudget;
@@ -376,7 +379,7 @@ interface ChurchDataContextType {
   // Children's Ministry Safety & Pickup Tags
   childCheckIns: ChildCheckInRecord[];
   checkInChild: (
-    record: Omit<ChildCheckInRecord, 'id' | 'security_code' | 'created_at' | 'status'> & { security_code?: string }
+    record: ChildInput, requestId?: string
   ) => Promise<ChildCheckInRecord>;
   checkOutChild: (
     id: string,
@@ -443,6 +446,8 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const eventSavesInFlight = React.useRef(new Set<string>());
   const pledgeSavesInFlight = React.useRef(new Set<string>());
   const fundSavesInFlight = React.useRef(new Set<string>());
+  const childSavesInFlight = React.useRef(new Set<string>());
+  const financeSaveInFlight=React.useRef(new Set<string>());
   const isInitialMount = React.useRef(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(() => new Date());
@@ -499,7 +504,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const [dataOwner,setDataOwner]=useState('');
   const membersRef=React.useRef(members);membersRef.current=members;
-  const commitMembers:React.Dispatch<React.SetStateAction<Member[]>>=action=>{const next=typeof action==='function'?action(membersRef.current):action;membersRef.current=next;setMembers(next);};
+  const commitMembers:React.Dispatch<React.SetStateAction<Member[]>>=action=>{const next=(typeof action==='function'?action(membersRef.current):action).map(row=>memberForRole(row,currentUser.role));membersRef.current=next;setMembers(next);};
   const memberIdentity=`${isAuthenticated}:${currentUser.id}:${currentUser.role}`;
   const memberIdentityRef=React.useRef(memberIdentity);memberIdentityRef.current=memberIdentity;
   const memberWrites=React.useRef(new Set<string>());
@@ -700,7 +705,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // MEMBER OPERATIONS
   const memberWriter = () => ({members:membersRef.current,setMembers:commitMembers,persist:dbSyncUpsertBatch,
-    pending:pendingMemberRecord,retryPending:preservePendingSync,normalize:sanitizeMemberForSupabase,
+    pending:pendingMemberRecord,retryPending:preservePendingSync,normalize:(row:Member)=>sanitizeMemberForSupabase(memberForRole(row,currentUser.role)),
     isCurrent:()=>memberIdentityRef.current===memberIdentity,log:logAction});
   const writeMembers = async <T,>(ids:string[],archive:boolean,work:()=>Promise<T>):Promise<T> => {
     if(!isAuthenticated || !canEditMembers(currentUser.role) || (archive && !canArchiveMembers(currentUser.role)))
@@ -909,30 +914,49 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     withSyncTransaction(() => ids.forEach(recordId => deleteAttendanceRecordRecord(recordId, setAttendance, logAction, dbSyncDelete)));
   };
 
-  // FINANCE & GIVING
-  const recordGiving = (data:Omit<GivingRecord,'id'|'created_at'>):GivingRecord=>withSyncTransaction(()=>{
-    if(!isAuthenticated || !canAccess('giving'))throw new Error('Finance staff access is required.');
+  // Stage financial changes separately until device admission has committed.
+  const persistFinance=async<T,>(module:'giving'|'finance',plan:(stage:FinanceStage)=>T):Promise<T>=>{
+    if(!isAuthenticated || !canAccess(module))throw new Error('Finance staff access is required.');
+    const identity=memberIdentity;
+    if(financeSaveInFlight.current.has(identity))throw new Error('Another financial entry is being preserved. Try again in a moment.');
+    financeSaveInFlight.current.add(identity);
+    try{return await writeFinancePlan(givingRef.current,financeStateRef.current,plan,{
+      persist:dbSyncUpsertBatch,retry:preservePendingSync,pending:pendingSyncRecord,normalize:sanitizeRecordForSupabase,
+      current:()=>memberIdentityRef.current===identity,log:logAction,
+      apply:changes=>{
+        for(const {table,record} of changes){
+          if(table==='giving')commitGiving(previous=>[record as GivingRecord,...previous.filter(row=>row.id!==record.id)]);
+          if(table==='church_accounts')commitAccounts(previous=>[record as ChurchAccount,...previous.filter(row=>row.id!==record.id)]);
+          if(table==='church_finances'){
+            const previous=financeStateRef.current.finances.find(row=>row.id===record.id),next=record as ChurchFinanceRecord;
+            const accounts=planAccountChange(financeStateRef.current.accounts,previous,next);
+            const budgets=planBudgetChange(financeStateRef.current.budgets,previous,next);
+            commitAccounts(accounts);commitBudgets(budgets);
+            commitFinances(rows=>[next,...rows.filter(row=>row.id!==next.id)]);
+          }
+        }
+      },
+    });}finally{financeSaveInFlight.current.delete(identity);}
+  };
+  const recordGiving = (data:Omit<GivingRecord,'id'|'created_at'>,requestId:string=crypto.randomUUID()):Promise<GivingRecord>=>persistFinance('giving',stage=>{
     if(!Number.isFinite(data.amount)||data.amount<=0)throw new Error('Enter a finite positive amount.');
     if(data.pledge_id)throw new Error('Record linked payments through the pledge payment form.');
-    const record=recordGivingRecord(data,members,commitGiving,logAction,dbSyncUpsert);
-    return record;
+    return recordGivingRecord(data,members,stage.setGiving,stage.log,stage.sync,requestId);
   });
-
-  const updateGiving = (id: string, updates: Partial<GivingRecord>) => {
+  const recordGivingBatch=(records:Array<Omit<GivingRecord,'id'|'created_at'>&{id:string}>):Promise<GivingRecord[]>=>persistFinance('giving',stage=>records.map(({id,...data})=>{
+    if(data.pledge_id || !Number.isFinite(data.amount) || data.amount<=0)throw new Error('Batch entries require positive giving amounts without a pledge link.');
+    return recordGivingRecord(data,members,stage.setGiving,stage.log,stage.sync,id);
+  }));
+  const updateGiving = (id:string,updates:Partial<GivingRecord>)=>persistFinance('giving',stage=>{
     if(givingRef.current.find(row=>row.id===id)?.pledge_id)throw new Error('Correct this payment from its pledge payment history.');
-    updateGivingRecord(id, updates, members, setGiving, logAction, dbSyncUpsert);
-  };
-
-  const deleteGiving = (id: string) => {
+    updateGivingRecord(id,updates,members,stage.setGiving,stage.log,stage.sync);
+  });
+  const voidGiving = (id:string,reason:string)=>persistFinance('giving',stage=>{
+    if(!reason.trim())throw new Error('Enter a reason for voiding this giving receipt.');
     if(givingRef.current.find(row=>row.id===id)?.pledge_id)throw new Error('Void this payment from its pledge payment history.');
-    voidGivingRecord(id,'Removed by the finance office',`${currentUser.first_name} ${currentUser.last_name}`,setGiving,logAction,dbSyncUpsert);
-  };
-
-  const voidGiving = (id: string, reason: string) => {
-    if(givingRef.current.find(row=>row.id===id)?.pledge_id)throw new Error('Void this payment from its pledge payment history.');
-    const actor = currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat';
-    voidGivingRecord(id, reason, actor, setGiving, logAction, dbSyncUpsert);
-  };
+    voidGivingRecord(id,reason,`${currentUser.first_name} ${currentUser.last_name}`,stage.setGiving,stage.log,stage.sync);
+  });
+  const deleteGiving=(id:string)=>voidGiving(id,'Removed by the finance office');
 
   const recordExpense = (data: Omit<ExpenseRecord, 'id' | 'created_at'>): ExpenseRecord =>
     recordExpenseRecord(data, setExpenses, logAction, dbSyncUpsert);
@@ -946,35 +970,28 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   // DEDICATED CHURCH ACCOUNTS & FINANCES
-  const addChurchAccount = (data: Omit<ChurchAccount, 'id' | 'created_at' | 'updated_at'>): ChurchAccount =>
-    addChurchAccountRecord(data, setChurchAccounts, logAction, dbSyncUpsert);
-
-  const updateChurchAccount = (id: string, updates: Partial<ChurchAccount>) => {
-    updateChurchAccountRecord(id, updates, setChurchAccounts, logAction, dbSyncUpsert);
+  const addChurchAccount = (data:Omit<ChurchAccount,'id'|'created_at'|'updated_at'>,requestId:string=crypto.randomUUID()):Promise<ChurchAccount>=>
+    persistFinance('finance',stage=>addChurchAccountRecord(data,stage.setAccounts,stage.log,stage.sync,requestId));
+  const updateChurchAccount=(id:string,updates:Partial<ChurchAccount>)=>
+    persistFinance('finance',stage=>updateChurchAccountRecord(id,updates,stage.setAccounts,stage.log,stage.sync));
+  const deleteChurchAccount = async(id:string) => {
+    if(!isAuthenticated || !canAccess('finance'))throw new Error('Finance staff access is required.');
+    const identity=memberIdentity;
+    const result=await dbSyncDelete('church_accounts',id);
+    if(!result.durable)throw new Error(result.error||'The account deletion could not be preserved. Keep this page open and retry.');
+    if(memberIdentityRef.current!==identity)throw new Error('The signed-in account changed.');
+    commitAccounts(rows=>rows.filter(row=>row.id!==id));
+    logAction('DELETE_CHURCH_ACCOUNT','Church Finance','Queued account deletion',id);
   };
-
-  const deleteChurchAccount = (id: string) => {
-    deleteChurchAccountRecord(id, setChurchAccounts, logAction, dbSyncDelete);
-  };
-
-  const recordChurchFinance = (data: Omit<ChurchFinanceRecord, 'id' | 'created_at' | 'updated_at'>): ChurchFinanceRecord =>
-    recordChurchFinanceRecord(data, commitFinances, commitAccounts, commitBudgets, logAction, dbSyncUpsert, financeStateRef.current);
-
-  const updateChurchFinance = (id: string, updates: Partial<ChurchFinanceRecord>) => {
-    updateChurchFinanceRecord(id, updates, commitFinances, commitAccounts, commitBudgets, logAction, dbSyncUpsert, financeStateRef.current);
-  };
-
-  const deleteChurchFinance = (id: string) => {
-    deleteChurchFinanceRecord(id, commitFinances, commitAccounts, commitBudgets, logAction, dbSyncDelete, dbSyncUpsert, financeStateRef.current);
-  };
-
-  const voidChurchFinance = (id: string, reason: string) => {
-    const userSignature = currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat';
-    voidChurchFinanceRecord(id, reason, userSignature, commitFinances, commitAccounts, commitBudgets, logAction, dbSyncUpsert, financeStateRef.current);
-  };
-
-  const transferBetweenAccounts = (fromAccountId: string, toAccountId: string, amount: number, notes?: string) =>
-    transferBetweenAccountsRecord(fromAccountId, toAccountId, amount, notes, commitAccounts, commitFinances, logAction, dbSyncUpsert, financeStateRef.current);
+  const recordChurchFinance=(data:Omit<ChurchFinanceRecord,'id'|'created_at'|'updated_at'>,requestId:string=crypto.randomUUID()):Promise<ChurchFinanceRecord>=>
+    persistFinance('finance',stage=>recordChurchFinanceRecord(data,stage.setFinances,stage.setAccounts,stage.setBudgets,stage.log,stage.sync,stage.state,requestId));
+  const updateChurchFinance=(id:string,updates:Partial<ChurchFinanceRecord>)=>
+    persistFinance('finance',stage=>updateChurchFinanceRecord(id,updates,stage.setFinances,stage.setAccounts,stage.setBudgets,stage.log,stage.sync,stage.state));
+  const voidChurchFinance=(id:string,reason:string)=>
+    persistFinance('finance',stage=>voidChurchFinanceRecord(id,reason,`${currentUser.first_name} ${currentUser.last_name}`,stage.setFinances,stage.setAccounts,stage.setBudgets,stage.log,stage.sync,stage.state));
+  const deleteChurchFinance=(id:string)=>voidChurchFinance(id,'Removed by the finance office');
+  const transferBetweenAccounts=(fromId:string,toId:string,amount:number,notes?:string,requestId?:string)=>
+    persistFinance('finance',stage=>transferBetweenAccountsRecord(fromId,toId,amount,notes,stage.setAccounts,stage.setFinances,stage.log,stage.sync,stage.state,requestId));
 
   const addDepartmentBudget = (data: Omit<DepartmentBudget, 'id' | 'created_at' | 'updated_at'>): DepartmentBudget =>
     addDepartmentBudgetRecord(data, setDepartmentBudgets, logAction);
@@ -1628,30 +1645,29 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   // CHILDREN'S MINISTRY SAFETY & PICKUP TAGS
-  const checkInChild = async (
-    data: Omit<ChildCheckInRecord, 'id' | 'security_code' | 'created_at' | 'status'> & { security_code?: string }
-  ): Promise<ChildCheckInRecord> => {
+  const childWriter = () => {
+    const identity=memberIdentity;
+    return {pending:()=>pendingSyncRecords('child_check_ins') as unknown as ChildCheckInRecord[],
+      persist:(record:ChildCheckInRecord)=>dbSyncUpsert('child_check_ins',record),retry:preservePendingSync,
+      flush:flushSyncOutbox,current:()=>memberIdentityRef.current===identity};
+  };
+  const withChildSave=async<T,>(id:string,work:()=>Promise<T>):Promise<T>=>{
     if(!isAuthenticated || !canAccess('attendance'))throw new Error('Attendance staff access is required.');
-    const newRecord:ChildCheckInRecord={...data,id:crypto.randomUUID(),security_code:createPickupToken(childCheckIns),
-      checked_in_by:currentUser.id,status:'checked_in',created_at:new Date().toISOString()};
-    await dbSyncUpsert('child_check_ins',newRecord);
-    const result=await flushSyncOutbox();
-    if(!result.success)throw new Error(result.error||'Check-in is pending. Refresh after synchronization before printing a tag.');
+    const key=`${memberIdentity}:${id}`;
+    if(childSavesInFlight.current.has(key))throw new Error('This child safety change is already being submitted.');
+    childSavesInFlight.current.add(key);try{return await work();}finally{childSavesInFlight.current.delete(key);}
+  };
+  const checkInChild = async (data:ChildInput,requestId:string=crypto.randomUUID()):Promise<ChildCheckInRecord> => withChildSave(requestId,async()=>{
+    const newRecord=await saveChildCheckIn({...data,checked_in_by:currentUser.id},requestId,childCheckIns,childWriter());
     setChildCheckIns(prev=>[newRecord,...prev.filter(row=>row.id!==newRecord.id)]);
     return newRecord;
-  };
-  const checkOutChild = async (id:string,details:{checked_out_to_person:string;verified_by_leader:string}) => {
-    if(!isAuthenticated || !canAccess('attendance'))throw new Error('Attendance staff access is required.');
+  });
+  const checkOutChild = async (id:string,details:{checked_out_to_person:string;verified_by_leader:string}) => withChildSave(id,async()=>{
     const current=childCheckIns.find(row=>row.id===id);
     if(!current)throw new Error('Refresh check-in records before releasing this child.');
-    findPickup(childCheckIns,current.security_code,details.checked_out_to_person);
-    const updated={...current,status:'checked_out' as const,checked_out_to_person:details.checked_out_to_person.trim(),
-      verified_by_leader:currentUser.id,check_out_time:new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})};
-    await dbSyncUpsert('child_check_ins',updated);
-    const result=await flushSyncOutbox();
-    if(!result.success)throw new Error(result.error||'Pickup has not been confirmed by the server.');
+    const updated=await saveChildCheckout(current,details.checked_out_to_person,currentUser.id,childCheckIns,childWriter());
     setChildCheckIns(prev=>prev.map(row=>row.id===id?updated:row));
-  };
+  });
 
   const summonChildParent=(id:string,notes?:string)=>{
     const record=childCheckIns.find(row=>row.id===id);if(!record)throw new Error('Check-in not found.');
@@ -1826,6 +1842,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       deleteHeadcount,
       giving,
       recordGiving,
+      recordGivingBatch,
       updateGiving,
       deleteGiving,
       voidGiving,

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { X, Coins, Check, AlertCircle } from 'lucide-react';
 import { Member, GivingCategory, PaymentMethod } from '../../types/database.types';
 import { useChurchData } from '../../contexts/ChurchDataContext';
@@ -27,11 +27,12 @@ export const RecordMemberGivingModal: React.FC<RecordMemberGivingModalProps> = (
   const [referenceNumber, setReferenceNumber] = useState<string>('');
   const [serviceId, setServiceId] = useState<string>(services[0]?.id || '');
   const [notes, setNotes] = useState<string>('');
+  const requestId=useRef(crypto.randomUUID());
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const parsedAmount = parseFloat(amount);
     if (isNaN(parsedAmount) || parsedAmount <= 0) {
@@ -43,7 +44,7 @@ export const RecordMemberGivingModal: React.FC<RecordMemberGivingModalProps> = (
     try {
       const selectedSrv = services.find((s) => s.id === serviceId);
 
-      recordGiving({
+      await recordGiving({
         member_id: member.id,
         member_name: `${member.first_name} ${member.last_name}`,
         tithe_number: member.tithe_number || undefined,
@@ -58,13 +59,14 @@ export const RecordMemberGivingModal: React.FC<RecordMemberGivingModalProps> = (
         service_id: serviceId || undefined,
         service_name: selectedSrv ? selectedSrv.name : undefined,
         notes: notes.trim() || undefined,
-      });
+      },requestId.current);
+      requestId.current=crypto.randomUUID();
 
-      success(`Successfully recorded ${formatGHS(parsedAmount)} ${category} for ${member.first_name}${member.tithe_number ? ` (Tithe #${member.tithe_number})` : ''}!`);
+      success(`Saved on this device; awaiting cloud confirmation: ${formatGHS(parsedAmount)} ${category} for ${member.first_name}${member.tithe_number ? ` (Tithe #${member.tithe_number})` : ''}!`);
       onClose();
     } catch (err) {
       console.error(err);
-      error('Failed to record contribution.');
+      error('Contribution not saved',(err as Error).message);
     } finally {
       setIsSubmitting(false);
     }
@@ -87,7 +89,7 @@ export const RecordMemberGivingModal: React.FC<RecordMemberGivingModalProps> = (
             </div>
           </div>
           <button
-            onClick={onClose}
+            disabled={isSubmitting} onClick={onClose}
             className="p-1.5 rounded-lg text-teal-200 hover:text-white hover:bg-white/10 transition"
           >
             <X className="w-5 h-5" />
@@ -95,7 +97,7 @@ export const RecordMemberGivingModal: React.FC<RecordMemberGivingModalProps> = (
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4"><fieldset disabled={isSubmitting} className="contents">
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -224,7 +226,7 @@ export const RecordMemberGivingModal: React.FC<RecordMemberGivingModalProps> = (
           <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-3">
             <button
               type="button"
-              onClick={onClose}
+              disabled={isSubmitting} onClick={onClose}
               className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 transition"
             >
               Cancel
@@ -238,7 +240,7 @@ export const RecordMemberGivingModal: React.FC<RecordMemberGivingModalProps> = (
               <span>{isSubmitting ? 'Recording...' : 'Record Giving'}</span>
             </button>
           </div>
-        </form>
+        </fieldset></form>
       </div>
     </div>
   );
