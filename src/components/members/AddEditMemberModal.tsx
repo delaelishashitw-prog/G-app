@@ -29,6 +29,7 @@ import { Member, GenderType, MembershipStatus } from '../../types/database.types
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { ProfilePhotoUpload } from '../ProfilePhotoUpload';
 import { useModalFocus } from '../../hooks/useModalFocus';
+import { childContactErrors } from '../../lib/childRegistration';
 
 export interface AddEditMemberModalProps {
   isOpen: boolean;
@@ -298,24 +299,7 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
     if (!formData.first_name?.trim()) errors.first_name = 'First name is required.';
     if (!formData.last_name?.trim()) errors.last_name = 'Last name / surname is required.';
 
-    // Phone validation
-    const cleanPhoneDigits = (formData.phone || '').replace(/[^0-9]/g, '');
-    const isChildRegistration = calculatedAge !== null && calculatedAge < 13;
-    const guardianPhoneDigits = (formData.emergency_phone || '').replace(/[^0-9]/g, '');
-    const guardianName = (formData.emergency_name || '').trim();
-    if (isChildRegistration) {
-      if (guardianName.length < 2) {
-        errors.emergency_name = 'Enter the child’s parent or guardian’s full name.';
-      }
-      if (guardianPhoneDigits.length < 9) {
-        errors.emergency_phone = 'A valid parent or guardian phone number is required for children.';
-      }
-      if (cleanPhoneDigits.length > 0 && cleanPhoneDigits.length < 9 && formData.phone?.trim() !== '+233') {
-        errors.phone = 'Enter a valid phone number or leave the child’s personal phone blank.';
-      }
-    } else if (cleanPhoneDigits.length < 9) {
-      errors.phone = 'Valid Ghana phone number is required (min 9-10 digits, e.g. +233 24 123 4567).';
-    }
+    Object.assign(errors, childContactErrors(calculatedAge, formData.phone, formData.emergency_name, formData.emergency_phone));
 
     // Date joined
     const dateJoined = formData.membership_date || formData.date_joined;
@@ -393,7 +377,7 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
     const finalJoined = cleanOptionalDate(formData.membership_date) || cleanOptionalDate(formData.date_joined) || new Date().toISOString().split('T')[0];
     const payload: Partial<Member> = {
       ...formData,
-      phone: isFinite(Number(calculatedAge)) && calculatedAge !== null && calculatedAge < 13 && (!formData.phone?.trim() || formData.phone.trim() === '+233') ? '' : formData.phone,
+      phone: calculatedAge !== null && calculatedAge < 13 && (!formData.phone?.trim() || formData.phone.trim() === '+233') ? '' : formData.phone,
       membership_date: finalJoined,
       date_joined: finalJoined,
       date_of_birth: cleanOptionalDate(formData.date_of_birth),
