@@ -18,7 +18,7 @@ const relationshipLabels: Record<MemberGuardian['relationship'], string> = {
 
 export const FamilyManagementModal: React.FC<Props> = ({ isOpen, onClose, members, actorId }) => {
   const children = useMemo(() => members.filter(m => !m.is_archived && getMemberAgeGroup(m) === 'child'), [members]);
-  const adults = useMemo(() => members.filter(m => !m.is_archived && getMemberAgeGroup(m) !== 'child'), [members]);
+  const adults = useMemo(() => members.filter(m => !m.is_archived && ['adult', 'senior'].includes(getMemberAgeGroup(m))), [members]);
   const [childId, setChildId] = useState('');
   const [guardianId, setGuardianId] = useState('');
   const [relationship, setRelationship] = useState<MemberGuardian['relationship']>('mother');
@@ -77,7 +77,15 @@ export const FamilyManagementModal: React.FC<Props> = ({ isOpen, onClose, member
         authorization_notes: notes.trim() || null, verified_by: actorId,
         verified_at: new Date().toISOString()
       };
-      const { error } = await client.from('member_guardians').upsert(payload, { onConflict: 'child_member_id,guardian_member_id' });
+      const { error } = await client.rpc('gwcc_save_member_guardian', {
+        p_child_member_id: payload.child_member_id,
+        p_guardian_member_id: payload.guardian_member_id,
+        p_relationship: payload.relationship,
+        p_is_primary: payload.is_primary,
+        p_pickup_authorized: payload.pickup_authorized,
+        p_authorization_notes: payload.authorization_notes,
+        p_confirmed: verified,
+      });
       if (error) throw error;
       setGuardianId(''); setIsPrimary(false); setPickupAuthorized(false); setVerified(false); setNotes('');
       await loadLinks(childId);
@@ -91,7 +99,7 @@ export const FamilyManagementModal: React.FC<Props> = ({ isOpen, onClose, member
     if (!client || !window.confirm('Remove this guardian relationship? This also removes its pickup authorization.')) return;
     setSaving(true);
     try {
-      const { error } = await client.from('member_guardians').delete().eq('id', id);
+      const { error } = await client.rpc('gwcc_delete_member_guardian', { p_guardian_link_id: id });
       if (error) throw error;
       await loadLinks(childId);
       setMessage('Guardian relationship removed.');
