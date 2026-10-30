@@ -53,7 +53,7 @@ export const RecordWelfareDuesModal: React.FC<RecordWelfareDuesModalProps> = ({
       if (!selectedMem) throw new Error('Select an active church member.');
       // Number('') is zero; reject empty and malformed numeric values explicitly.
       const rawAmount = amount.trim();
-      if (!/^\\d+(?:\\.\\d{1,2})?$/.test(rawAmount)) {
+      if (!/^\d+(?:\.\d{1,2})?$/.test(rawAmount)) {
         throw new Error('Enter a positive amount with at most two decimal places.');
       }
       const numAmount = Number(rawAmount);
