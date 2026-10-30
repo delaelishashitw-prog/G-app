@@ -1693,7 +1693,7 @@ test('optimized self-read policies retain member ownership and active profile bo
   try{
     const policies=(await db.query("SELECT tablename,qual FROM pg_policies WHERE schemaname='public' AND policyname IN ('gwcc_profile_self_read','gwcc_member_self_read') ORDER BY tablename")).rows;
     assert.equal(policies.length,2);
-    for(const policy of policies)assert.match(policy.qual,/SELECT\\s+auth\\.uid\\(\\)/i,policy.tablename);
+    for(const policy of policies)assert.match(policy.qual,/SELECT\s+auth\.uid\(\)/i,policy.tablename);
     await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,auth_user_id) VALUES
       ('rls-owned','RLS-OWN','Synthetic','Owned','${member}'),
       ('rls-other','RLS-OTHER','Synthetic','Other','${other}')`);
