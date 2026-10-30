@@ -63,6 +63,7 @@ import { MemberDemographicsSection } from '../components/members/MemberDemograph
 import { FoundationSchoolModal } from '../components/discipleship/FoundationSchoolModal';
 import { BulkMemberOperationsModal } from '../components/members/BulkMemberOperationsModal';
 import { PrintDirectoryModal } from '../components/members/PrintDirectoryModal';
+import { FamilyManagementModal } from '../components/members/FamilyManagementModal';
 import { BatchArchiveMembersModal } from '../components/members/BatchArchiveMembersModal';
 import { buildCsv } from '../lib/financeViewUtils';
 import { canEditMembers, canArchiveMembers, memberMatchesSearch, memberDirectoryPage, memberDirectoryPageSize, MEMBER_SAVE_NOTICE } from '../features/members/memberRules';
@@ -165,6 +166,7 @@ export const MembersPage: React.FC = () => {
     currentRole === 'administrator';
 
   const canManageMembers = canAccess('members') && canEditMembers(currentRole);
+  const canManageFamily = ['super_admin', 'senior_pastor', 'administrator'].includes(currentRole);
 
   // Initialize filters from URL or default
   const urlQ = searchParams.get('q') || '';
@@ -275,6 +277,7 @@ export const MembersPage: React.FC = () => {
   const [isBulkOperationsOpen, setIsBulkOperationsOpen] = useState(false);
   const [isBatchArchiveOpen, setIsBatchArchiveOpen] = useState(false);
   const [isPrintDirectoryOpen, setIsPrintDirectoryOpen] = useState(false);
+  const [isFamilyManagementOpen, setIsFamilyManagementOpen] = useState(false);
 
   // Demographics Visual Dashboard collapsible state
   const [isDemographicsOpen, setIsDemographicsOpen] = useState<boolean>(() => {
@@ -977,7 +980,7 @@ export const MembersPage: React.FC = () => {
                   title="Families & Households Grouping"
                 >
                   <Users className="w-3.5 h-3.5 text-teal-600" />
-                  <span>Families ({multiMemberHouseholdsCount})</span>
+                  <span>Family Groups ({multiMemberHouseholdsCount})</span>
                 </button>
               </div>
 
@@ -1013,6 +1016,17 @@ export const MembersPage: React.FC = () => {
                 )}
               </button>
 
+              {canManageFamily && (
+                <button
+                  type="button"
+                  onClick={() => setIsFamilyManagementOpen(true)}
+                  className="px-3.5 py-2 rounded-xl border border-teal-300 bg-teal-50 hover:bg-teal-100 text-teal-950 text-xs font-bold flex items-center gap-1.5 transition"
+                  title="Manage verified parent and guardian relationships"
+                >
+                  <Users className="w-4 h-4" />
+                  <span>Family Management</span>
+                </button>
+              )}
               {/* Print Directory Button */}
               <button
                 type="button"
@@ -1852,14 +1866,18 @@ export const MembersPage: React.FC = () => {
           ) : viewMode === 'families' ? (
             /* FAMILIES & HOUSEHOLDS DIRECTORY */
             <div className="space-y-6">
+              {/* Household groupings are suggestions until staff verify each relationship. */}
+              <div role="note" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                <strong>Important: Suggested family groupings.</strong> These groups are generated from matching member details such as surnames, spouse information and contact/address fields. They are not verified parent-child or legal-guardian relationships. Please confirm relationships with the family before relying on them for pastoral decisions or children's check-in and pickup.
+              </div>
               {/* Family Directory Stats Bar */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-gradient-to-r from-teal-950 via-teal-900 to-emerald-900 p-4 rounded-2xl text-white shadow-sm border border-teal-800/40">
                 <div>
-                  <p className="text-[10px] text-teal-300 font-semibold uppercase tracking-wider">Total Family Units</p>
+                  <p className="text-[10px] text-teal-300 font-semibold uppercase tracking-wider">Suggested Groups</p>
                   <p className="text-xl font-black mt-0.5">{households.length}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-teal-300 font-semibold uppercase tracking-wider">Multi-Member Families</p>
+                  <p className="text-[10px] text-teal-300 font-semibold uppercase tracking-wider">Groups with Multiple Members</p>
                   <p className="text-xl font-black mt-0.5 text-amber-300">{multiMemberHouseholdsCount}</p>
                 </div>
                 <div>
@@ -1976,16 +1994,16 @@ export const MembersPage: React.FC = () => {
 
                               const mAge = getMemberAgeGroup(m);
                               let roleTag = isHead
-                                ? 'Head of House'
+                                ? 'Suggested Household Contact'
                                 : isSpouseOfHead
                                 ? m.gender === 'male'
                                   ? 'Spouse (Husband)'
                                   : 'Spouse (Wife)'
                                 : mAge === 'child'
-                                ? 'Child / Dependent'
+                                ? 'Possible Child / Dependent'
                                 : mAge === 'youth'
-                                ? 'Youth'
-                                : 'Family Member';
+                                ? 'Possible Youth'
+                                : 'Possible Relative';
 
                               return (
                                 <div
@@ -2117,6 +2135,13 @@ export const MembersPage: React.FC = () => {
           setBatchSelectedIds(new Set());
         }}
       />}
+
+      <FamilyManagementModal
+        isOpen={isFamilyManagementOpen && canManageFamily}
+        onClose={() => setIsFamilyManagementOpen(false)}
+        members={members}
+        actorId={currentUser.id}
+      />
 
       {/* MODAL 7: PRINT MEMBERSHIP DIRECTORY */}
       <PrintDirectoryModal

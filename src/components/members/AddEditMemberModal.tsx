@@ -29,6 +29,7 @@ import { Member, GenderType, MembershipStatus } from '../../types/database.types
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { ProfilePhotoUpload } from '../ProfilePhotoUpload';
 import { useModalFocus } from '../../hooks/useModalFocus';
+import { childContactErrors } from '../../lib/childRegistration';
 
 export interface AddEditMemberModalProps {
   isOpen: boolean;
@@ -298,11 +299,7 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
     if (!formData.first_name?.trim()) errors.first_name = 'First name is required.';
     if (!formData.last_name?.trim()) errors.last_name = 'Last name / surname is required.';
 
-    // Phone validation
-    const cleanPhoneDigits = (formData.phone || '').replace(/[^0-9]/g, '');
-    if (!formData.phone?.trim() || cleanPhoneDigits.length < 9) {
-      errors.phone = 'Valid Ghana phone number is required (min 9-10 digits, e.g. +233 24 123 4567).';
-    }
+    Object.assign(errors, childContactErrors(calculatedAge, formData.phone, formData.emergency_name, formData.emergency_phone));
 
     // Date joined
     const dateJoined = formData.membership_date || formData.date_joined;
@@ -353,6 +350,8 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
     if (Object.keys(errors).length > 0) {
       if (errors.first_name || errors.last_name || errors.date_of_birth || errors.national_id) {
         setActiveTab('personal');
+      } else if (errors.emergency_name || errors.emergency_phone) {
+        setActiveTab('vocation');
       } else if (errors.phone) {
         setActiveTab('contact');
       } else if (errors.membership_date || errors.tithe_number) {
@@ -378,6 +377,7 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
     const finalJoined = cleanOptionalDate(formData.membership_date) || cleanOptionalDate(formData.date_joined) || new Date().toISOString().split('T')[0];
     const payload: Partial<Member> = {
       ...formData,
+      phone: calculatedAge !== null && calculatedAge < 13 && (!formData.phone?.trim() || formData.phone.trim() === '+233') ? '' : formData.phone,
       membership_date: finalJoined,
       date_joined: finalJoined,
       date_of_birth: cleanOptionalDate(formData.date_of_birth),
@@ -840,11 +840,11 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
-                    Primary Phone (+233) <span className="text-rose-500">*</span>
+                    Primary Phone (+233) {!((calculatedAge !== null) && calculatedAge < 13) && <span className="text-rose-500">*</span>}
                   </label>
                   <input
                     type="tel"
-                    required
+                    required={!(calculatedAge !== null && calculatedAge < 13)}
                     value={formData.phone || ''}
                     onChange={(e) => {
                       setFormData({ ...formData, phone: e.target.value });
