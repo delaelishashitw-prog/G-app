@@ -1694,9 +1694,9 @@ test('optimized self-read policies retain member ownership and active profile bo
     const policies=(await db.query("SELECT tablename,qual FROM pg_policies WHERE schemaname='public' AND policyname IN ('gwcc_profile_self_read','gwcc_member_self_read') ORDER BY tablename")).rows;
     assert.equal(policies.length,2);
     for(const policy of policies)assert.match(policy.qual,/SELECT\s+auth\.uid\(\)/i,policy.tablename);
-    await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,auth_user_id) VALUES
-      ('rls-owned','RLS-OWN','Synthetic','Owned','${member}'),
-      ('rls-other','RLS-OTHER','Synthetic','Other','${other}')`);
+    await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,phone,auth_user_id) VALUES
+      ('rls-owned','RLS-OWN','Synthetic','Owned','0240000011','${member}'),
+      ('rls-other','RLS-OTHER','Synthetic','Other','0240000012','${other}')`);
     await asUser(db,member,async()=>{
       assert.deepEqual((await db.query("SELECT id FROM public.members WHERE id IN ('rls-owned','rls-other') ORDER BY id")).rows,[{id:'rls-owned'}]);
       assert.deepEqual((await db.query("SELECT id FROM public.profiles WHERE id IN ($1,$2) ORDER BY id",[member,other])).rows,[{id:member}]);
