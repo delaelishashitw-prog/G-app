@@ -1686,3 +1686,29 @@ test('welfare officers can record dues and review relief with MFA, without treas
     assert.equal((await db.query("SELECT has_function_privilege('authenticated','gwcc_private.prepare_welfare_officer_mutation(text,text,jsonb,jsonb)','EXECUTE') ok")).rows[0].ok,false);
   }finally{await db.close();}
 });
+
+
+test('optimized self-read policies retain member ownership and active profile boundaries',async()=>{
+  const db=await setupDatabase();
+  try{
+    const policies=(await db.query("SELECT tablename,qual FROM pg_policies WHERE schemaname='public' AND policyname IN ('gwcc_profile_self_read','gwcc_member_self_read') ORDER BY tablename")).rows;
+    assert.equal(policies.length,2);
+    for(const policy of policies)assert.match(policy.qual,/SELECT\\s+auth\\.uid\\(\\)/i,policy.tablename);
+    await db.exec(`INSERT INTO public.members(id,member_id,first_name,last_name,auth_user_id) VALUES
+      ('rls-owned','RLS-OWN','Synthetic','Owned','${member}'),
+      ('rls-other','RLS-OTHER','Synthetic','Other','${other}')`);
+    await asUser(db,member,async()=>{
+      assert.deepEqual((await db.query("SELECT id FROM public.members WHERE id IN ('rls-owned','rls-other') ORDER BY id")).rows,[{id:'rls-owned'}]);
+      assert.deepEqual((await db.query("SELECT id FROM public.profiles WHERE id IN ($1,$2) ORDER BY id",[member,other])).rows,[{id:member}]);
+    });
+    await asUser(db,other,async()=>{
+      assert.deepEqual((await db.query("SELECT id FROM public.members WHERE id IN ('rls-owned','rls-other') ORDER BY id")).rows,[{id:'rls-other'}]);
+      assert.deepEqual((await db.query("SELECT id FROM public.profiles WHERE id IN ($1,$2) ORDER BY id",[member,other])).rows,[{id:other}]);
+    });
+    await db.query("UPDATE public.profiles SET is_active=false WHERE id=$1",[member]);
+    await asUser(db,member,async()=>{
+      assert.equal((await db.query("SELECT id FROM public.profiles WHERE id=$1",[member])).rows.length,0);
+      assert.equal((await db.query("SELECT id FROM public.members WHERE id='rls-owned'")).rows.length,0);
+    });
+  }finally{await db.close();}
+});
