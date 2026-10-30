@@ -63,6 +63,7 @@ import { MemberDemographicsSection } from '../components/members/MemberDemograph
 import { FoundationSchoolModal } from '../components/discipleship/FoundationSchoolModal';
 import { BulkMemberOperationsModal } from '../components/members/BulkMemberOperationsModal';
 import { PrintDirectoryModal } from '../components/members/PrintDirectoryModal';
+import { FamilyManagementModal } from '../components/members/FamilyManagementModal';
 import { BatchArchiveMembersModal } from '../components/members/BatchArchiveMembersModal';
 import { buildCsv } from '../lib/financeViewUtils';
 import { canEditMembers, canArchiveMembers, memberMatchesSearch, memberDirectoryPage, memberDirectoryPageSize, MEMBER_SAVE_NOTICE } from '../features/members/memberRules';
@@ -275,6 +276,7 @@ export const MembersPage: React.FC = () => {
   const [isBulkOperationsOpen, setIsBulkOperationsOpen] = useState(false);
   const [isBatchArchiveOpen, setIsBatchArchiveOpen] = useState(false);
   const [isPrintDirectoryOpen, setIsPrintDirectoryOpen] = useState(false);
+  const [isFamilyManagementOpen, setIsFamilyManagementOpen] = useState(false);
 
   // Demographics Visual Dashboard collapsible state
   const [isDemographicsOpen, setIsDemographicsOpen] = useState<boolean>(() => {
@@ -1013,6 +1015,17 @@ export const MembersPage: React.FC = () => {
                 )}
               </button>
 
+              {canManageMembers && (
+                <button
+                  type="button"
+                  onClick={() => setIsFamilyManagementOpen(true)}
+                  className="px-3.5 py-2 rounded-xl border border-teal-300 bg-teal-50 hover:bg-teal-100 text-teal-950 text-xs font-bold flex items-center gap-1.5 transition"
+                  title="Manage verified parent and guardian relationships"
+                >
+                  <Users className="w-4 h-4" />
+                  <span>Family Management</span>
+                </button>
+              )}
               {/* Print Directory Button */}
               <button
                 type="button"
@@ -2121,6 +2134,13 @@ export const MembersPage: React.FC = () => {
           setBatchSelectedIds(new Set());
         }}
       />}
+
+      <FamilyManagementModal
+        isOpen={isFamilyManagementOpen && canManageMembers}
+        onClose={() => setIsFamilyManagementOpen(false)}
+        members={members}
+        actorId={currentUser.id}
+      />
 
       {/* MODAL 7: PRINT MEMBERSHIP DIRECTORY */}
       <PrintDirectoryModal
