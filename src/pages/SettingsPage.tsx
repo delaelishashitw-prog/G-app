@@ -1,3 +1,4 @@
+import { ServiceTimetable } from '../components/services/ServiceTimetable';
 import {GivingChannelsPanel} from '../components/finance/GivingChannels';
 import React, { useState, useEffect } from 'react';
 import {
@@ -150,20 +151,6 @@ export const SettingsPage: React.FC = () => {
   const [timezone, setTimezone] = useState(settings.timezone || 'UTC');
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  // Weekly Services Schedule (persisted in localStorage)
-  const [sundayServiceTime, setSundayServiceTime] = useState(() => {
-    return localStorage.getItem('gwcc_sunday_time') || '';
-  });
-  const [midweekServiceTime, setMidweekServiceTime] = useState(() => {
-    return localStorage.getItem('gwcc_midweek_time') || '';
-  });
-  const [allNightServiceTime, setAllNightServiceTime] = useState(() => {
-    return localStorage.getItem('gwcc_allnight_time') || '';
-  });
-  const [cellMeetingTime, setCellMeetingTime] = useState(() => {
-    return localStorage.getItem('gwcc_cell_time') || '';
-  });
-
   // Supabase Credentials Form state
   const [supabaseUrlInput, setSupabaseUrlInput] = useState(supabaseConfig.url || '');
   const [supabaseKeyInput, setSupabaseKeyInput] = useState(supabaseConfig.anonKey || '');
@@ -251,15 +238,6 @@ export const SettingsPage: React.FC = () => {
     setSavedSuccess(true);
     toastSuccess('Settings Saved', 'Church profile information updated successfully.');
     setTimeout(() => setSavedSuccess(false), 3000);
-  };
-
-  const handleSaveServiceSchedule = (e: React.FormEvent) => {
-    e.preventDefault();
-    localStorage.setItem('gwcc_sunday_time', sundayServiceTime);
-    localStorage.setItem('gwcc_midweek_time', midweekServiceTime);
-    localStorage.setItem('gwcc_allnight_time', allNightServiceTime);
-    localStorage.setItem('gwcc_cell_time', cellMeetingTime);
-    toastSuccess('Service Schedule Saved', 'Weekly worship services and prayer timetable updated.');
   };
 
   const handleTestConnection = async () => {
@@ -1268,113 +1246,11 @@ export const SettingsPage: React.FC = () => {
               Weekly Service Timetable & Schedules
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Service schedules displayed in attendance check-in kiosk, duty roster editor, and order of service bulletins.
+              View the shared weekly timetable. Update service details from the Services page.
             </p>
           </div>
 
-          <form onSubmit={handleSaveServiceSchedule} className="space-y-4 text-xs">
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-              <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wide">
-                1. Sunday Prophetic Celebration Service
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Service Time</label>
-                  <input
-                    type="text"
-                    value={sundayServiceTime}
-                    onChange={(e) => setSundayServiceTime(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Target Audience</label>
-                  <span className="block px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-600">
-                    Whole Congregation, Visitors & Children Church
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-              <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wide">
-                2. Wednesday Midweek Miracle & Teaching Service
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Service Time</label>
-                  <input
-                    type="text"
-                    value={midweekServiceTime}
-                    onChange={(e) => setMidweekServiceTime(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Focus</label>
-                  <span className="block px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-600">
-                    Word Exegesis, Communion & Deliverance Prayers
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-              <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wide">
-                3. Friday Prophetic All-Night Vigil
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Service Schedule</label>
-                  <input
-                    type="text"
-                    value={allNightServiceTime}
-                    onChange={(e) => setAllNightServiceTime(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Focus</label>
-                  <span className="block px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-600">
-                    Intercessory Warfare, Prophetic Impartation
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-              <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wide">
-                4. Community Cell Fellowships
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Meeting Time</label>
-                  <input
-                    type="text"
-                    value={cellMeetingTime}
-                    onChange={(e) => setCellMeetingTime(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Locations</label>
-                  <span className="block px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-600">
-                    Host homes across Joma, Ablekuma, Weija & Anyaa
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-2">
-              <button
-                type="submit"
-                className="px-5 py-2.5 bg-[#064e3b] hover:bg-[#047857] text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center gap-2"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>Save Service Schedule</span>
-              </button>
-            </div>
-          </form>
+          <ServiceTimetable />
         </div>
       )}
 

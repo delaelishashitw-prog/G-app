@@ -24,4 +24,12 @@ Tests cover real PostgreSQL column permissions, authorized note access, own-prof
 
 Apply the permission migration to staging, verify access controls and unchanged data digests, and repeat on production with the matching frontend. Older cached clients using `SELECT *` must refresh after deployment. Confirm the exact GitHub head passes the full verify workflow and the production dependency audit before merging. Verify the live deployment's commit, routes, health endpoint and published bundles.
 
-Other audit items (shared service schedules, real staff QR passes, the disabled Test Access control, Settings bundle size and Supabase leaked-password protection) remain separate work.
+## Shared service timetable
+
+The member portal now derives its next gathering from the shared active `services` records. It uses the same next/live occurrence calculation as the Services page, displays dates and times in Africa/Accra, includes the following day's date for overnight meetings, and updates the current occurrence every 30 seconds. Refresh, window focus and reconnection reload the shared records. Failed or offline refreshes label retained times as a saved timetable; loading, unavailable and confirmed empty schedules have distinct messages.
+
+Settings now lists those same service records and links to the existing Services editor. Cell fellowship times remain managed for each group in Small Groups. The old free-text localStorage timetable fields no longer determine advertised times and are not automatically imported into church records. No database migration or service-record rewrite is required for this correction.
+
+Browser regression checks edit a synthetic service as an administrator and verify the shared result in a new member session. They cover Ghana time on devices in other time zones, live/end boundaries, inactive and archived services, overnight dates, loading and failed reads, offline/reconnect behavior, legacy device values, member permissions and 390/1440px layouts.
+
+Other audit items (real staff QR passes, the disabled Test Access control, Settings bundle size and Supabase leaked-password protection) remain separate work.

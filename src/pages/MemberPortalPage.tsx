@@ -1,3 +1,4 @@
+import { ServiceTimetable } from '../components/services/ServiceTimetable';
 import {MemberEventsPanel} from '../components/portal/MemberEventsPanel';
 import {GivingInstructions} from '../components/finance/GivingChannels';
 import {rosterDate,rosterToday,isUpcomingDuty,type RosterSubstituteRequest} from '../lib/rosterUtils';
@@ -1433,9 +1434,9 @@ export const MemberPortalPage: React.FC = () => {
               </div>
 
               <div className="mt-6 pt-4 border-t border-emerald-700/50 flex flex-wrap items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-emerald-300" />
-                  <span>Next Gathering: <strong>Sunday First Service (07:00 AM)</strong> & <strong>Celebration Service (10:00 AM)</strong></span>
+                <div className="flex min-w-0 items-start gap-2">
+                  <Clock className="mt-0.5 w-4 h-4 shrink-0 text-emerald-300" />
+                  <ServiceTimetable compact />
                 </div>
                 <button
                   type="button"
