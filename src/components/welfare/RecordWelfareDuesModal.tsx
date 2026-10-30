@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { X, HeartHandshake, Check, CreditCard, User, Calendar, Receipt } from 'lucide-react';
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { useToast } from '../../contexts/ToastContext';
 import { PaymentMethod } from '../../types/database.types';
+import { ghanaToday } from '../../lib/financeViewUtils';
+import { validateWelfareDue, newWelfareDueReference } from '../../features/welfare/welfareDuesRules';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface RecordWelfareDuesModalProps {
   isOpen: boolean;
@@ -15,7 +18,10 @@ export const RecordWelfareDuesModal: React.FC<RecordWelfareDuesModalProps> = ({
   onClose,
   preselectedMemberId,
 }) => {
-  const { members, recordWelfareContribution, settings } = useChurchData();
+  const { members, recordWelfareContribution, welfareContributions, settings } = useChurchData();
+  const { currentUser } = useAuth();
+  const submitting = useRef(false);
+  const [saving, setSaving] = useState(false);
   const { success, error: toastError } = useToast();
 
   const activeMembers = members.filter((m) => !m.is_archived);
@@ -23,9 +29,8 @@ export const RecordWelfareDuesModal: React.FC<RecordWelfareDuesModalProps> = ({
     ? activeMembers.find((m) => m.id === preselectedMemberId)
     : activeMembers[0];
 
-  const now = new Date();
-  const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const currentDateStr = now.toISOString().split('T')[0];
+  const currentDateStr = ghanaToday();
+  const currentMonthStr = currentDateStr.slice(0, 7);
 
   const [memberId, setMemberId] = useState(defaultMember?.id || '');
   const [amount, setAmount] = useState('50.00');
@@ -40,39 +45,52 @@ export const RecordWelfareDuesModal: React.FC<RecordWelfareDuesModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const selectedMem = members.find((m) => m.id === memberId);
-    if (!selectedMem) {
-      toastError('Validation Error', 'Please select a church member');
-      return;
+    if (submitting.current) return;
+    submitting.current = true;
+    setSaving(true);
+    try {
+      const selectedMem = activeMembers.find(m => m.id === memberId);
+      if (!selectedMem) throw new Error('Select an active church member.');
+      // Number('') is zero; reject empty and malformed numeric values explicitly.
+      const rawAmount = amount.trim();
+      if (!/^\\d+(?:\\.\\d{1,2})?$/.test(rawAmount)) {
+        throw new Error('Enter a positive amount with at most two decimal places.');
+      }
+      const numAmount = Number(rawAmount);
+      const ref = referenceNo.trim() || newWelfareDueReference(month);
+      const memberName = `${selectedMem.first_name} ${selectedMem.last_name}`;
+      validateWelfareDue({
+        member_id: selectedMem.id,
+        member_name: memberName,
+        amount: numAmount,
+        date,
+        month,
+        reference_no: ref,
+      }, welfareContributions);
+
+      recordWelfareContribution({
+        member_id: selectedMem.id,
+        member_name: memberName,
+        tithe_number: selectedMem.tithe_number,
+        date,
+        month,
+        amount: numAmount,
+        payment_method: paymentMethod,
+        payment_channel: paymentChannel,
+        reference_no: ref,
+        notes: notes.trim() || `Monthly welfare contribution for ${month}`,
+        recorded_by: `${currentUser.first_name} ${currentUser.last_name}`.trim() || 'Welfare Desk Officer',
+      });
+
+      success('Welfare Contribution Logged',
+        `Recorded GH₵ ${numAmount.toFixed(2)} for ${memberName}. Verify cloud confirmation before treating this receipt as final.`);
+      onClose();
+    } catch (cause) {
+      toastError('Welfare dues not recorded', cause instanceof Error ? cause.message : 'Unable to record this contribution.');
+    } finally {
+      submitting.current = false;
+      setSaving(false);
     }
-
-    const numAmount = parseFloat(amount);
-    if (isNaN(numAmount) || numAmount <= 0) {
-      toastError('Validation Error', 'Please enter a valid contribution amount');
-      return;
-    }
-
-    const ref = referenceNo.trim() || `WLF-${month.replace('-', '')}-${Math.floor(100 + Math.random() * 900)}`;
-
-    recordWelfareContribution({
-      member_id: selectedMem.id,
-      member_name: `${selectedMem.first_name} ${selectedMem.last_name}`,
-      tithe_number: selectedMem.tithe_number,
-      date,
-      month,
-      amount: numAmount,
-      payment_method: paymentMethod,
-      payment_channel: paymentChannel,
-      reference_no: ref,
-      notes: notes.trim() || `Monthly welfare contribution for ${month}`,
-      recorded_by: 'Welfare Desk Officer',
-    });
-
-    success(
-      'Welfare Contribution Logged',
-      `Recorded GH₵ ${numAmount.toFixed(2)} for ${selectedMem.first_name} ${selectedMem.last_name}`
-    );
-    onClose();
   };
 
   return (
@@ -278,6 +296,7 @@ export const RecordWelfareDuesModal: React.FC<RecordWelfareDuesModalProps> = ({
             </button>
             <button
               type="submit"
+              disabled={saving}
               className="px-5 py-2.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-900 rounded-xl transition shadow-sm flex items-center gap-1.5"
             >
               <Check className="w-4 h-4" />
