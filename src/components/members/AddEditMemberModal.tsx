@@ -366,7 +366,9 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
     if (Object.keys(errors).length > 0) {
       if (errors.first_name || errors.last_name || errors.date_of_birth || errors.national_id) {
         setActiveTab('personal');
-      } else if (errors.phone || errors.emergency_name || errors.emergency_phone) {
+      } else if (errors.emergency_name || errors.emergency_phone) {
+        setActiveTab('vocation');
+      } else if (errors.phone) {
         setActiveTab('contact');
       } else if (errors.membership_date || errors.tithe_number) {
         setActiveTab('church');
@@ -391,6 +393,7 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
     const finalJoined = cleanOptionalDate(formData.membership_date) || cleanOptionalDate(formData.date_joined) || new Date().toISOString().split('T')[0];
     const payload: Partial<Member> = {
       ...formData,
+      phone: isFinite(Number(calculatedAge)) && calculatedAge !== null && calculatedAge < 13 && (!formData.phone?.trim() || formData.phone.trim() === '+233') ? '' : formData.phone,
       membership_date: finalJoined,
       date_joined: finalJoined,
       date_of_birth: cleanOptionalDate(formData.date_of_birth),
