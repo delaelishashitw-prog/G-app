@@ -161,6 +161,21 @@ export interface Member {
   updated_at: string;
 }
 
+/** Verified adult-to-child relationship; pickup permission is separately granted. */
+export interface MemberGuardian {
+  id: string;
+  child_member_id: string;
+  guardian_member_id: string;
+  relationship: 'mother' | 'father' | 'legal_guardian' | 'grandparent' | 'relative' | 'other';
+  is_primary: boolean;
+  pickup_authorized: boolean;
+  authorization_notes?: string;
+  verified_by?: string;
+  verified_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Visitor {
   id: string;
   full_name: string;
