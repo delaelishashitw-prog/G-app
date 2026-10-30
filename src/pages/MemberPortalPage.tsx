@@ -1726,7 +1726,7 @@ export const MemberPortalPage: React.FC = () => {
                       </div>
                     </div>
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                      ACTIVE
+                      {activeMember.status?.replaceAll('_', ' ').toUpperCase() || 'STATUS UNAVAILABLE'}
                     </span>
                   </div>
 
@@ -1759,23 +1759,17 @@ export const MemberPortalPage: React.FC = () => {
 
                   <div className="bg-black/30 p-3 rounded-2xl border border-white/10 flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-[10px] text-slate-400 uppercase font-semibold">Self-Check-In Pass</p>
-                      <p className="text-xs text-emerald-300 font-bold">Scan at Church Kiosk</p>
+                      <p className="text-[10px] text-slate-400 uppercase font-semibold">Attendance Pass</p>
+                      <p className="text-xs text-emerald-300 font-bold">Staff confirm check-in</p>
                     </div>
                     {/* QR Code Graphic */}
-                    <div className="w-14 h-14 bg-white p-1 rounded-xl shrink-0 flex items-center justify-center">
-                      <img
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(
-                          activeMember.member_id
-                        )}`}
-                        alt="QR Code Pass"
-                        className="w-full h-full object-contain"
-                      />
+                    <div className="w-28 h-28 bg-white p-1 rounded-xl shrink-0 flex items-center justify-center">
+                      <AttendancePassQr member={activeMember} />
                     </div>
                   </div>
 
                   <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-slate-700/60">
-                    <span>Joined: {activeMember.membership_date || 'Jan 2022'}</span>
+                    <span>Joined: {activeMember.membership_date || 'Not recorded'}</span>
                     <span>Accra, Ghana</span>
                   </div>
                 </div>

@@ -81,6 +81,10 @@ export async function checkAttendancePasses(browser, { origin, settings, sampleM
     for (const width of [390, 1440]) {
       tables.attendance = []; writes.length = 0;
       const portal = await createPage('member', width);
+      await portal.goto(origin + '/portal');
+      const overviewQr = portal.getByRole('img', { name: 'Attendance QR code for GWCC-QR-0001', exact: true }); await overviewQr.waitFor();
+      const overviewImage = await overviewQr.screenshot();
+      assert.ok(await portal.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
       await portal.goto(origin + '/portal?tab=attendance');
       const portalQr = portal.getByRole('img', { name: 'Attendance QR code for GWCC-QR-0001', exact: true }); await portalQr.waitFor();
       const portalImage = await portalQr.screenshot();
@@ -104,6 +108,7 @@ export async function checkAttendancePasses(browser, { origin, settings, sampleM
       assert.equal(await staff.evaluate(() => window.__qrCameraRequests), 0);
       assert.ok(await staffScreen(staff).evaluate(node => node.scrollWidth <= node.clientWidth + 2), 'The staff check-in screen must fit the viewport.');
       // Decode the actual member SVG screenshot with the independent bundled scanner.
+      await upload(staff, overviewImage); await candidate(staff).getByText('QR Fixture', { exact: true }).waitFor();
       await upload(staff, portalImage); await candidate(staff).getByText('QR Fixture', { exact: true }).waitFor();
       if (process.env.TEST_QR_ARTIFACT_DIR) await staffScreen(staff).screenshot({ path: `${process.env.TEST_QR_ARTIFACT_DIR}/qr-checkin-${width}.png` });
       assert.equal(writes.length, 0, 'Reading a pass must not record attendance.');
