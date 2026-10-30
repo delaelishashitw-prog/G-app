@@ -2092,12 +2092,16 @@ export const AttendancePage: React.FC = () => {
           </div>
         </div>
       )}
-      {/* Child Safety & Pickup Tags Modal */}
-      <ChildSafetyPickupModal
-        isOpen={isChildSafetyModalOpen}
-        onClose={() => setIsChildSafetyModalOpen(false)}
-        targetRecord={selectedChildRecordForPass}
-      />
+      {/* Unmount between openings so a previous child's pickup tag never persists. */}
+      {isChildSafetyModalOpen && (
+        <ChildSafetyPickupModal
+          isOpen={isChildSafetyModalOpen}
+          onClose={() => setIsChildSafetyModalOpen(false)}
+          targetRecord={selectedChildRecordForPass}
+          serviceId={selectedServiceId}
+          date={selectedDate}
+        />
+      )}
     </div>
   );
 };
