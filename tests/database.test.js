@@ -1064,7 +1064,7 @@ test('visitor interaction logging appends concurrent notes atomically, authentic
       const backup=(await db.query('SELECT public.gwcc_backup_create() AS id')).rows[0].id;
       const data=(await db.query('SELECT public.gwcc_backup_export($1) AS result',[backup])).rows[0].result;
       const docs=JSON.parse(data.payload_text).tables['public.gwcc_documents'];assert.equal(docs.filter(row=>row.namespace==='visitor_interactions').length,2);assert.equal(docs.filter(row=>row.namespace==='follow_up_tasks').length,1);
-      const rehearsal=(await db.query('SELECT public.gwcc_backup_rehearse($1) AS result',[backup])).rows[0].result;assert.equal(rehearsal.tables_checked,34);
+      const rehearsal=(await db.query('SELECT public.gwcc_backup_rehearse($1) AS result',[backup])).rows[0].result;assert.equal(rehearsal.tables_checked,35);
     });
   }finally{await db.close();}
 });
