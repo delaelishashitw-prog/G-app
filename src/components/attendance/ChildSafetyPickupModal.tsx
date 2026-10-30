@@ -276,7 +276,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                       type="button"
                       onClick={() => handleTriggerParentSummon(activeRecord)}
                       disabled={!canPrint}
-                      className="disabled:opacity-50 disabled:cursor-not-allowed "+"px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition shadow-2xs shrink-0 flex items-center gap-1.5 text-xs"
+                      className="disabled:opacity-50 disabled:cursor-not-allowed px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition shadow-2xs shrink-0 flex items-center gap-1.5 text-xs"
                     >
                       <Bell className="w-3.5 h-3.5" />
                       Record Parent Contact Needed
