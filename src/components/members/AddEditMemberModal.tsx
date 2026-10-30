@@ -300,7 +300,20 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
 
     // Phone validation
     const cleanPhoneDigits = (formData.phone || '').replace(/[^0-9]/g, '');
-    if (!formData.phone?.trim() || cleanPhoneDigits.length < 9) {
+    const isChildRegistration = calculatedAge !== null && calculatedAge < 13;
+    const guardianPhoneDigits = (formData.emergency_phone || '').replace(/[^0-9]/g, '');
+    const guardianName = (formData.emergency_name || '').trim();
+    if (isChildRegistration) {
+      if (guardianName.length < 2) {
+        errors.emergency_name = 'Enter the child’s parent or guardian’s full name.';
+      }
+      if (guardianPhoneDigits.length < 9) {
+        errors.emergency_phone = 'A valid parent or guardian phone number is required for children.';
+      }
+      if (cleanPhoneDigits.length > 0 && cleanPhoneDigits.length < 9 && formData.phone?.trim() !== '+233') {
+        errors.phone = 'Enter a valid phone number or leave the child’s personal phone blank.';
+      }
+    } else if (cleanPhoneDigits.length < 9) {
       errors.phone = 'Valid Ghana phone number is required (min 9-10 digits, e.g. +233 24 123 4567).';
     }
 
@@ -353,7 +366,7 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
     if (Object.keys(errors).length > 0) {
       if (errors.first_name || errors.last_name || errors.date_of_birth || errors.national_id) {
         setActiveTab('personal');
-      } else if (errors.phone) {
+      } else if (errors.phone || errors.emergency_name || errors.emergency_phone) {
         setActiveTab('contact');
       } else if (errors.membership_date || errors.tithe_number) {
         setActiveTab('church');
@@ -840,11 +853,11 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
-                    Primary Phone (+233) <span className="text-rose-500">*</span>
+                    Primary Phone (+233) {!((calculatedAge !== null) && calculatedAge < 13) && <span className="text-rose-500">*</span>}
                   </label>
                   <input
                     type="tel"
-                    required
+                    required={!(calculatedAge !== null && calculatedAge < 13)}
                     value={formData.phone || ''}
                     onChange={(e) => {
                       setFormData({ ...formData, phone: e.target.value });
