@@ -2,7 +2,7 @@ import { attendanceSessionError } from '../../features/attendance/attendanceInsi
 import { useModalFocus } from '../../hooks/useModalFocus';
 import { findPickup } from '../../lib/childSafety';
 import { useAuth } from '../../contexts/AuthContext';
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   X,
   ShieldCheck,
@@ -50,6 +50,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
   } = useChurchData();
   const {currentUser,isAuthenticated,canAccess}=useAuth();
   const [busy,setBusy]=useState(false);
+  const checkInRequest=useRef(crypto.randomUUID());
   const { success, warning, error: toastError } = useToast();
 
   const [activeView, setActiveView] = useState<'pass' | 'checkin' | 'checkout'>(
@@ -138,9 +139,10 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
       has_allergy_alert: hasAllergyAlert,
       special_instructions: specialInstructions.trim() || undefined,
       checked_in_by: verifiedLeader,
-    });
+    },checkInRequest.current);
 
     setActiveRecord(newRecord);
+    checkInRequest.current=crypto.randomUUID();
     setActiveView('pass');
     success('Child Security Tag Generated', `${newRecord.child_name} assigned Code: ${newRecord.security_code}`);
 

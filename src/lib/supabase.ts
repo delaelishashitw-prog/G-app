@@ -4,6 +4,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { routeInitialAuthLink } from './authLinks';
 import { SyncOutbox, type Mutation, type SyncResult } from './syncOutbox';
 import { setCacheOwner, clearScopedCache } from './storageScope';
+import { canReadMemberNotes, memberForRole, MEMBER_DIRECTORY_COLUMNS } from './memberPrivacy';
 import {
   Member,
   Visitor,
@@ -416,7 +417,7 @@ export async function checkSupabaseTables(
 
   for (const table of tablesToCheck) {
     try {
-      const { error } = await client.from(table).select('*', { count: 'exact', head: true });
+      const { error } = await client.from(table).select(table==='members'?MEMBER_DIRECTORY_COLUMNS:'*', { count: 'exact', head: true });
       if (error && isTableNotFoundError(error)) {
         missing.push(table);
       } else if (error && isPermissionDeniedError(error)) {
@@ -990,6 +991,8 @@ export const pendingSyncRecord=(table:string,id:string):Record<string,unknown>|u
   const change=outbox?.pendingChanges.find(change=>change.table===table&&change.id===id&&change.operation==='upsert');
   return change?.record ? structuredClone(change.record) : undefined;
 };
+export const pendingSyncRecords=(table:string):Record<string,unknown>[]=>
+  (outbox?.pendingChanges.filter(change=>change.table===table&&change.operation==='upsert').map(change=>structuredClone(change.record!))||[]);
 export const pendingSyncDelete=(table:string,id:string):boolean=>Boolean(outbox?.pendingChanges.some(change=>change.table===table&&change.id===id&&change.operation==='delete'));
 export const pendingMemberRecord=(id:string)=>pendingSyncRecord('members',id) as unknown as Member|undefined;
 /** Preserve a failed device admission without changing any retained operation ID or body. */
@@ -1064,7 +1067,7 @@ function queue(change:Mutation):Promise<SyncResult>{
   return queueMany([change]);
 }
 function upsertMutation(table:string,record:any):Mutation {
-  const sanitized={...sanitizeRecordForSupabase(table,record)};
+  const sanitized={...sanitizeRecordForSupabase(table,table==='members'?memberForRole(record,syncRole):record)};
   if(!sanitized.id)throw new Error('Record ID is required.');
   sanitized.id=String(sanitized.id);
   const expected=record._expected_updated_at;
@@ -1101,7 +1104,7 @@ export const SYNC_TABLES: Array<{table:string;key:keyof ChurchAllData;document?:
 export async function fetchAllRows(client: SupabaseClient, table: string, namespace?: string): Promise<any[]> {
   const rows:any[]=[]; let offset=0;
   while(true) {
-    let query=client.from(table).select('*').order('id',{ascending:true});
+    let query=client.from(table).select(table==='members'?MEMBER_DIRECTORY_COLUMNS:'*').order('id',{ascending:true});
     if(namespace) query=query.eq('namespace',namespace);
     const {data,error}=await query.range(offset,offset+499);
     if(error) throw error;
@@ -1126,6 +1129,19 @@ export async function pullAllDataFromSupabase(): Promise<{success:boolean;data:P
       }else if(syncRole==='member' && ['welfare_claims','pastoral_care','welfare_events','foundation_cohorts','foundation_students'].includes(table)){
         const {data,error}=await client.rpc('gwcc_member_records',{p_table:table});if(error)throw error;records=data||[];
       }else {const rows=await fetchAllRows(client,document?'gwcc_documents':table,document?table:undefined);records=document?rows.map(row=>row.data):rows;}
+      if(table==='members'){
+        records=records.map(record=>memberForRole(record,syncRole));
+        if(canReadMemberNotes(syncRole)){
+          const notes=new Map<string,string|null>();let offset=0;
+          for(;;){
+            const {data,error}=await client.rpc('gwcc_member_notes').order('id',{ascending:true}).range(offset,offset+499);
+            if(error)throw error;
+            for(const row of data||[])notes.set(row.id,row.notes);
+            if(!data?.length)break;offset+=data.length;
+          }
+          records=records.map(record=>({...record,notes:notes.get(record.id)??null}));
+        }
+      }
       if(owner!==syncOwner)return;
       await active?.observe(table,records);
       const merged=syncRole==='member'&&table==='events'?records:active?.merge(table,records)||records;

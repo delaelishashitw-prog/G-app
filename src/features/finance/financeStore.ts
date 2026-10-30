@@ -7,7 +7,8 @@ export function recordGiving(
   members: Member[],
   setGiving: Dispatch<SetStateAction<GivingRecord[]>>,
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void
+  dbSyncUpsert: (table: string, record: unknown) => void,
+  requestId?: string
 ): GivingRecord {
   const matchingMember = data.member_id
     ? members.find((x) => x.id === data.member_id)
@@ -24,7 +25,7 @@ export function recordGiving(
     member_id: resolvedMemberId,
     member_name: resolvedMemberName,
     tithe_number: resolvedTitheNumber,
-    id: `giv-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    id: requestId || crypto.randomUUID(),
     created_at: new Date().toISOString(),
   };
   setGiving((prev) => [newRecord, ...prev]);
@@ -135,13 +136,14 @@ export function addChurchAccount(
   data: Omit<ChurchAccount, 'id' | 'created_at' | 'updated_at'>,
   setChurchAccounts: Dispatch<SetStateAction<ChurchAccount[]>>,
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
-  dbSyncUpsert: (table: string, record: unknown) => void
+  dbSyncUpsert: (table: string, record: unknown) => void,
+  requestId?: string
 ): ChurchAccount {
   const balance=money(Number(data.current_balance));
   if(balance<0)throw new Error('Enter a non-negative verified opening balance.');
   const newAccount: ChurchAccount = {
     ...data,
-    id: `acc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    id: requestId || crypto.randomUUID(),
     current_balance: balance,
     opening_balance: balance,
     created_at: new Date().toISOString(),
@@ -214,9 +216,9 @@ function applyReceipt(before:ChurchFinanceRecord|undefined,after:ChurchFinanceRe
 }
 
 export function recordChurchFinance(data:Omit<ChurchFinanceRecord,'id'|'created_at'|'updated_at'>,
-  sf:Setter<ChurchFinanceRecord>,sa:Setter<ChurchAccount>,sb?:Setter<DepartmentBudget>,log?:Logger,sync?:Sync,state?:FinanceSnapshot):ChurchFinanceRecord {
+  sf:Setter<ChurchFinanceRecord>,sa:Setter<ChurchAccount>,sb?:Setter<DepartmentBudget>,log?:Logger,sync?:Sync,state?:FinanceSnapshot,requestId?:string):ChurchFinanceRecord {
   const now=new Date().toISOString();
-  const id=crypto.randomUUID();
+  const id=requestId || crypto.randomUUID();
   const outbound=['expense','disbursement','transfer'].includes(data.transaction_type);
   const record:ChurchFinanceRecord={...data,id,reference_no:data.reference_no?.trim()||`PENDING-${id}`,amount:money(data.amount),status:outbound?'pending':data.status||'completed',...(outbound?{approval_state:'requested' as const,approved_by:undefined,approval_history:[]}:{}),created_at:now,updated_at:now};
   applyReceipt(undefined,record,state,sf,sa,sb,log,sync);return record;
@@ -239,14 +241,14 @@ export function deleteChurchFinance(id:string,sf:Setter<ChurchFinanceRecord>,sa:
   // Preserve posted history; removal is a documented reversal rather than destruction.
   voidChurchFinance(id,'Removed by the finance office','Church Finance Office',sf,sa,sb,log,sync,state);
 }
-export function transferBetweenAccounts(fromId:string,toId:string,amount:number,notes:string|undefined,sa:Setter<ChurchAccount>,sf:Setter<ChurchFinanceRecord>,log:Logger,sync:Sync,state?:FinanceSnapshot):{success:boolean;message:string} {
+export function transferBetweenAccounts(fromId:string,toId:string,amount:number,notes:string|undefined,sa:Setter<ChurchAccount>,sf:Setter<ChurchFinanceRecord>,log:Logger,sync:Sync,state?:FinanceSnapshot,requestId?:string):{success:boolean;message:string} {
   try {
     if(!state)throw new Error('Account state is unavailable. Refresh and try again.');
     const from=state.accounts.find(a=>a.id===fromId),to=state.accounts.find(a=>a.id===toId);
     if(!from||!to)throw new Error('Select the source and destination accounts.');
     recordChurchFinance({transaction_type:'transfer',account_id:fromId,account_name:from.name,to_account_id:toId,to_account_name:to.name,
       category:'Internal Transfer',title:`Transfer to ${to.name}`,amount:money(amount),currency:'GHS',date:new Date().toISOString().slice(0,10),
-      payment_method:'internal_transfer',notes,status:'pending'},sf,sa,undefined,log,sync,state);
+      payment_method:'internal_transfer',notes,status:'pending'},sf,sa,undefined,log,sync,state,requestId);
     return {success:true,message:'Transfer request saved on this device. After cloud confirmation, a different finance staff member must approve it before the transfer is recorded as paid.'};
   } catch(error) {return {success:false,message:(error as Error).message};}
 }

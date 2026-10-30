@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
+import { MEMBER_DIRECTORY_COLUMNS } from '../src/lib/memberPrivacy.ts';
 
 const root='11111111-1111-4111-8111-111111111111';
 const member='22222222-2222-4222-8222-222222222222';
@@ -41,6 +42,47 @@ async function asUser(db,id,fn,claims={aal:'aal2',session_id:id,role:'authentica
   await db.query("SELECT set_config('request.jwt.claims',$1,false)",[JSON.stringify(claims)]);
   try{return await fn();}finally{await db.exec('RESET ROLE');}
 }
+
+test('confidential member notes survive directory edits but are hidden from direct reads, own-profile replies and retry receipts',async()=>{
+  const db=await setupDatabase();
+  try{
+    await db.query("INSERT INTO public.members(id,member_id,first_name,last_name,phone,auth_user_id,notes) VALUES('private-member','PRIVATE-1','Synthetic','Member','0240000001',$1,'Confidential fixture')",[member]);
+    const migration=fs.readdirSync('supabase/migrations').find(file=>file.endsWith('_protect_member_notes.sql'));
+    await db.exec(fs.readFileSync(`supabase/migrations/${migration}`,'utf8'));
+    await asUser(db,member,async()=>{
+      assert.equal((await db.query("SELECT first_name FROM public.members WHERE id='private-member'")).rows.length,1);
+      await assert.rejects(db.query('SELECT notes FROM public.members'),/permission denied/);
+      await assert.rejects(db.query('SELECT * FROM public.members'),/permission denied/);
+      await assert.rejects(db.query('SELECT * FROM public.gwcc_member_notes()'),/Pastoral authorization/);
+      const reply=(await db.query("SELECT public.gwcc_member_action('profile','private-member','{\"phone\":\"0240000002\"}') result")).rows[0].result;
+      assert.equal('notes' in reply,false);
+    });
+    for(const role of ['administrator','finance_officer','welfare_officer','attendance_officer','data_entry','ministry_leader']){
+      await db.query('UPDATE public.profiles SET role=$1,authorization_reviewed_at=now() WHERE id=$2',[role,other]);
+      await asUser(db,other,async()=>{
+        await assert.rejects(db.query('SELECT notes FROM public.members'),/permission denied/);
+        await assert.rejects(db.query('SELECT * FROM public.gwcc_member_notes()'),/Pastoral authorization/);
+      });
+    }
+    await db.query("UPDATE public.profiles SET role='data_entry' WHERE id=$1",[other]);
+    const current=(await db.query("SELECT updated_at FROM public.members WHERE id='private-member'")).rows[0];
+    const change=upsert('members',{id:'private-member',phone:'0240000003',notes:null},current.updated_at);
+    await asUser(db,other,async()=>{
+      const reply=(await apply(db,[change])).rows[0].result;
+      assert.equal('notes' in reply[0].record,false);
+    });
+    assert.equal((await db.query("SELECT notes FROM public.members WHERE id='private-member'")).rows[0].notes,'Confidential fixture');
+    const changes=[upsert('members',{id:'private-member',phone:'0240000003'})],id=operation();
+    await db.query("INSERT INTO public.gwcc_applied_operations(user_id,operation_id,request_hash,result) VALUES($1,$2,md5($3::jsonb::text),$4)",[other,id,JSON.stringify(changes),JSON.stringify([{table:'members',record:{id:'private-member',notes:'Confidential fixture'}}])]);
+    await asUser(db,other,async()=>assert.equal('notes' in (await apply(db,changes,id)).rows[0].result[0].record,false));
+    for(const role of ['super_admin','senior_pastor','pastor']){
+      await db.query('UPDATE public.profiles SET role=$1,authorization_reviewed_at=now() WHERE id=$2',[role,root]);
+      await asUser(db,root,async()=>assert.equal((await db.query("SELECT notes FROM public.gwcc_member_notes() WHERE id='private-member'")).rows[0].notes,'Confidential fixture'));
+    }
+    await db.exec('SET ROLE anon');
+    await assert.rejects(db.query('SELECT * FROM public.gwcc_member_notes()'),/permission denied/);await db.exec('RESET ROLE');
+  }finally{await db.close();}
+});
 
 test('AI attendance data remains behind actual RLS, reviewed roles, live session and MFA checks',async()=>{
   const db=await setupDatabase();
@@ -242,7 +284,7 @@ test('recovery respects later edits and deletions, rejects stale or unversioned 
   try{await asUser(db,root,async()=>{
     const original=operation(),saved=[upsert('members',{id:'recovery-edited',first_name:'Original',last_name:'Member',phone:'0240000000'})];
     await apply(db,saved,original);
-    const get=async()=> (await db.query("SELECT to_jsonb(m) AS doc FROM public.members m WHERE id='recovery-edited'")).rows[0]?.doc;
+    const get=async()=> (await db.query(`SELECT to_jsonb(m) AS doc FROM (SELECT ${MEMBER_DIRECTORY_COLUMNS} FROM public.members WHERE id='recovery-edited') m`)).rows[0]?.doc;
     const first=await get();
     await apply(db,[upsert('members',{...first,first_name:'Later'},first.updated_at)]);
     const later=await get(),newMember=upsert('members',{id:'recovery-atomic',first_name:'New',last_name:'Member',phone:'0240000001'});
@@ -798,7 +840,7 @@ test('required staff roles cannot open records, mutate, manage profiles, export 
     const state=(await db.query('SELECT public.gwcc_security_status() s')).rows[0].s;
     assert.deepEqual(state,{role,required:true,verified_factors:0,satisfied:false});
     assert.equal((await db.query('SELECT public.current_user_role() r')).rows[0].r,'disabled');
-    for(const table of ['members','church_accounts','church_finances','communications','audit_logs'])assert.equal((await db.query(`SELECT * FROM public.${table}`)).rows.length,0,role+':'+table);
+    for(const table of ['members','church_accounts','church_finances','communications','audit_logs'])assert.equal((await db.query(`SELECT id FROM public.${table}`)).rows.length,0,role+':'+table);
     assert.deepEqual((await db.query('SELECT id FROM public.profiles')).rows,[{id:other}]);
     assert.equal((await db.query('SELECT * FROM storage.objects')).rows.length,0);
     await assert.rejects(apply(db,[upsert('members',{id:'mfa-attack',first_name:'No',last_name:'Access'})]),/Staff authorization/);

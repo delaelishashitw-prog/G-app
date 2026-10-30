@@ -29,6 +29,8 @@ import { Member, GenderType, MembershipStatus } from '../../types/database.types
 import { useChurchData } from '../../contexts/ChurchDataContext';
 import { ProfilePhotoUpload } from '../ProfilePhotoUpload';
 import { useModalFocus } from '../../hooks/useModalFocus';
+import { useAuth } from '../../contexts/AuthContext';
+import { canReadMemberNotes } from '../../lib/memberPrivacy';
 
 export interface AddEditMemberModalProps {
   isOpen: boolean;
@@ -94,6 +96,7 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
   editingMember,
 }) => {
   const { members, ministries, smallGroups } = useChurchData();
+  const { currentRole } = useAuth();
 
   // Tab Navigation: 'personal' | 'contact' | 'church' | 'spiritual' | 'vocation'
   const [activeTab, setActiveTab] = useState<'personal' | 'contact' | 'church' | 'spiritual' | 'vocation'>('personal');
@@ -1564,7 +1567,7 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
               </div>
 
               {/* Pastoral Care, Health & Administrative Notes */}
-              <div>
+              {canReadMemberNotes(currentRole) && <div>
                 <label className="block font-semibold text-slate-700 mb-1">
                   Pastoral Notes, Family History & Special Prayer Needs
                 </label>
@@ -1573,9 +1576,9 @@ export const AddEditMemberModal: React.FC<AddEditMemberModalProps> = ({
                   value={formData.notes || ''}
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500"
-                  placeholder="Record spiritual background, prayer requests, health alerts, or pastoral visit history (strictly confidential)..."
+                  placeholder="Confidential pastoral notes. Only authorized pastoral staff can read these notes."
                 />
-              </div>
+              </div>}
             </div>
           )}
 

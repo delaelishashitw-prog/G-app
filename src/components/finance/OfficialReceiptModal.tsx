@@ -18,15 +18,17 @@ export const OfficialReceiptModal: React.FC<OfficialReceiptModalProps> = ({
 }) => {
   const { info, success } = useToast();
   const [copied, setCopied] = React.useState(false);
+  const canIssue = Boolean(record.updated_at) && record._sync_status !== 'pending' && record.status !== 'voided';
 
   const donorDisplayName = record.member_name || record.donor_name || 'Anonymous Giver';
   const receiptNumber = record.reference_number || `REC-${record.id.slice(-6).toUpperCase()}`;
 
   const handlePrint = () => {
-    window.print();
+    if(canIssue)window.print();
   };
 
   const handleCopyText = () => {
+    if(!canIssue)return;
     const text = `GREATER WORKS CITY CHURCH - OFFICIAL RECEIPT
 Receipt No: ${receiptNumber}
 Date: ${record.date}
@@ -55,13 +57,14 @@ Thank you for your generous stewardship!`;
               <ShieldCheck className="w-4 h-4" />
             </span>
             <div>
-              <span className="text-xs font-bold block">Official Church Receipt</span>
+              <span className="text-xs font-bold block">{canIssue?'Official Church Receipt':'Receipt awaiting confirmation'}</span>
               <span className="text-[10px] text-slate-400 font-mono">{receiptNumber}</span>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={handleCopyText}
+              disabled={!canIssue}
               className="px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-200 hover:text-white hover:bg-slate-700 text-xs font-medium flex items-center gap-1 transition cursor-pointer"
               title="Copy receipt summary to clipboard"
             >
@@ -70,6 +73,7 @@ Thank you for your generous stewardship!`;
             </button>
             <button
               onClick={handlePrint}
+              disabled={!canIssue}
               className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm"
             >
               <Printer className="w-3.5 h-3.5" />
@@ -85,7 +89,8 @@ Thank you for your generous stewardship!`;
         </div>
 
         {/* Printable Receipt Paper Body */}
-        <div className="p-6 sm:p-8 space-y-5 text-slate-900 bg-white relative print:p-0">
+        {!canIssue && <p role="status" className="p-6 text-sm text-amber-900 bg-amber-50">{record.status==='voided'?'This giving entry was voided. An official receipt cannot be issued.':'Awaiting cloud confirmation. An official receipt will be available after the church database confirms this giving entry.'}</p>}
+        <div className={`${canIssue?'':'hidden'} p-6 sm:p-8 space-y-5 text-slate-900 bg-white relative print:p-0`}>
           {/* Watermark Logo Seal in background */}
           <div className="absolute inset-0 flex items-center justify-center opacity-[0.03] pointer-events-none select-none">
             <img src="/assets/logo.png" alt="GWCC Seal" className="w-72 h-72 object-contain" />

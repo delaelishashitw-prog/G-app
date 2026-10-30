@@ -21,6 +21,7 @@ interface BatchRow {
 interface BatchGivingModalProps {
   members: Member[];
   onSaveBatch: (records: Array<{
+    id: string;
     member_id?: string;
     member_name?: string;
     tithe_number?: string;
@@ -34,7 +35,7 @@ interface BatchGivingModalProps {
     reference_number?: string;
     service_name?: string;
     notes?: string;
-  }>) => void;
+  }>) => Promise<void>;
   onClose: () => void;
 }
 
@@ -44,13 +45,14 @@ export const BatchGivingModal: React.FC<BatchGivingModalProps> = ({
   onClose,
 }) => {
   const { error } = useToast();
+  const [saving,setSaving]=useState(false);
 
   const [serviceName, setServiceName] = useState('Sunday 2nd Service (Celebration Service)');
   const [batchDate, setBatchDate] = useState(new Date().toISOString().split('T')[0]);
 
   const [rows, setRows] = useState<BatchRow[]>([
     {
-      id: 'row-1',
+      id: crypto.randomUUID(),
       mode: 'tithe_number',
       tithe_number: '',
       member_id: '',
@@ -63,7 +65,7 @@ export const BatchGivingModal: React.FC<BatchGivingModalProps> = ({
       notes: '',
     },
     {
-      id: 'row-2',
+      id: crypto.randomUUID(),
       mode: 'name',
       tithe_number: '',
       member_id: '',
@@ -76,7 +78,7 @@ export const BatchGivingModal: React.FC<BatchGivingModalProps> = ({
       notes: '',
     },
     {
-      id: 'row-3',
+      id: crypto.randomUUID(),
       mode: 'name',
       tithe_number: '',
       member_id: '',
@@ -161,7 +163,7 @@ export const BatchGivingModal: React.FC<BatchGivingModalProps> = ({
 
   const batchTotal = validRows.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (validRows.length === 0) {
@@ -195,9 +197,10 @@ export const BatchGivingModal: React.FC<BatchGivingModalProps> = ({
 
       const refNo =
         r.reference_number ||
-        `${r.payment_method === 'mobile_money' ? 'MM' : 'CSH'}-${Date.now().toString().slice(-6)}-${index + 1}`;
+        `${r.payment_method === 'mobile_money' ? 'MM' : 'CSH'}-${r.id}`;
 
       return {
+        id: r.id,
         member_id: memberId || undefined,
         member_name: memberName || undefined,
         tithe_number: titheNum || undefined,
@@ -214,7 +217,8 @@ export const BatchGivingModal: React.FC<BatchGivingModalProps> = ({
       };
     });
 
-    onSaveBatch(payload);
+    if(saving)return;setSaving(true);
+    try{await onSaveBatch(payload);}catch(cause){error('Batch not saved',(cause as Error).message);}finally{setSaving(false);}
   };
 
   return (
@@ -233,7 +237,7 @@ export const BatchGivingModal: React.FC<BatchGivingModalProps> = ({
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 text-emerald-200 hover:text-white rounded-lg transition cursor-pointer">
+          <button disabled={saving} onClick={onClose} className="p-1.5 text-emerald-200 hover:text-white rounded-lg transition cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -320,7 +324,7 @@ export const BatchGivingModal: React.FC<BatchGivingModalProps> = ({
         </div>
 
         {/* Multi-Row Table */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 space-y-3">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 space-y-3"><fieldset disabled={saving} className="contents">
           <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-500 font-bold">
@@ -587,7 +591,7 @@ export const BatchGivingModal: React.FC<BatchGivingModalProps> = ({
           <div className="pt-4 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">
             <button
               type="button"
-              onClick={onClose}
+              disabled={saving} onClick={onClose}
               className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-50 text-xs font-semibold cursor-pointer"
             >
               Cancel
@@ -599,7 +603,7 @@ export const BatchGivingModal: React.FC<BatchGivingModalProps> = ({
               </span>
               <button
                 type="submit"
-                disabled={validRows.length === 0}
+                disabled={saving || validRows.length === 0}
                 className="px-5 py-2.5 bg-[#064e3b] hover:bg-[#047857] disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition cursor-pointer"
               >
                 <CheckCircle2 className="w-4 h-4" />
@@ -607,7 +611,7 @@ export const BatchGivingModal: React.FC<BatchGivingModalProps> = ({
               </button>
             </div>
           </div>
-        </form>
+        </fieldset></form>
 
         {/* Global Tithe Autocomplete Datalist */}
         <datalist id="batch-tithe-list">

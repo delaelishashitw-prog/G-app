@@ -1,5 +1,5 @@
 import {GivingChannelsPanel} from '../components/finance/GivingChannels';
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Landmark,
@@ -172,6 +172,11 @@ export const ChurchFinancePage: React.FC = () => {
   const { canAccess, currentUser } = useAuth();
   const { success, error, info } = useToast();
 
+  const financialRequests=useRef<Record<string,string>>({});
+  const requestFor=(kind:string)=>financialRequests.current[kind] ||= crypto.randomUUID();
+  const finishRequest=(kind:string)=>{delete financialRequests.current[kind];};
+  const financialBusy=useRef(false);
+  const [financialSaving,setFinancialSaving]=useState(false);
   const [activeTab, setActiveTab] = useState<'treasury' | 'ledger' | 'budgets' | 'counter' | 'reconciliation' | 'approvals'>('treasury');
   const [budgetYear,setBudgetYear]=useState(todayISO().slice(0,4));
   const departmentBudgets=useMemo(()=>storedDepartmentBudgets.map(budget=>({...budget,spent_amount:budgetSpending(budget,churchFinances)??0})),[storedDepartmentBudgets,churchFinances]);
@@ -411,7 +416,7 @@ export const ChurchFinancePage: React.FC = () => {
   }, [counts]);
 
   // Handle Save Expenditure
-  const handleSaveExpense = (e: React.FormEvent) => {
+  const handleSaveExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmittingExpense) return;
 
@@ -435,7 +440,7 @@ export const ChurchFinancePage: React.FC = () => {
 
     setIsSubmittingExpense(true);
     try {
-      recordChurchFinance({
+      await recordChurchFinance({
         transaction_type: formTransactionType,
         account_id: selectedAcc?.id,
         account_name: accName,
@@ -451,7 +456,8 @@ export const ChurchFinancePage: React.FC = () => {
         notes: formNotes.trim() || undefined,
         recorded_by: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat',
         status: 'pending',
-      });
+      },requestFor('payment'));
+      finishRequest('payment');
 
       info('Payment request saved', `${formatGHS(amountNum)} awaits cloud confirmation and independent approval. No payment has been posted.`);
       setShowRecordExpenseModal(false);
@@ -481,7 +487,7 @@ export const ChurchFinancePage: React.FC = () => {
   };
 
   // Handle Save Church Income
-  const handleSaveIncome = (e: React.FormEvent) => {
+  const handleSaveIncome = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmittingIncome) return;
 
@@ -504,7 +510,7 @@ export const ChurchFinancePage: React.FC = () => {
 
     setIsSubmittingIncome(true);
     try {
-      const newRec = recordChurchFinance({
+      const newRec = await recordChurchFinance({
         transaction_type: 'income',
         account_id: selectedAcc?.id,
         account_name: accName,
@@ -521,7 +527,8 @@ export const ChurchFinancePage: React.FC = () => {
         notes: incomeNotes.trim() || undefined,
         recorded_by: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Finance Secretariat',
         status: 'completed',
-      });
+      },requestFor('income'));
+      finishRequest('income');
 
       info('Income awaiting confirmation', `${formatGHS(amountNum)} recorded locally for ${accName}. Follow sync status for cloud confirmation.`);
       setShowRecordIncomeModal(false);
@@ -550,8 +557,10 @@ export const ChurchFinancePage: React.FC = () => {
   };
 
   // Handle Add Holding Account
-  const handleCreateAccount = (e: React.FormEvent) => {
+  const handleCreateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
+    if(financialBusy.current)return;financialBusy.current=true;setFinancialSaving(true);
+    try {
     if (!newAccName.trim()) {
       error('Name Required', 'Please enter account name.');
       return;
@@ -560,7 +569,7 @@ export const ChurchFinancePage: React.FC = () => {
     try {
     const initialBal = money(newAccBalance.trim()?Number(newAccBalance):0);
     if(initialBal<0)throw new Error('Enter a non-negative verified opening balance.');
-    addChurchAccount({
+    await addChurchAccount({
       name: newAccName.trim(),
       account_type: newAccType,
       account_number: newAccNumber.trim() || undefined,
@@ -569,7 +578,8 @@ export const ChurchFinancePage: React.FC = () => {
       currency: 'GHS',
       is_active: true,
       description: newAccDesc.trim() || undefined,
-    });
+    },requestFor('account'));
+      finishRequest('account');
 
     info('Account awaiting confirmation', `The ${newAccName} account is recorded locally. Follow sync status for cloud confirmation.`);
     setShowAddAccountModal(false);
@@ -578,19 +588,23 @@ export const ChurchFinancePage: React.FC = () => {
     setNewAccBalance('');
     setNewAccDesc('');
     }catch(cause){error('Account not recorded',(cause as Error).message);}
+    }catch(cause){error('Financial entry not saved',(cause as Error).message);}finally{financialBusy.current=false;setFinancialSaving(false);}
   };
 
   // Handle Internal Account Transfer
-  const handleExecuteTransfer = (e: React.FormEvent) => {
+  const handleExecuteTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
+    if(financialBusy.current)return;financialBusy.current=true;setFinancialSaving(true);
+    try {
     const amt = parseFloat(transferAmount);
     if (isNaN(amt) || amt <= 0) {
       error('Invalid Amount', 'Enter a valid transfer amount.');
       return;
     }
 
-    const res = transferBetweenAccounts(transferFromId, transferToId, amt, transferNotes.trim() || undefined);
+    const res = await transferBetweenAccounts(transferFromId, transferToId, amt, transferNotes.trim() || undefined,requestFor('transfer'));
     if (res.success) {
+      finishRequest('transfer');
       info('Transfer awaiting confirmation', res.message);
       setShowTransferModal(false);
       setTransferAmount('');
@@ -599,22 +613,27 @@ export const ChurchFinancePage: React.FC = () => {
     } else {
       error('Transfer Failed', res.message);
     }
+    }catch(cause){error('Financial entry not saved',(cause as Error).message);}finally{financialBusy.current=false;setFinancialSaving(false);}
   };
 
   // The physical cash sheet is linked to its exact service/date and cash account.
-  const handlePostCashCount = () => {
+  const handlePostCashCount = async () => {
+    if(financialBusy.current)return;financialBusy.current=true;setFinancialSaving(true);
+    try {
     try {
       const count=validateCashCount({accountId:counterAccountId,serviceId:counterServiceId,date:counterDate,counter1:counter1Name,counter2:counter2Name,supervisor:counterSupervisor,counts},churchAccounts,services,churchFinances);
       const service=services.find(row=>row.id===counterServiceId)!;
-      recordChurchFinance({transaction_type:'income',account_id:count.account.id,account_name:count.account.name,
+      await recordChurchFinance({transaction_type:'income',account_id:count.account.id,account_name:count.account.name,
         category:'Sunday Cash Counter',title:`Cash Tally - ${service.name}`,recipient_or_vendor:'Counting Committee',
         amount:count.amount,currency:'GHS',date:counterDate,payment_method:'cash',department:'Treasury & Accounts',
         cash_count_service_id:service.id,cash_count_key:count.key,cash_count_details:count.details,
         approved_by:counterSupervisor.trim(),notes:`Counted by ${counter1Name.trim()} and ${counter2Name.trim()}. Supervisor: ${counterSupervisor.trim()}.`,
-        recorded_by:`${currentUser.first_name} ${currentUser.last_name}`,status:'completed'});
+        recorded_by:`${currentUser.first_name} ${currentUser.last_name}`,status:'completed'},requestFor('cash'));
+      finishRequest('cash');
       info('Cash count awaiting confirmation',`${formatGHS(count.amount)} recorded locally for ${count.account.name}. Follow sync status for cloud confirmation.`);
       setCounts(Object.fromEntries(Object.keys(counts).map(key=>[key,0])));
     } catch(cause){error('Cash count not recorded',(cause as Error).message);}
+    }catch(cause){error('Financial entry not saved',(cause as Error).message);}finally{financialBusy.current=false;setFinancialSaving(false);}
   };
 
   // CSV Export
@@ -727,16 +746,16 @@ export const ChurchFinancePage: React.FC = () => {
     success('PDF Generated', `Exported official financial statement (${exportRows.length} records).`);
   };
 
-  const handleUpdateFinance = (updates: Partial<ChurchFinanceRecord>) => {
+  const handleUpdateFinance = async (updates: Partial<ChurchFinanceRecord>) => {
     if (!editingFinanceRecord) return;
-    updateChurchFinance(editingFinanceRecord.id, updates);
+    await updateChurchFinance(editingFinanceRecord.id, updates);
     info('Update awaiting confirmation', 'The correction is recorded locally. Follow sync status for cloud confirmation.');
     setEditingFinanceRecord(null);
   };
 
-  const handleVoidFinance = (reason: string) => {
+  const handleVoidFinance = async (reason: string) => {
     if (!voidingFinanceRecord) return;
-    voidChurchFinance(voidingFinanceRecord.id, reason);
+    await voidChurchFinance(voidingFinanceRecord.id, reason);
     info('Void awaiting confirmation', 'The reversal is recorded locally. Follow sync status for cloud confirmation.');
     setVoidingFinanceRecord(null);
   };
@@ -1702,7 +1721,7 @@ export const ChurchFinancePage: React.FC = () => {
                 {canAccess('finance') && (
                   <button
                     onClick={handlePostCashCount}
-                    disabled={!cashAccounts.length}
+                    disabled={financialSaving || !cashAccounts.length}
                     className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition-all cursor-pointer"
                   >
                     Post Cash to Treasury
@@ -1848,14 +1867,14 @@ export const ChurchFinancePage: React.FC = () => {
               </div>
               <button
                 type="button"
-                onClick={() => setShowRecordIncomeModal(false)}
+                disabled={isSubmittingIncome} onClick={() => setShowRecordIncomeModal(false)}
                 className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveIncome} className="space-y-4">
+            <form onSubmit={handleSaveIncome} className="space-y-4"><fieldset disabled={isSubmittingIncome} className="contents">
               <div>
                 <label htmlFor="church-finance-field-1" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Revenue Title / Purpose *
@@ -2044,7 +2063,7 @@ export const ChurchFinancePage: React.FC = () => {
               <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowRecordIncomeModal(false)}
+                  disabled={isSubmittingIncome} onClick={() => setShowRecordIncomeModal(false)}
                   className="px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
                 >
                   Cancel
@@ -2057,7 +2076,7 @@ export const ChurchFinancePage: React.FC = () => {
                   {isSubmittingIncome ? 'Recording...' : 'Save & Issue Receipt'}
                 </button>
               </div>
-            </form>
+            </fieldset></form>
           </div>
         </div>
       )}
@@ -2077,14 +2096,14 @@ export const ChurchFinancePage: React.FC = () => {
                 </div>
               </div>
               <button
-                onClick={() => setShowRecordExpenseModal(false)}
+                disabled={isSubmittingExpense} onClick={() => setShowRecordExpenseModal(false)}
                 className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveExpense} className="space-y-4">
+            <form onSubmit={handleSaveExpense} className="space-y-4"><fieldset disabled={isSubmittingExpense} className="contents">
               <div>
                 <label htmlFor="church-finance-field-12" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Expense Purpose / Item Title *
@@ -2247,7 +2266,7 @@ export const ChurchFinancePage: React.FC = () => {
               <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowRecordExpenseModal(false)}
+                  disabled={isSubmittingExpense} onClick={() => setShowRecordExpenseModal(false)}
                   className="px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
                 >
                   Cancel
@@ -2260,7 +2279,7 @@ export const ChurchFinancePage: React.FC = () => {
                   {isSubmittingExpense ? 'Saving...' : 'Submit Payment Request'}
                 </button>
               </div>
-            </form>
+            </fieldset></form>
           </div>
         </div>
       )}
@@ -2280,14 +2299,14 @@ export const ChurchFinancePage: React.FC = () => {
                 </div>
               </div>
               <button
-                onClick={() => setShowAddAccountModal(false)}
+                disabled={financialSaving} onClick={() => setShowAddAccountModal(false)}
                 className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateAccount} className="space-y-4">
+            <form onSubmit={handleCreateAccount} className="space-y-4"><fieldset disabled={financialSaving} className="contents">
               <div>
                 <label htmlFor="church-finance-field-23" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Account Name *
@@ -2378,7 +2397,7 @@ export const ChurchFinancePage: React.FC = () => {
               <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowAddAccountModal(false)}
+                  disabled={financialSaving} onClick={() => setShowAddAccountModal(false)}
                   className="px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                 >
                   Cancel
@@ -2390,7 +2409,7 @@ export const ChurchFinancePage: React.FC = () => {
                   Create Account
                 </button>
               </div>
-            </form>
+            </fieldset></form>
           </div>
         </div>
       )}
@@ -2410,14 +2429,14 @@ export const ChurchFinancePage: React.FC = () => {
                 </div>
               </div>
               <button
-                onClick={() => setShowTransferModal(false)}
+                disabled={financialSaving} onClick={() => setShowTransferModal(false)}
                 className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleExecuteTransfer} className="space-y-4">
+            <form onSubmit={handleExecuteTransfer} className="space-y-4"><fieldset disabled={financialSaving} className="contents">
               <div>
                 <label htmlFor="church-finance-field-29" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Source Account (Debit) *
@@ -2486,7 +2505,7 @@ export const ChurchFinancePage: React.FC = () => {
               <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowTransferModal(false)}
+                  disabled={financialSaving} onClick={() => setShowTransferModal(false)}
                   className="px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                 >
                   Cancel
@@ -2498,7 +2517,7 @@ export const ChurchFinancePage: React.FC = () => {
                   Submit Transfer Request
                 </button>
               </div>
-            </form>
+            </fieldset></form>
           </div>
         </div>
       )}

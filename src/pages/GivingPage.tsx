@@ -125,6 +125,7 @@ export const GivingPage: React.FC = () => {
     services,
     settings,
     recordGiving,
+    recordGivingBatch,
     recordPledgePayment,
     updateGiving,
     deleteGiving,
@@ -446,17 +447,18 @@ export const GivingPage: React.FC = () => {
   }, [filteredGiving]);
 
   // Confirm Voiding
-  const handleConfirmVoid = () => {
+  const handleConfirmVoid = async () => {
     if (!voidingRecord) return;
     if(voidingRecord.pledge_id){error('Pledge payment','Open this pledge in Pledges and void the payment from its history.');return;}
     if (!voidReason.trim()) {
       error('Reason Required', 'Please provide a reason for voiding this giving entry.');
       return;
     }
-    voidGiving(voidingRecord.id, voidReason.trim());
-    success('Transaction Voided', `Record #${voidingRecord.id} has been voided and excluded from ledger totals.`);
+    try {await voidGiving(voidingRecord.id, voidReason.trim());
+    info('Void awaiting confirmation', `Record #${voidingRecord.id} has been voided and excluded from ledger totals.`);
     setVoidingRecord(null);
     setVoidReason('');
+    }catch(cause){error('Void not saved',(cause as Error).message);}
   };
 
   // Handle Save Single Giving
@@ -527,7 +529,7 @@ export const GivingPage: React.FC = () => {
               service_name: selectedSrv?.name,
             })
           ).giving
-        : recordGiving({
+        : await recordGiving({
             member_id: member?.id,
             member_name: member
               ? `${member.first_name} ${member.last_name}`
@@ -550,7 +552,7 @@ export const GivingPage: React.FC = () => {
             recorded_by: currentUser
               ? `${currentUser.first_name} ${currentUser.last_name}`
               : "Finance Secretariat",
-          });
+          },pledgePaymentId);
 
       if (selectedPledge)
         info(
@@ -559,8 +561,8 @@ export const GivingPage: React.FC = () => {
         );
       else
         success(
-          "Giving Recorded",
-          `Recorded ${formCategory} of ${formatGHS(amountNum)} successfully.`,
+          "Giving saved on this device",
+          `Awaiting cloud confirmation for ${formCategory} of ${formatGHS(amountNum)}.`,
         );
       setShowRecordModal(false);
       resetForm();
@@ -1316,11 +1318,13 @@ export const GivingPage: React.FC = () => {
 
                                   <button
                                     disabled={Boolean(record.pledge_id)}
-                                    onClick={() => {
+                                    onClick={async () => {
+                                      try {
                                       if (confirm(`Delete giving entry for ${displayName} (GH₵ ${record.amount.toFixed(2)})?`)) {
-                                        deleteGiving(record.id);
-                                        success('Deleted', 'Giving entry removed.');
+                                        await deleteGiving(record.id);
+                                        info('Void saved on this device', 'Awaiting cloud confirmation. Financial history is preserved.');
                                       }
+                                      }catch(cause){error('Void not saved',(cause as Error).message);}
                                     }}
                                     className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-all cursor-pointer"
                                     title="Delete from Database"
@@ -1502,7 +1506,7 @@ export const GivingPage: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSaveSingleGiving} className="space-y-4">
+            <form onSubmit={handleSaveSingleGiving} className="space-y-4"><fieldset disabled={isSubmitting} className="contents">
               {/* Member Selection / Autocomplete */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -1741,7 +1745,7 @@ export const GivingPage: React.FC = () => {
                   <span>{isSubmitting ? 'Saving...' : 'Save Giving Record'}</span>
                 </button>
               </div>
-            </form>
+            </fieldset></form>
           </div>
         </div>
       )}
@@ -1750,15 +1754,9 @@ export const GivingPage: React.FC = () => {
       {showBatchModal && (
         <BatchGivingModal
           members={members}
-          onSaveBatch={(batchRecords) => {
-            batchRecords.forEach((record) => {
-              recordGiving({
-                ...record,
-                currency: 'GHS',
-                recorded_by: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Sunday Finance Secretariat',
-              });
-            });
-            success('Batch Saved', `Successfully posted ${batchRecords.length} Sunday giving records.`);
+          onSaveBatch={async (batchRecords) => {
+            await recordGivingBatch(batchRecords.map(record=>({...record,currency:'GHS',recorded_by:`${currentUser.first_name} ${currentUser.last_name}`})));
+            info('Batch saved on this device', `${batchRecords.length} giving records await cloud confirmation.`);
             setShowBatchModal(false);
           }}
           onClose={() => setShowBatchModal(false)}
@@ -1768,7 +1766,7 @@ export const GivingPage: React.FC = () => {
       {/* OFFICIAL RECEIPT MODAL */}
       {receiptRecord && (
         <OfficialReceiptModal
-          record={receiptRecord}
+          record={giving.find(row=>row.id===receiptRecord.id)||receiptRecord}
           settings={settings}
           onClose={() => setReceiptRecord(null)}
         />
@@ -1802,9 +1800,9 @@ export const GivingPage: React.FC = () => {
         <EditGivingModal
           record={editingRecord}
           members={members}
-          onSave={(id, updated) => {
-            updateGiving(id, updated);
-            success('Updated', 'Giving record updated.');
+          onSave={async (id, updated) => {
+            await updateGiving(id, updated);
+            info('Update saved on this device', 'Awaiting cloud confirmation.');
             setEditingRecord(null);
           }}
           onClose={() => setEditingRecord(null)}

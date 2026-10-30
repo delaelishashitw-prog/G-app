@@ -6,7 +6,7 @@ import { useToast } from '../../contexts/ToastContext';
 interface EditGivingModalProps {
   record: GivingRecord;
   members: Member[];
-  onSave: (id: string, updates: Partial<GivingRecord>) => void;
+  onSave: (id: string, updates: Partial<GivingRecord>) => Promise<void>;
   onClose: () => void;
 }
 
@@ -17,6 +17,7 @@ export const EditGivingModal: React.FC<EditGivingModalProps> = ({
   onClose,
 }) => {
   const { error } = useToast();
+  const [isSubmitting,setIsSubmitting]=useState(false);
 
   const initialTitheNum =
     record.tithe_number ||
@@ -42,7 +43,7 @@ export const EditGivingModal: React.FC<EditGivingModalProps> = ({
     void_reason: record.void_reason || '',
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const amt = parseFloat(form.amount);
     if (isNaN(amt) || amt <= 0) {
@@ -73,7 +74,8 @@ export const EditGivingModal: React.FC<EditGivingModalProps> = ({
       }
     }
 
-    onSave(record.id, {
+    if(isSubmitting)return;setIsSubmitting(true);
+    try {await onSave(record.id, {
       member_id: memberId || undefined,
       member_name: memberName || undefined,
       tithe_number: titheNum || undefined,
@@ -88,7 +90,7 @@ export const EditGivingModal: React.FC<EditGivingModalProps> = ({
       notes: form.notes || undefined,
       status: form.status,
       void_reason: form.status === 'voided' ? (form.void_reason || 'Marked void during edit') : undefined,
-    });
+    });}catch(cause){error('Correction not saved',(cause as Error).message);}finally{setIsSubmitting(false);}
   };
 
   return (
@@ -100,12 +102,12 @@ export const EditGivingModal: React.FC<EditGivingModalProps> = ({
             <h3 className="text-base font-bold">Edit Giving Record</h3>
             <p className="text-xs text-emerald-200">Updating transaction ID: {record.id}</p>
           </div>
-          <button onClick={onClose} className="p-1 text-white/80 hover:text-white cursor-pointer">
+          <button disabled={isSubmitting} onClick={onClose} className="p-1 text-white/80 hover:text-white cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-3.5 text-xs">
+        <form onSubmit={handleSubmit} className="p-6 space-y-3.5 text-xs"><fieldset disabled={isSubmitting} className="contents">
           {/* Mode Switcher */}
           <div className="bg-slate-100 p-1 rounded-xl flex items-center gap-1 border border-slate-200">
             <button
@@ -443,7 +445,7 @@ export const EditGivingModal: React.FC<EditGivingModalProps> = ({
           <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={onClose}
+              disabled={isSubmitting} onClick={onClose}
               className="px-4 py-2 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 text-xs font-semibold cursor-pointer"
             >
               Cancel
@@ -456,7 +458,7 @@ export const EditGivingModal: React.FC<EditGivingModalProps> = ({
               <span>Update Record</span>
             </button>
           </div>
-        </form>
+        </fieldset></form>
       </div>
     </div>
   );
