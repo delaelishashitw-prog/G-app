@@ -166,6 +166,7 @@ export const MembersPage: React.FC = () => {
     currentRole === 'administrator';
 
   const canManageMembers = canAccess('members') && canEditMembers(currentRole);
+  const canManageFamily = ['super_admin', 'senior_pastor', 'administrator'].includes(currentRole);
 
   // Initialize filters from URL or default
   const urlQ = searchParams.get('q') || '';
@@ -1015,7 +1016,7 @@ export const MembersPage: React.FC = () => {
                 )}
               </button>
 
-              {canManageMembers && (
+              {canManageFamily && (
                 <button
                   type="button"
                   onClick={() => setIsFamilyManagementOpen(true)}
@@ -2136,7 +2137,7 @@ export const MembersPage: React.FC = () => {
       />}
 
       <FamilyManagementModal
-        isOpen={isFamilyManagementOpen && canManageMembers}
+        isOpen={isFamilyManagementOpen && canManageFamily}
         onClose={() => setIsFamilyManagementOpen(false)}
         members={members}
         actorId={currentUser.id}
