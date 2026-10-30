@@ -1,5 +1,6 @@
 import { recordChurchFinance, updateChurchFinance, voidChurchFinance, type FinanceSnapshot } from '../finance/financeStore';
 import { money } from '../../lib/ledgerUtils';
+import { validateWelfareDue, newWelfareDueReference } from './welfareDuesRules';
 import type { Dispatch, SetStateAction } from 'react';
 import type {
   PaymentMethod,
@@ -19,9 +20,11 @@ export function recordWelfareContribution(
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
   dbSyncUpsert?: (table: string, record: any) => unknown
 ): WelfareContribution {
+  validateWelfareDue(data);
   const newRecord: WelfareContribution = {
     ...data,
-    id: `wlf-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    reference_no: data.reference_no?.trim() || newWelfareDueReference(data.month),
+    id: crypto.randomUUID(),
     created_at: new Date().toISOString(),
   };
 
