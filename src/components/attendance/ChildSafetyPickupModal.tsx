@@ -1,4 +1,5 @@
 import { findPickup } from '../../lib/childSafety';
+import { childSessionActionError, childSessionRecord, childSessionRecords, canPrintChildPickupPass } from '../../features/attendance/childSafetySession';
 import { useAuth } from '../../contexts/AuthContext';
 import React, { useState } from 'react';
 import {
@@ -24,12 +25,16 @@ interface ChildSafetyPickupModalProps {
   isOpen: boolean;
   onClose: () => void;
   targetRecord?: ChildCheckInRecord | null;
+  serviceId: string;
+  date: string;
 }
 
 export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
   isOpen,
   onClose,
   targetRecord,
+  serviceId,
+  date,
 }) => {
   const {
     services,
@@ -44,14 +49,16 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
   const [busy,setBusy]=useState(false);
   const { success, warning, error: toastError } = useToast();
 
+  // The parent unmounts this modal between openings to discard stale child tags.
+  const selectedRecord = childSessionRecord(targetRecord, serviceId, date);
   const [activeView, setActiveView] = useState<'pass' | 'checkin' | 'checkout'>(
-    targetRecord ? 'pass' : 'checkin'
+    selectedRecord ? 'pass' : 'checkin'
   );
-
-  // Selected or active record for the pass view
-  const [activeRecord, setActiveRecord] = useState<ChildCheckInRecord | null>(
-    targetRecord || childCheckIns[0] || null
-  );
+  const [activeRecord, setActiveRecord] = useState<ChildCheckInRecord | null>(selectedRecord);
+  const sessionRecords = childSessionRecords(childCheckIns, serviceId, date);
+  const currentService = services.find(service => service.id === serviceId);
+  const actionError = childSessionActionError(currentService, serviceId, date);
+  const canPrint = canPrintChildPickupPass(activeRecord, serviceId, date);
 
   // Check-in form states
   const [childName, setChildName] = useState('');
@@ -64,7 +71,6 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
   const [hasAllergyAlert, setHasAllergyAlert] = useState(false);
   const [allergyNotes, setAllergyNotes] = useState('');
   const [specialInstructions, setSpecialInstructions] = useState('');
-  const [selectedServiceId, setSelectedServiceId] = useState(services[0]?.id || 'srv-1');
 
   // Checkout form states
   const [checkoutCode, setCheckoutCode] = useState('');
@@ -94,6 +100,8 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
 
   const handleCreateCheckIn = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (busy) return;
+    if (actionError || !currentService) { toastError('Check-in unavailable', actionError || 'Select an active service.'); return; }
     if (!childName.trim()) {
       toastError('Validation Error', "Please enter the child's name");
       return;
@@ -103,10 +111,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
       return;
     }
 
-    const currentService = services.find((s) => s.id === selectedServiceId) || services[0];
-    const nowTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-
-    if(!currentService){toastError('Choose a service','Create a service before checking in children.');return;}
+    const nowTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Accra' });
     setBusy(true);
     try {
     const newRecord = await checkInChild({
@@ -115,7 +120,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
       class_room: classRoom,
       service_id: currentService.id,
       service_name: currentService.name,
-      date: new Date().toISOString().split('T')[0],
+      date,
       check_in_time: nowTime,
       parent_name: parentName.trim(),
       parent_phone: parentPhone.trim(),
@@ -140,9 +145,12 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
   };
 
   const handleProcessCheckout = async (e:React.FormEvent) => {
-    e.preventDefault();setBusy(true);
+    e.preventDefault();
+    if (busy) return;
+    if (actionError) { toastError('Pickup unavailable', actionError); return; }
+    setBusy(true);
     try {
-      const found=findPickup(childCheckIns,checkoutCode,collectorName);
+      const found=findPickup(sessionRecords,checkoutCode,collectorName);
       await checkOutChild(found.id,{checked_out_to_person:collectorName.trim(),verified_by_leader:currentUser.id});
       success('Pickup Confirmed',`${found.child_name} released to ${collectorName.trim()}.`);
       setActiveRecord({...found,status:'checked_out'});setCheckoutCode('');setCollectorName('');setActiveView('pass');
@@ -150,6 +158,10 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
   };
 
   const handleTriggerParentSummon = (rec: ChildCheckInRecord) => {
+    if (!canPrintChildPickupPass(rec, serviceId, date)) {
+      toastError('Parent contact unavailable', 'Only active check-ins from today can request parent contact.');
+      return;
+    }
     summonChildParent(rec.id, summonReason);
     warning(
       'Parent contact recorded',
@@ -158,6 +170,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
   };
 
   const handlePrint = () => {
+    if (!canPrint) { toastError('Pass unavailable', 'Only active pickup passes from today can be printed.'); return; }
     window.print();
   };
 
@@ -171,7 +184,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
             <h3 className="text-sm font-bold tracking-tight">Sunday School Child Safety & Security Passes</h3>
           </div>
           <div className="flex items-center gap-2">
-            {activeView === 'pass' && activeRecord && (
+            {activeView === 'pass' && canPrint && (
               <button
                 onClick={handlePrint}
                 className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5"
@@ -236,6 +249,8 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
 
         {/* Modal Scrollable Body */}
         <div className="p-6 overflow-y-auto space-y-6">
+          <p className="text-xs text-slate-600">Selected service: <strong>{currentService?.name || 'Unavailable'}</strong> · {date} (Ghana time)</p>
+          {actionError && <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{actionError} Historical records remain available for review.</p>}
           {/* VIEW 1: PRINTABLE WEARABLE BADGE + PARENT PICKUP STUB */}
           {activeView === 'pass' && (
             <div className="space-y-6">
@@ -245,6 +260,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                 </div>
               ) : (
                 <div className="print-container space-y-6">
+                  {!canPrint && <p role="status" className="no-print rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">This is a historical or released child record. A new pickup pass cannot be printed.</p>}
                   {/* Emergency Parent Summon Box (Hidden on Print) */}
                   <div className="no-print p-4 bg-amber-50 rounded-xl border border-amber-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
                     <div className="flex items-center gap-2">
@@ -259,7 +275,8 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                     <button
                       type="button"
                       onClick={() => handleTriggerParentSummon(activeRecord)}
-                      className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition shadow-2xs shrink-0 flex items-center gap-1.5 text-xs"
+                      disabled={!canPrint}
+                      className="disabled:opacity-50 disabled:cursor-not-allowed px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition shadow-2xs shrink-0 flex items-center gap-1.5 text-xs"
                     >
                       <Bell className="w-3.5 h-3.5" />
                       Record Parent Contact Needed
@@ -497,7 +514,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                   Cancel
                 </button>
                 <button
-                  type="submit" disabled={busy}
+                  type="submit" disabled={busy || Boolean(actionError)}
                   className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs rounded-xl transition shadow-xs flex items-center gap-1.5"
                 >
                   <Check className="w-4 h-4" />
@@ -563,7 +580,7 @@ export const ChildSafetyPickupModal: React.FC<ChildSafetyPickupModalProps> = ({
                   Cancel
                 </button>
                 <button
-                  type="submit" disabled={busy}
+                  type="submit" disabled={busy || Boolean(actionError)}
                   className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs rounded-xl transition shadow-xs flex items-center gap-1.5"
                 >
                   <UserCheck className="w-4 h-4" />
