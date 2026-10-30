@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { X, Users, ShieldCheck, Plus, Trash2, RefreshCw } from 'lucide-react';
 import type { Member, MemberGuardian } from '../../types/database.types';
 import { getSupabaseClient } from '../../lib/supabase';
+import { getMemberAgeGroup } from '../../lib/familyUtils';
 
 interface Props {
   isOpen: boolean;
@@ -16,8 +17,8 @@ const relationshipLabels: Record<MemberGuardian['relationship'], string> = {
 };
 
 export const FamilyManagementModal: React.FC<Props> = ({ isOpen, onClose, members, actorId }) => {
-  const children = useMemo(() => members.filter(m => !m.is_archived && m.age_group === 'child'), [members]);
-  const adults = useMemo(() => members.filter(m => !m.is_archived && m.age_group !== 'child'), [members]);
+  const children = useMemo(() => members.filter(m => !m.is_archived && getMemberAgeGroup(m) === 'child'), [members]);
+  const adults = useMemo(() => members.filter(m => !m.is_archived && getMemberAgeGroup(m) !== 'child'), [members]);
   const [childId, setChildId] = useState('');
   const [guardianId, setGuardianId] = useState('');
   const [relationship, setRelationship] = useState<MemberGuardian['relationship']>('mother');
