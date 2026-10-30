@@ -33,7 +33,7 @@ import { ScheduleEventModal } from '../components/events/ScheduleEventModal';
 import { downloadEventIcs, generateWhatsAppAnnouncement } from '../components/events/eventCalendarExport';
 
 import { useModalFocus } from '../hooks/useModalFocus';
-import { effectiveEventStatus, ghanaToday } from '../features/events/eventRules';
+import { effectiveEventStatus, eventIsScheduledToday, ghanaToday } from '../features/events/eventRules';
 
 type ViewMode = 'calendar' | 'agenda' | 'cards';
 
@@ -660,7 +660,7 @@ export const EventsPage: React.FC = () => {
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredEvents
+              {[...filteredEvents]
                 .sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime())
                 .map((evt) => {
                   const isMultiDay = evt.start_date !== evt.end_date;
@@ -695,9 +695,7 @@ export const EventsPage: React.FC = () => {
                               {evt.status}
                             </span>
                             {(() => {
-                              const todayKey = new Date().toISOString().split('T')[0];
-                              const isHappeningToday =
-                                evt.start_date <= todayKey && (evt.end_date || evt.start_date) >= todayKey;
+                              const isHappeningToday = eventIsScheduledToday(evt, clock);
                               return isHappeningToday ? (
                                 <span className="text-[10px] font-extrabold px-1.5 py-0.2 rounded bg-amber-400 text-slate-950">
                                   TODAY

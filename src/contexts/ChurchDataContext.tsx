@@ -3,6 +3,7 @@ import {validateCellReport,type CellMeetingReport} from '../lib/cellReports';
 import { validateWelfareFundReceipt, WELFARE_FUND_READ_ROLES, WELFARE_FUND_WRITE_ROLES, WELFARE_FUND_VOID_ROLES, type WelfareFundInput } from '../features/welfare/welfareFund';
 import { withSyncTransaction, hasPendingChanges } from '../lib/supabase';
 import { createPickupToken, findPickup } from '../lib/childSafety';
+import { validateWelfareDue } from '../features/welfare/welfareDuesRules';
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
   Member,
@@ -1499,8 +1500,10 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const recordWelfareContribution = (
     data: Omit<WelfareContribution, 'id' | 'created_at'>
-  ): WelfareContribution =>
-    recordWelfareContributionRecord(data, setWelfareContributions, logAction, dbSyncUpsert);
+  ): WelfareContribution => {
+    validateWelfareDue(data, currentDataRef.current.welfareContributions);
+    return recordWelfareContributionRecord(data, setWelfareContributions, logAction, dbSyncUpsert);
+  };
 
   const deleteWelfareContribution = (id: string) => {
     deleteWelfareContributionRecord(id, welfareContributions, setWelfareContributions, logAction, dbSyncDelete);
