@@ -1,3 +1,4 @@
+import {checkAttendancePasses} from './attendance-passes-browser-checks.mjs';
 import {checkServiceTimetable} from './service-timetable-browser-checks.mjs';
 import {checkReliableOperations} from './operations-browser-checks.mjs';
 import {checkPledges} from './pledges-browser-checks.mjs';
@@ -46,7 +47,9 @@ try{
   }
   const invalidJson=await fetch(`${origin}/api/staff`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{bad'});assert.equal(invalidJson.status,400);
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{channel:'chromium'}),args:['--no-sandbox']});
-  if(process.env.TEST_SCOPE==='service-timetable'){
+  if(process.env.TEST_SCOPE==='attendance-passes'){
+    await checkAttendancePasses(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  }else if(process.env.TEST_SCOPE==='service-timetable'){
     await checkServiceTimetable(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   }else if(process.env.TEST_SCOPE==='child-session'){
     await checkChildSession(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
@@ -275,6 +278,7 @@ try{
   await checkWelfareOfficer(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkChildSession(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   await checkServiceTimetable(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
+  await checkAttendancePasses(browser,{origin,settings:initialSettings,sampleMember:sampleMembers[0]});
   console.info(`Browser smoke passed: mobile authorization, ${pages.length} signed-in pages, member invitation/linking/suspension guards/password help/password setup/portal, welfare arrears/defaulter filters/CSV/partial claim approval/member portal, durable draft retry, and logout cache clearing.`);
   }
 }finally{

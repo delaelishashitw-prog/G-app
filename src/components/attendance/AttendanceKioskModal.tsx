@@ -1,3 +1,6 @@
+import { AttendanceQrReader } from './AttendanceQrReader';
+import { resolveAttendancePass } from '../../features/attendance/attendancePass';
+import { useModalFocus } from '../../hooks/useModalFocus';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   X,
@@ -27,7 +30,7 @@ interface AttendanceKioskModalProps {
   visitors: Visitor[];
   settings?: ChurchSettings;
   alreadyCheckedInIds: Set<string>;
-  onCheckIn: (personType: 'member' | 'visitor', personId: string) => { success: boolean; message: string };
+  onCheckIn: (personType: 'member' | 'visitor', personId: string, method?: 'search' | 'qr_code') => { success: boolean; message: string };
   onOpenQuickVisitorModal: () => void;
 }
 
@@ -43,7 +46,12 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
   onCheckIn,
   onOpenQuickVisitorModal,
 }) => {
+  const panel = useModalFocus(isOpen, onClose);
   const [searchTerm, setSearchTerm] = useState('');
+  const [passValue, setPassValue] = useState<string | null>(null);
+  const [checkInError, setCheckInError] = useState('');
+  const submitted = useRef(new Set<string>());
+  const passResult = useMemo(() => passValue === null ? null : resolveAttendancePass(passValue, members), [passValue, members]);
   const [welcomeBanner, setWelcomeBanner] = useState<{
     name: string;
     type: 'member' | 'visitor';
@@ -51,9 +59,9 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
   } | null>(null);
   const welcomeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!isOpen) { setSearchTerm(''); setWelcomeBanner(null); }
+    setSearchTerm(''); setWelcomeBanner(null); setPassValue(null); setCheckInError(''); submitted.current.clear();
     return () => { if (welcomeTimer.current) clearTimeout(welcomeTimer.current); };
-  }, [isOpen]);
+  }, [isOpen, service?.id, date]);
 
   // Filter matching members and visitors
   const searchResults = useMemo(() => {
@@ -88,10 +96,15 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
     return [...matchedMembers, ...matchedVisitors];
   }, [searchTerm, members, visitors, alreadyCheckedInIds]);
 
-  const handlePerformCheckIn = (type: 'member' | 'visitor', id: string, name: string) => {
-    const result = onCheckIn(type, id);
-    if (!result.success) return;
-    setWelcomeBanner({ name, type, id });
+  const handlePerformCheckIn = (type: 'member' | 'visitor', id: string, name: string, method: 'search' | 'qr_code' = 'search') => {
+    const key = attendeeKey(type, id);
+    if (submitted.current.has(key) || alreadyCheckedInIds.has(key)) return;
+    submitted.current.add(key); setCheckInError('');
+    let result: { success: boolean; message: string };
+    try { result = onCheckIn(type, id, method); }
+    catch (error) { result = { success: false, message: error instanceof Error ? error.message : 'Check-in could not be recorded.' }; }
+    if (!result.success) { submitted.current.delete(key); setCheckInError(result.message); return; }
+    setWelcomeBanner({ name, type, id }); setPassValue(null);
     setSearchTerm('');
 
     // Clear welcome banner after 4.5 seconds
@@ -104,9 +117,9 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Staff check-in screen" className="fixed inset-0 z-50 bg-slate-950 text-white flex flex-col justify-between overflow-hidden animate-in fade-in duration-200">
+    <div ref={panel} role="dialog" aria-modal="true" aria-label="Staff check-in screen" className="fixed inset-0 z-50 bg-slate-950 text-white flex flex-col justify-between overflow-y-auto animate-in fade-in duration-200">
       {/* Kiosk Header */}
-      <header className="p-6 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md flex items-center justify-between">
+      <header className="p-4 sm:p-6 shrink-0 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 rounded-2xl bg-teal-600 flex items-center justify-center font-black text-xl shadow-lg shadow-teal-500/20 text-white overflow-hidden">
             {settings?.logo_url ? (
@@ -137,7 +150,7 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
       </header>
 
       {/* Main Interactive Touch Area */}
-      <main className="flex-1 flex flex-col items-center justify-center p-6 max-w-4xl w-full mx-auto space-y-8">
+      <main className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 max-w-4xl w-full mx-auto space-y-5">
         {/* Welcome Celebration Overlay */}
         {welcomeBanner ? (
           <div className="w-full bg-gradient-to-r from-emerald-600/30 via-teal-600/30 to-emerald-600/30 border border-emerald-500/40 rounded-3xl p-8 text-center space-y-3 animate-in zoom-in-95 shadow-2xl backdrop-blur-md">
@@ -148,7 +161,7 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
               Welcome, {welcomeBanner.name}!
             </h2>
             <p className="text-base text-emerald-200 max-w-md mx-auto">
-              You are checked in for today&apos;s service. May God richly bless you and answer your prayers as we worship together!
+              Check-in added for {service?.name || 'the selected service'} on {date}. Return to Attendance to check cloud confirmation.
             </p>
             <p className="text-xs text-slate-400">Please proceed into the sanctuary. Enjoy the service!</p>
           </div>
@@ -166,6 +179,26 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
           </div>
         )}
 
+        <div className="w-full space-y-3">
+          <AttendanceQrReader key={`${service?.id}:${date}`} onReset={() => { setPassValue(null); setCheckInError(''); setWelcomeBanner(null); }} onRead={value => { setPassValue(value); setWelcomeBanner(null); }} />
+          {checkInError && <p role="alert" className="text-sm text-amber-200">{checkInError}</p>}
+          {passResult?.error && <p role="alert" className="text-sm text-amber-200">{passResult.error}</p>}
+          {passResult?.member && <section aria-label="Scanned member" className="rounded-2xl border border-teal-500 bg-teal-950 p-4 space-y-3">
+            <p className="text-xs text-teal-200">Confirm the member's identity for {service?.name} · {date}.</p>
+            <div className="flex items-center gap-3">
+              {passResult.member.profile_photo_url && <img src={passResult.member.profile_photo_url} alt="Member photo" className="h-14 w-14 rounded-xl object-cover" />}
+              <div className="min-w-0 break-words">
+                <h3 className="font-bold">{passResult.member.first_name} {passResult.member.last_name}</h3>
+                <p className="text-xs font-mono text-teal-200">{passResult.member.member_id}</p>
+              </div>
+            </div>
+            {alreadyCheckedInIds.has(attendeeKey('member', passResult.member.id))
+              ? <p role="status" className="text-sm text-teal-200">Already checked in for this service date.</p>
+              : <button type="button" onClick={() => { const member = passResult.member; handlePerformCheckIn('member', member.id, `${member.first_name} ${member.last_name}`, 'qr_code'); }} className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-bold">Confirm check-in</button>}
+            <button type="button" onClick={() => setPassValue(null)} className="ml-3 text-xs text-slate-300 underline">Clear scanned pass</button>
+          </section>}
+        </div>
+
         {/* Large Touch Search Bar */}
         <div className="w-full space-y-4">
           <div className="relative w-full">
@@ -176,7 +209,6 @@ export const AttendanceKioskModal: React.FC<AttendanceKioskModalProps> = ({
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Type your phone number or name (e.g. 0244, Kwame, GWCC-001)..."
               className="w-full pl-16 pr-6 py-5 text-lg sm:text-xl font-medium bg-slate-900 border-2 border-slate-700 rounded-3xl text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/20 shadow-xl transition"
-              autoFocus
             />
             {searchTerm && (
               <button

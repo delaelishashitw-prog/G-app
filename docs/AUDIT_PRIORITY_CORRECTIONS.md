@@ -32,4 +32,14 @@ Settings now lists those same service records and links to the existing Services
 
 Browser regression checks edit a synthetic service as an administrator and verify the shared result in a new member session. They cover Ghana time on devices in other time zones, live/end boundaries, inactive and archived services, overnight dates, loading and failed reads, offline/reconnect behavior, legacy device values, member permissions and 390/1440px layouts.
 
-Other audit items (real staff QR passes, the disabled Test Access control, Settings bundle size and Supabase leaked-password protection) remain separate work.
+## Member attendance passes
+
+The staff pass and member portal now generate the same QR code locally. The versioned payload contains a stable member record reference, without names, phone numbers or email addresses. Existing passes containing the exact public Member ID still resolve. Ambiguous, malformed, unrelated, archived, deceased, transferred and unconfirmed member references are rejected. A pass is an attendance lookup reference; it grants no login, staff permission or child pickup authority.
+
+Attendance's staff check-in screen supports a camera, a local PNG/JPEG/WebP image, or scanner/keyboard input. Camera permission is requested only after selecting Scan with camera. A match displays the directory member for staff confirmation, then uses the current service/date and records the `qr_code` method through the existing authorized attendance flow. Duplicate confirmations and repeated passes cannot add another entry for the same session. Failed new reads clear the earlier selection. Closing, canceling, a successful read or a changed session stops the scanner and its camera tracks, including a late permission response.
+
+Printed passes contain the pass alone, with a black-and-white QR code and no fabricated verification badge. The member portal no longer sends Member IDs to an external QR-image service. No database migration or live attendance rewrite is required. New dependencies are pinned with the lockfile.
+
+Tests decode screenshots of the actual portal and printed QR codes with the independently implemented scanner, decode synthetic camera video, require confirmation, check duplicate clicks and separate services, test legacy and invalid codes, denied/pending camera permission and cleanup, isolate printing, and verify staff permissions and mobile/desktop layout. These tests create no live attendance records and use no physical camera.
+
+Other audit items (the disabled Test Access control, Settings bundle size and Supabase leaked-password protection) remain separate work.

@@ -1,6 +1,10 @@
-import React from 'react';
-import { X, QrCode, Printer, User, ShieldCheck, Sparkles, Building, Phone } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { X, QrCode, Printer, User } from 'lucide-react';
 import { Member, ChurchSettings } from '../../types/database.types';
+import { AttendancePassQr } from './AttendancePassQr';
+import { attendancePassValue } from '../../features/attendance/attendancePass';
+import { useModalFocus } from '../../hooks/useModalFocus';
 
 interface DigitalPassModalProps {
   isOpen: boolean;
@@ -9,124 +13,60 @@ interface DigitalPassModalProps {
   settings: ChurchSettings;
 }
 
-export const DigitalPassModal: React.FC<DigitalPassModalProps> = ({
-  isOpen,
-  onClose,
-  member,
-  settings,
-}) => {
+export const DigitalPassModal: React.FC<DigitalPassModalProps> = ({ isOpen, onClose, member, settings }) => {
+  const panel = useModalFocus(isOpen, onClose);
+  const value = attendancePassValue(member);
+  useEffect(() => {
+    if (!isOpen) return;
+    document.body.classList.add('attendance-pass-print-open');
+    return () => document.body.classList.remove('attendance-pass-print-open');
+  }, [isOpen]);
   if (!isOpen) return null;
 
-  const handlePrint = () => {
-    window.print();
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in">
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-sm w-full overflow-hidden animate-in zoom-in-95">
-        {/* Modal Toolbar */}
+  return createPortal(
+    <div data-attendance-pass-root className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs overflow-y-auto">
+      <style media="print">{`
+        body.attendance-pass-print-open > :not([data-attendance-pass-root]) { display: none !important; }
+        [data-attendance-pass-root], [data-attendance-pass-root] [role="dialog"] {
+          display: block !important; position: static !important; width: 100% !important;
+          height: auto !important; max-height: none !important; overflow: visible !important;
+          padding: 0 !important; margin: 0 !important; border: 0 !important;
+          background: white !important; box-shadow: none !important; backdrop-filter: none !important;
+        }
+        [data-attendance-pass-paper] { break-inside: avoid; background: white !important; color: black !important; }
+        [data-attendance-pass-paper] * { color: black !important; box-shadow: none !important; }
+      `}</style>
+      <div ref={panel} role="dialog" aria-modal="true" aria-label="Member digital attendance pass" className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-sm w-full overflow-hidden my-auto shrink-0">
         <div className="no-print p-4 bg-slate-900 text-white flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <QrCode className="w-5 h-5 text-teal-400" />
-            <span className="font-bold text-xs uppercase tracking-wider">Member Digital Pass</span>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-white transition"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2"><QrCode className="w-5 h-5 text-teal-400" /><span className="font-bold text-xs uppercase tracking-wider">Member Digital Pass</span></div>
+          <button type="button" onClick={onClose} aria-label="Close member pass" className="p-1 rounded-lg text-slate-300 hover:text-white"><X className="w-4 h-4" /></button>
         </div>
-
-        {/* Pass Card */}
-        <div className="p-6 bg-gradient-to-b from-teal-900 via-teal-800 to-slate-900 text-white text-center space-y-4">
-          <div className="flex items-center justify-between text-left border-b border-teal-700/60 pb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-teal-500/20 border border-teal-400/40 flex items-center justify-center font-black text-sm text-teal-300 overflow-hidden">
-                {settings.logo_url ? (
-                  <img src={settings.logo_url} alt="Logo" className="w-full h-full object-contain p-0.5" />
-                ) : (
-                  settings.short_name?.slice(0, 2) || 'GW'
-                )}
-              </div>
-              <div>
-                <h4 className="font-extrabold text-xs tracking-tight text-white leading-tight">
-                  {settings.church_name}
-                </h4>
-                <p className="text-[10px] text-teal-300">{settings.branch_name || settings.location || ''}</p>
-              </div>
-            </div>
-            <span className="text-[9px] font-bold uppercase tracking-wider bg-teal-400/20 text-teal-200 px-2 py-0.5 rounded-full border border-teal-400/30">
-              Verified
-            </span>
+        <div data-attendance-pass-paper className="p-6 bg-gradient-to-b from-teal-900 via-teal-800 to-slate-900 text-white text-center space-y-4">
+          <div className="border-b border-teal-700 pb-3">
+            {settings.logo_url && <img src={settings.logo_url} alt="Church logo" className="w-10 h-10 mx-auto object-contain mb-2" />}
+            <h2 className="font-bold text-sm">{settings.church_name}</h2>
+            <p className="text-xs text-teal-200">{settings.branch_name || settings.location}</p>
           </div>
-
-          {/* Member Photo & Name */}
-          <div className="space-y-2 pt-2">
-            <div className="w-20 h-20 rounded-2xl bg-teal-700 mx-auto overflow-hidden border-2 border-white/20 shadow-xl flex items-center justify-center">
-              {member.profile_photo_url ? (
-                <img
-                  src={member.profile_photo_url}
-                  alt={member.first_name}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <User className="w-10 h-10 text-teal-200" />
-              )}
-            </div>
-
-            <div>
-              <h3 className="text-lg font-black text-white">
-                {member.first_name} {member.last_name}
-              </h3>
-              <p className="text-xs font-mono font-bold text-teal-300 mt-0.5">{member.member_id}</p>
-              {member.ministry_name && (
-                <p className="text-[11px] text-teal-100/80 mt-1 line-clamp-1">
-                  {member.ministry_name}
-                </p>
-              )}
-            </div>
+          <div className="w-20 h-20 rounded-2xl bg-teal-700 mx-auto overflow-hidden border-2 border-white/20 flex items-center justify-center">
+            {member.profile_photo_url ? <img src={member.profile_photo_url} alt="Member photo" className="w-full h-full object-cover" /> : <User className="w-10 h-10 text-teal-200" />}
           </div>
-
-          {/* Simulated QR Code Box */}
-          <div className="bg-white p-4 rounded-2xl shadow-xl max-w-[180px] mx-auto space-y-2">
-            <div className="w-full aspect-square bg-slate-900 p-2 rounded-xl flex items-center justify-center">
-              {/* QR Pattern Representation */}
-              <div className="grid grid-cols-5 gap-1 w-full h-full p-1 bg-white rounded-lg">
-                {Array.from({ length: 25 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className={`rounded-[2px] ${
-                      i % 2 === 0 || i % 7 === 0 || i === 0 || i === 4 || i === 20 || i === 24
-                        ? 'bg-slate-900'
-                        : 'bg-teal-700'
-                    }`}
-                  />
-                ))}
-              </div>
-            </div>
-            <p className="text-[10px] font-bold text-slate-500 font-mono tracking-widest uppercase">
-              SCAN TO CHECK IN
-            </p>
+          <div>
+            <h3 className="text-lg font-black break-words">{member.first_name} {member.last_name}</h3>
+            <p className="text-xs font-mono font-bold text-teal-200 mt-1 break-words">{member.member_id}</p>
+            {member.ministry_name && <p className="text-xs text-teal-100 mt-1">{member.ministry_name}</p>}
           </div>
-
-          <p className="text-[10px] text-teal-200/70">
-            Show this digital barcode pass at the GWCC reception or foyer kiosk for fast-track attendance.
-          </p>
+          <div className="bg-white p-2 rounded-xl max-w-[196px] mx-auto">
+            <AttendancePassQr member={member} />
+          </div>
+          <p className="text-xs text-teal-100">Show this pass to attendance staff. They select the service and confirm your check-in.</p>
         </div>
-
-        {/* Footer Actions */}
-        <div className="no-print p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
-          <span className="text-[11px] text-slate-500 font-mono">Tel: {member.phone}</span>
-          <button
-            onClick={handlePrint}
-            className="flex items-center gap-1 px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold transition shadow-xs"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            <span>Print Pass</span>
+        <div className="no-print p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3">
+          <span className="text-xs text-slate-500">Member attendance pass</span>
+          <button type="button" disabled={!value} onClick={() => { if (value) window.print(); }} className="inline-flex items-center gap-1 px-3 py-2 bg-teal-700 text-white rounded-xl text-xs font-bold disabled:opacity-50">
+            <Printer className="w-3.5 h-3.5" />Print Pass
           </button>
         </div>
       </div>
-    </div>
+    </div>, document.body
   );
 };
