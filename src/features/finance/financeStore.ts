@@ -259,11 +259,12 @@ export function transferBetweenAccounts(fromId:string,toId:string,amount:number,
 export function addDepartmentBudget(
   data: Omit<DepartmentBudget, 'id' | 'created_at' | 'updated_at'>,
   setDepartmentBudgets: Dispatch<SetStateAction<DepartmentBudget[]>>,
-  logAction: (action: string, module: string, details: string, recordId?: string) => void
+  logAction: (action: string, module: string, details: string, recordId?: string) => void,
+  requestId?: string
 ): DepartmentBudget {
   const newBudget: DepartmentBudget = {
     ...data,
-    id: crypto.randomUUID(),
+    id: requestId || crypto.randomUUID(),
     allocated_amount: Number(data.allocated_amount) || 0,
     spent_amount: Number(data.spent_amount) || 0,
     created_at: new Date().toISOString(),

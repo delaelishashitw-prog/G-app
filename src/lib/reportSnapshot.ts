@@ -106,7 +106,7 @@ export function buildReportSnapshot(source: ReportSources, filters: ReportFilter
   const money = (row: {amount: number; currency?: string; status?: string}) => confirmed(row) && isActiveTransaction(row) && Number.isFinite(Number(row.amount)) && (!row.currency || row.currency === 'GHS');
   const financial = (row: {category: string; payment_method?: string}) => (!filters.category || filters.category === 'ALL' || filters.category === row.category) && (!filters.paymentMethod || filters.paymentMethod === 'ALL' || filters.paymentMethod === row.payment_method);
   const giving = (source.giving || []).filter(row => money(row) && date(row.date) && financial(row) && text(row.member_name, row.donor_name, row.category, row.reference_number));
-  const churchIncome = (source.churchFinances || []).filter(row => ['income', 'grant'].includes(row.transaction_type) && money(row) && date(row.date) && financial(row) && text(row.title, row.recipient_or_vendor, row.category, row.reference_no));
+  const churchIncome = (source.churchFinances || []).map(row => ({...row, amount: Math.max(0, Math.round((Number(row.amount) - Number(row.giving_deposit_amount || 0)) * 100) / 100)})).filter(row => row.amount > 0).filter(row => ['income', 'grant'].includes(row.transaction_type) && money(row) && date(row.date) && financial(row) && text(row.title, row.recipient_or_vendor, row.category, row.reference_no));
   const receipts: ReportReceipt[] = [
     ...giving.map(row => ({...row, id: `giving:${row.id}`, record_id: row.id, source: 'giving' as const})),
     ...churchIncome.map(row => ({id: `church:${row.id}`, record_id: row.id, source: 'church' as const, date: row.date, category: row.category,

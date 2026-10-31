@@ -32,6 +32,7 @@ export async function checkChurchFinance(browser,{origin,settings}){
     const data=structuredClone(fixture);if(!withCash)data.church_accounts.pop();
     const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
     await context.addInitScript(watchSyncStatus);
+    await context.addInitScript(()=>{window.__receiptMode='ok';window.__receiptWrites=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__receiptWrites.push(text);if(window.__receiptMode==='deny')throw new DOMException('Clipboard denied','NotAllowedError');if(window.__receiptMode==='hold')await new Promise(resolve=>window.__receiptResolve=resolve);}}});});
     await context.addInitScript(({session})=>{localStorage.setItem('gwcc_supabase_url','https://gwcc-e2e.supabase.co');localStorage.setItem('gwcc_supabase_anon_key','test-public-key');localStorage.setItem('gwcc-church-auth-token',JSON.stringify(session));},{session});
     let rejectWrites=true,number=0,interruptPayment=true;const requests=[],actions=[],actionResults=new Map();
     await context.route('https://gwcc-e2e.supabase.co/**',async route=>{
@@ -114,6 +115,7 @@ export async function checkChurchFinance(browser,{origin,settings}){
     setReject(false);await page.evaluate(()=>window.dispatchEvent(new Event('online')));await waitForSync(page);
     await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Print / PDF'&&!button.disabled));
     assert.equal(data.giving.filter(row=>row.donor_name==='Synthetic giving donor').length,1);
+    await checkClipboard(page,page.getByRole('button',{name:'Copy',exact:true}));
     assert.deepEqual(durability.errors,[]);
   }finally{await durability.context.close();}
   const noCash=await setup(false);
@@ -168,6 +170,7 @@ export async function checkChurchFinance(browser,{origin,settings}){
     await page.getByRole('row').filter({has:page.getByText('Pending browser receipt',{exact:true})}).getByRole('button',{name:'Print Official Church Income Receipt',exact:true}).click();
     await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent.includes('Print Receipt')&&!button.disabled));
     assert.match(data.church_finances.find(row=>row.title==='Pending browser receipt').reference_no,new RegExp(`^INC-${year}-`));
+    await checkClipboard(page,page.getByRole('button',{name:'Copy receipt or voucher',exact:true}));
     await page.getByRole('button',{name:'Close receipt or voucher',exact:true}).click();
     await page.getByRole('button',{name:/Sunday Cash Counter/}).click();
     await page.getByLabel('Cash holding account',{exact:true}).selectOption('qa-cash');await page.getByLabel('Counted service',{exact:true}).selectOption('qa-service');
@@ -181,7 +184,11 @@ export async function checkChurchFinance(browser,{origin,settings}){
     await page.locator('input[type="number"]').first().fill('1');await page.getByRole('button',{name:'Post Cash to Treasury',exact:true}).click();await page.getByText(/A cash count for this service and date is already recorded/).first().waitFor();assert.equal(data.church_finances.filter(row=>row.cash_count_key===counted.cash_count_key).length,1);
     await page.getByRole('button',{name:/Department Budgets/}).click();await page.getByRole('button',{name:'Create Department Budget',exact:true}).click();
     const budgetAcknowledged=page.waitForResponse(response=>response.url().endsWith('/rpc/gwcc_apply_mutations')&&response.request().postDataJSON()?.p_changes.some(change=>change.table==='department_budgets'&&change.record?.period===`${year} Annual`));
-    const budget=modal(page,'Add Department Budget');await budget.getByLabel('Department / Ministry Name *',{exact:true}).fill('Facilities');await budget.getByLabel('Budget Allocation (GH₵) *',{exact:true}).fill('1000.25');await budget.getByRole('button',{name:'Create Budget',exact:true}).click();await budgetAcknowledged;await waitForSync(page);
+    const budget=modal(page,'Add Department Budget');await budget.getByLabel('Department / Ministry Name *',{exact:true}).fill('Facilities');await budget.getByLabel('Budget Allocation (GH₵) *',{exact:true}).fill('1000.25');await budget.getByRole('checkbox',{name:'Block payments that exceed this department budget',exact:true}).check();
+    await page.evaluate(()=>{window.__budgetPut=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=function(value,...args){if(this.name==='outboxes'&&value.batches?.length)throw new DOMException('Synthetic budget storage failure','QuotaExceededError');return window.__budgetPut.call(this,value,...args);};});
+    await budget.getByRole('button',{name:'Create Budget',exact:true}).click();await page.getByText(/Synthetic budget storage failure/).first().waitFor();assert.equal(await budget.isVisible(),true);assert.equal(await budget.getByLabel('Budget Allocation (GH₵) *',{exact:true}).inputValue(),'1000.25');
+    await page.evaluate(()=>{IDBObjectStore.prototype.put=window.__budgetPut;});await budget.getByRole('button',{name:'Create Budget',exact:true}).click();await budgetAcknowledged;await waitForSync(page);
+    assert.equal(data.department_budgets.find(row=>row.department==='Facilities').enforce_limit,true);
     await page.getByText('Spent to Date',{exact:true}).locator('..').getByText('GH₵ 100.25',{exact:true}).waitFor();
     await page.getByRole('button',{name:'+ Add / Edit Department Budget',exact:true}).click();await budget.getByLabel('Department / Ministry Name *',{exact:true}).fill('Facilities');await budget.getByLabel('Budget Allocation (GH₵) *',{exact:true}).fill('500');await budget.getByLabel('Budget period',{exact:true}).fill(`Q1-${year}`);await budget.getByRole('button',{name:'Create Budget',exact:true}).click();
     await page.getByText(/This department already has a budget in an overlapping period/).first().waitFor();
@@ -204,4 +211,13 @@ export async function checkChurchFinance(browser,{origin,settings}){
     if(process.env.FINANCE_QA_SCREENSHOT_DIR){await page.screenshot({path:`${process.env.FINANCE_QA_SCREENSHOT_DIR}/finance-approvals-mobile.png`,fullPage:true});await page.setViewportSize({width:1440,height:1000});await page.waitForFunction(()=>parseFloat(getComputedStyle(document.querySelector('main').parentElement).paddingLeft)>0);await page.screenshot({path:`${process.env.FINANCE_QA_SCREENSHOT_DIR}/finance-approvals-desktop.png`,fullPage:true});}
     console.info('Church finance browser checks passed: independent approval, own-request blocking, interrupted payment confirmation with immutable retry, exactly-once posting, authenticated history,  CSV/PDF filters and escaping, exact cents, unposted requests, pending receipt confirmation, explicit cash accounts and witnesses, duplicate counts, historical budget usage, reconciliation and mobile layout.');
   }finally{await context.close();}
+}
+
+async function checkClipboard(page,button){
+ await page.evaluate(()=>{window.__receiptMode='hold';});await button.click();
+ assert.equal(await button.isDisabled(),true);assert.equal(await page.getByText('Copied',{exact:true}).count(),0);
+ await page.evaluate(()=>{window.__receiptResolve();});await page.getByText('Copied',{exact:true}).waitFor();
+ await page.evaluate(()=>{window.__receiptMode='deny';});await button.click();await page.getByText('Copy failed',{exact:true}).waitFor();
+ assert.equal(await page.getByText('Copied',{exact:true}).count(),0);
+ await page.evaluate(()=>{window.__receiptMode='ok';});await button.click();await page.getByText('Copied',{exact:true}).waitFor();
 }

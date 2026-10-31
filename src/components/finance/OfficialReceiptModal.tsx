@@ -1,8 +1,8 @@
+import { useReceiptClipboard } from '../../hooks/useReceiptClipboard';
 import React, { useRef } from 'react';
 import { Printer, Copy, Check, X, ShieldCheck } from 'lucide-react';
 import { GivingRecord, ChurchSettings } from '../../types/database.types';
 import { formatGHS, numberToCedisWords } from '../../lib/currencyUtils';
-import { useToast } from '../../contexts/ToastContext';
 import { PastorSignature } from '../common/PastorSignature';
 
 interface OfficialReceiptModalProps {
@@ -16,8 +16,7 @@ export const OfficialReceiptModal: React.FC<OfficialReceiptModalProps> = ({
   settings,
   onClose,
 }) => {
-  const { info, success } = useToast();
-  const [copied, setCopied] = React.useState(false);
+  const { copied, copying, copyText } = useReceiptClipboard(record.id);
   const canIssue = Boolean(record.updated_at) && record._sync_status !== 'pending' && record.status !== 'voided';
 
   const donorDisplayName = record.member_name || record.donor_name || 'Anonymous Giver';
@@ -27,7 +26,7 @@ export const OfficialReceiptModal: React.FC<OfficialReceiptModalProps> = ({
     if(canIssue)window.print();
   };
 
-  const handleCopyText = () => {
+  const handleCopyText = async () => {
     if(!canIssue)return;
     const text = `GREATER WORKS CITY CHURCH - OFFICIAL RECEIPT
 Receipt No: ${receiptNumber}
@@ -41,10 +40,7 @@ Reference: ${record.reference_number || 'N/A'}
 "Bring all the tithes into the storehouse..." — Malachi 3:10
 Thank you for your generous stewardship!`;
 
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    success('Receipt Copied', 'Receipt details copied to clipboard.');
-    setTimeout(() => setCopied(false), 2500);
+    await copyText(text, 'Receipt Copied');
   };
 
   return (
@@ -64,7 +60,7 @@ Thank you for your generous stewardship!`;
           <div className="flex items-center gap-2">
             <button
               onClick={handleCopyText}
-              disabled={!canIssue}
+              disabled={!canIssue || copying}
               className="px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-200 hover:text-white hover:bg-slate-700 text-xs font-medium flex items-center gap-1 transition cursor-pointer"
               title="Copy receipt summary to clipboard"
             >

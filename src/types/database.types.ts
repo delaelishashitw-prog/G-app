@@ -384,6 +384,7 @@ export interface ChurchAccount {
 }
 
 export interface ChurchFinanceRecord {
+  giving_deposit_amount?: number;
   approval_state?: 'requested' | 'approved' | 'rejected' | 'cancelled' | 'paid' | 'voided' | null;
   requested_by_id?: string | null;
   requested_by?: string | null;
@@ -430,6 +431,7 @@ export interface ChurchFinanceRecord {
 }
 
 export interface DepartmentBudget {
+  enforce_limit?: boolean;
   id: string;
   department: string;
   allocated_amount: number;

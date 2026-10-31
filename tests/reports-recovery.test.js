@@ -107,3 +107,13 @@ test('crash recovery requires a current full pending backup before reload, inclu
     boundary.handleExportPending();boundary.handleResetCache();assert.equal(reloads, 1);assert.equal(exportPendingChanges(), boundary.state.backupSnapshot);
   } finally {await setSyncIdentity(null);globalThis.window = savedWindow;globalThis.localStorage = savedStorage;globalThis.document = savedDocument;}
 });
+
+
+test('linked Giving deposits count once in revenue reports, including partial and cross-period deposits',()=>{
+ const giving={id:'giving-linked',category:'Tithe',amount:100,currency:'GHS',date:'2026-10-10',payment_method:'cash',updated_at:'2026-10-10T12:00:00Z',status:'completed'};
+ const income={id:'deposit-linked',transaction_type:'income',amount:150,giving_deposit_amount:100,currency:'GHS',date:'2026-11-01',payment_method:'cash',category:'Collection',title:'Already receipted giving and other income',updated_at:'2026-11-01T12:00:00Z',status:'completed'};
+ const all=buildReportSnapshot({giving:[giving],churchFinances:[income]});
+ assert.equal(all.totals.income,150);assert.equal(all.totals.memberGiving,100);assert.equal(all.totals.churchIncome,50);
+ const november=buildReportSnapshot({giving:[giving],churchFinances:[{...income,amount:100}]},{startDate:'2026-11-01',endDate:'2026-11-30'});
+ assert.equal(november.totals.income,0);
+});
