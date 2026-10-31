@@ -50,4 +50,14 @@ The review, permissions matrix and dossier use one complete module-label catalog
 
 Tests cover catalog coverage against all live client role grants, profile requirements, all three launch points, current and protected profiles, root identity/token preservation, zero mutation or authentication requests, non-root restrictions, keyboard focus and mobile/desktop layout. No account, role, database schema or live record changes are needed for this correction.
 
-Other audit items (Settings bundle size and Supabase leaked-password protection) remain separate work.
+## Settings page loading
+
+The Settings page no longer embeds the complete SQL migration and repeated repair scripts in its JavaScript. The generator also emits a separate JSON data asset containing one migration string and one repair string. The database tools fetch this asset only after the Supabase PostgreSQL Hub opens. Identity, Appearance, Services and the other ordinary tabs do not request it. The Settings-specific JavaScript falls from about 3.20 MB to 99 KB uncompressed (about 97%); shared application dependencies are separate from this comparison.
+
+While scripts load, connection settings remain usable and SQL copy, preview and download actions stay disabled. Failed requests show a retry action that preserves unsaved connection details. Switching away cancels an unfinished request; successfully loaded scripts are reused while Settings remains open. Copy success appears only after the clipboard write succeeds, and a failed clipboard write offers retry or a full-script download. The SQL tool buttons wrap on narrow screens. Generated script contents, SQL permissions and database records are unchanged.
+
+Regression checks enforce a 150 KB Settings entry budget, no script requests on ordinary tabs, delayed loading, failed-request recovery with preserved drafts, identical copied/previewed/downloaded bytes, clipboard denial, loaded-data reuse and 390/1440px layouts. A separate hash-based test compares both generated data strings with every canonical SQL export. CI checks both generated files for drift.
+
+## Leaked-password protection status
+
+Read-only production checks on 31 October 2026 found that native Supabase leaked-password protection remains disabled and the organization uses the Free plan. [Supabase requires Pro or above for this feature](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection). This audit item remains blocked by the plan; no paid upgrade or Auth setting was changed. Enabling it requires a separately authorized paid-plan decision and a subsequent Auth configuration check.
