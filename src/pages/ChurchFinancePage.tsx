@@ -1,3 +1,4 @@
+import { GivingDeposits } from '../components/finance/GivingDeposits';
 import {GivingChannelsPanel} from '../components/finance/GivingChannels';
 import React, { useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -177,7 +178,7 @@ export const ChurchFinancePage: React.FC = () => {
   const finishRequest=(kind:string)=>{delete financialRequests.current[kind];};
   const financialBusy=useRef(false);
   const [financialSaving,setFinancialSaving]=useState(false);
-  const [activeTab, setActiveTab] = useState<'treasury' | 'ledger' | 'budgets' | 'counter' | 'reconciliation' | 'approvals'>('treasury');
+  const [activeTab, setActiveTab] = useState<'treasury' | 'ledger' | 'budgets' | 'counter' | 'reconciliation' | 'approvals' | 'deposits'>('treasury');
   const [budgetYear,setBudgetYear]=useState(todayISO().slice(0,4));
   const departmentBudgets=useMemo(()=>storedDepartmentBudgets.map(budget=>({...budget,spent_amount:budgetSpending(budget,churchFinances)??0})),[storedDepartmentBudgets,churchFinances]);
   const visibleBudgets=useMemo(()=>departmentBudgets.filter(budget=>budgetPeriodRange(budget.period)?.year===budgetYear),[departmentBudgets,budgetYear]);
@@ -1009,6 +1010,7 @@ export const ChurchFinancePage: React.FC = () => {
           { id: 'treasury', label: 'Holding Accounts & Treasury', icon: Landmark },
           { id: 'ledger', label: 'Income & Expense Ledger', icon: Receipt },
           { id: 'approvals', label: 'Approvals & Payments', icon: ShieldCheck },
+          { id: 'deposits', label: 'Giving Deposits', icon: Landmark },
           { id: 'budgets', label: 'Department Budgets', icon: BarChart3 },
           { id: 'reconciliation', label: 'Reconciliation', icon: ShieldCheck },
           { id: 'counter', label: 'Sunday Cash Counter Sheet', icon: Calculator },
@@ -1038,6 +1040,7 @@ export const ChurchFinancePage: React.FC = () => {
       </div>
 
       {activeTab==='approvals'&&<FinanceApprovals key={currentUser.id}/>}
+      {activeTab==='deposits'&&<GivingDeposits key={currentUser.id}/>}
 
       {/* TAB 1: TREASURY & HOLDING ACCOUNTS */}
       {activeTab === 'treasury' && (
@@ -1390,6 +1393,7 @@ export const ChurchFinancePage: React.FC = () => {
                             <div className="font-bold text-slate-900 dark:text-white text-xs line-clamp-1">
                               {item.title}
                             </div>
+                            {Number(item.giving_deposit_amount||0)>0&&<div className="text-[10px] text-emerald-800">{formatGHS(Number(item.giving_deposit_amount))} linked Member Giving · counted once in Reports</div>}
                             {item.department && (
                               <div className="text-[10px] text-slate-400 font-medium">{item.department}</div>
                             )}
@@ -1565,7 +1569,7 @@ export const ChurchFinancePage: React.FC = () => {
                 Departmental Budget Allocations
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Usage is calculated from recorded expenses within each budget period and currency.
+                Usage is calculated from recorded expenses within each budget period and currency. Limits can be enabled for each department.
               </p>
             </div>
             <label className="text-xs font-semibold">Budget year<select aria-label="Budget year" value={budgetYear} onChange={e=>setBudgetYear(e.target.value)} className="ml-2 rounded-lg border p-2">{budgetYears.map(year=><option key={year} value={year}>{year}</option>)}</select></label>
@@ -1615,6 +1619,7 @@ export const ChurchFinancePage: React.FC = () => {
                         <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
                           {bgt.period}
                         </span>
+                        <span className="text-[10px] text-slate-600">{bgt.enforce_limit?'Payment limit enabled':'Monitoring only'}</span>
                         <span
                           className={`text-xs font-bold px-2 py-0.5 rounded-full ${
                             isOver
@@ -2543,28 +2548,31 @@ export const ChurchFinancePage: React.FC = () => {
                   spent: selectedEditBudget.spent_amount,
                   lead: selectedEditBudget.notes || 'Department Committee',
                   period:selectedEditBudget.period,
+                  enforce_limit:selectedEditBudget.enforce_limit,
                 }
               : null
           }
-          onSave={(b) => {
+          onSave={async (b) => {
             validateBudgetAllocation({id:selectedEditBudget?.id,department:b.name,period:b.period,allocated_amount:b.allocated,currency:selectedEditBudget?.currency||'GHS'},storedDepartmentBudgets);
             if (selectedEditBudget) {
-              updateDepartmentBudget(selectedEditBudget.id, {
+              await updateDepartmentBudget(selectedEditBudget.id, {
                 department: b.name,
                 allocated_amount: b.allocated,
                 notes: b.lead,
                 period:b.period,
+                enforce_limit:b.enforce_limit===true,
               });
               info('Budget update awaiting confirmation', `The ${b.name} allocation is recorded locally. Follow sync status for cloud confirmation.`);
             } else {
-              addDepartmentBudget({
+              await addDepartmentBudget({
                 department: b.name,
                 period: b.period,
                 allocated_amount: b.allocated,
                 spent_amount: 0,
                 currency: 'GHS',
                 notes: b.lead,
-              });
+                enforce_limit:b.enforce_limit===true,
+              },b.id);
               info('Budget awaiting confirmation', `The ${b.name} budget is recorded locally. Follow sync status for cloud confirmation.`);
             }
             setShowBudgetModal(false);

@@ -58,3 +58,10 @@ test('Ghana finance date filtering handles week/year boundaries and rejects impo
   assert.equal(financeDateMatches('2026-10-16','custom','2026-10-20','2026-10-10'),false);
   assert.equal(financeReference({reference_no:'PENDING-private-id'}),'Awaiting cloud number');assert.equal(financeReference({}),'No reference recorded');
 });
+
+
+test('enforced budgets count their department even if a payment names a different budget ID',()=>{
+ const budget={id:'strict',department:'Facilities',period:'2026 Annual',currency:'GHS',allocated_amount:100,enforce_limit:true};
+ assert.equal(budgetSpending(budget,[row('attempt','expense',80,{budget_id:'unrelated'})]),80);
+ assert.equal(budgetSpending({...budget,enforce_limit:false},[row('old','expense',80,{budget_id:'unrelated'})]),0);
+});

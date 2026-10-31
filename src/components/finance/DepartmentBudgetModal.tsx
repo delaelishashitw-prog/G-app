@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { X, Check, Building, Plus } from 'lucide-react';
 import { useToast } from '../../contexts/ToastContext';
 import {budgetPeriodRange} from '../../lib/budgetPeriod';
@@ -11,11 +11,12 @@ export interface DepartmentBudget {
   spent: number;
   lead: string;
   period?:string;
+  enforce_limit?:boolean;
 }
 
 interface DepartmentBudgetModalProps {
   initialBudget?: DepartmentBudget | null;
-  onSave: (budget: DepartmentBudget & {period:string}) => void;
+  onSave: (budget: DepartmentBudget & {period:string}) => void | Promise<void>;
   onDelete?: (id: string) => void;
   onClose: () => void;
 }
@@ -27,6 +28,8 @@ export const DepartmentBudgetModal: React.FC<DepartmentBudgetModalProps> = ({
   onClose,
 }) => {
   const { error } = useToast();
+  const savingLock=useRef(false),budgetId=useRef(initialBudget?.id||crypto.randomUUID());
+  const [saving,setSaving]=useState(false);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
 
   const [form, setForm] = useState({
@@ -34,9 +37,11 @@ export const DepartmentBudgetModal: React.FC<DepartmentBudgetModalProps> = ({
     allocated: initialBudget ? initialBudget.allocated.toString() : '',
     lead: initialBudget?.lead || '',
     period:initialBudget?.period||`${ghanaToday().slice(0,4)} Annual`,
+    enforce_limit:initialBudget?.enforce_limit===true,
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    if(savingLock.current){e.preventDefault();return;}
     e.preventDefault();
     const allocatedNum = Math.round(Number(form.allocated)*100)/100;
     if (!Number.isFinite(allocatedNum) || allocatedNum <= 0) {
@@ -50,14 +55,16 @@ export const DepartmentBudgetModal: React.FC<DepartmentBudgetModalProps> = ({
     }
     if(!budgetPeriodRange(form.period)){error('Invalid Budget Period','Use a year (2026 Annual), quarter (Q1-2026) or month (2026-10).');return;}
 
-    try{onSave({
-      id: initialBudget?.id || crypto.randomUUID(),
+    savingLock.current=true;setSaving(true);
+    try{await onSave({
+      id: budgetId.current,
       name: form.name.trim(),
       allocated: allocatedNum,
       spent: initialBudget?.spent || 0,
       lead: form.lead.trim() || 'Department Committee',
       period:form.period.trim(),
-    });}catch(cause){error('Budget not recorded',(cause as Error).message);}
+      enforce_limit:form.enforce_limit,
+    });}catch(cause){error('Budget not recorded',(cause as Error).message);}finally{savingLock.current=false;setSaving(false);}
   };
 
   return (
@@ -76,12 +83,12 @@ export const DepartmentBudgetModal: React.FC<DepartmentBudgetModalProps> = ({
               <p className="text-xs text-purple-200">Allocation and reporting period</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 text-purple-200 hover:text-white cursor-pointer">
+          <button disabled={saving} onClick={onClose} className="p-1 text-purple-200 hover:text-white cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 text-xs">
+        <form onSubmit={handleSubmit} className="p-6 text-xs"><fieldset disabled={saving} className="space-y-4 min-w-0">
           <div>
             <label htmlFor="budget-department" className="block font-semibold text-slate-700 mb-1">
               Department / Ministry Name *
@@ -132,6 +139,8 @@ export const DepartmentBudgetModal: React.FC<DepartmentBudgetModalProps> = ({
             />
           </div>
 
+          <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={form.enforce_limit} onChange={e=>setForm({...form,enforce_limit:e.target.checked})}/>Block payments that exceed this department budget</label>
+          <p className="text-[11px] text-slate-500">When enabled and confirmed by the cloud, payment posting is blocked if it exceeds the allocation for this department, period and currency. Requests can still be submitted. Increase the allocation before posting an over-budget payment.</p>
           <div className="pt-3 border-t border-slate-200 flex items-center justify-between gap-2">
             {initialBudget && onDelete ? (
               isConfirmingDelete ? (
@@ -175,11 +184,11 @@ export const DepartmentBudgetModal: React.FC<DepartmentBudgetModalProps> = ({
                 className="px-5 py-2 bg-purple-900 hover:bg-purple-800 text-white rounded-xl text-xs font-bold shadow-md cursor-pointer flex items-center gap-1.5"
               >
                 <Check className="w-3.5 h-3.5" />
-                <span>{initialBudget ? 'Save Changes' : 'Create Budget'}</span>
+                <span>{saving?'Saving…':initialBudget ? 'Save Changes' : 'Create Budget'}</span>
               </button>
             </div>
           </div>
-        </form>
+        </fieldset></form>
       </div>
     </div>
   );

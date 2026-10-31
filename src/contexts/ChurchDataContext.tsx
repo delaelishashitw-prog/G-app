@@ -1,3 +1,4 @@
+import { loadGivingDepositLinks } from '../lib/givingDeposits';
 import {writeFinance as writeFinancePlan, type FinanceStage} from '../features/finance/durableFinance';
 import {planAccountChange,planBudgetChange} from '../lib/ledgerUtils';
 import {sanitizeRecordForSupabase} from '../lib/supabase';
@@ -257,8 +258,8 @@ interface ChurchDataContextType {
   voidChurchFinance: (id: string, reason: string) => Promise<void>;
   transferBetweenAccounts: (fromAccountId: string, toAccountId: string, amount: number, notes?: string,requestId?:string) => Promise<{ success: boolean; message: string }>;
   departmentBudgets: DepartmentBudget[];
-  updateDepartmentBudget: (id: string, updates: Partial<DepartmentBudget>) => void;
-  addDepartmentBudget: (budget: Omit<DepartmentBudget, 'id' | 'created_at' | 'updated_at'>) => DepartmentBudget;
+  updateDepartmentBudget: (id: string, updates: Partial<DepartmentBudget>) => Promise<void>;
+  addDepartmentBudget: (budget: Omit<DepartmentBudget, 'id' | 'created_at' | 'updated_at'>,requestId?:string) => Promise<DepartmentBudget>;
   resetChurchFinanceData: (mode?: 'reset_balances' | 'wipe_all') => { success: boolean; message: string };
 
   // Pledges
@@ -914,6 +915,14 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     withSyncTransaction(() => ids.forEach(recordId => deleteAttendanceRecordRecord(recordId, setAttendance, logAction, dbSyncDelete)));
   };
 
+  const verifyGivingCorrections = async (ids:string[]) => {
+    if(!ids.length)return;
+    const identity=memberIdentity;
+    const links=await loadGivingDepositLinks();
+    if(memberIdentityRef.current!==identity)throw new Error('The signed-in account changed. Reopen this correction.');
+    if(links.some(link=>link.active&&ids.includes(link.giving_id)))throw new Error('Void the linked treasury income before correcting this Giving receipt. Your form has been preserved.');
+  };
+  const existingGivingCorrections = (changes:{table:string;record:any}[]) => changes.filter(change=>change.table==='giving'&&givingRef.current.some(row=>row.id===change.record.id&&row.updated_at&&row._sync_status!=='pending')).map(change=>change.record.id);
   // Stage financial changes separately until device admission has committed.
   const persistFinance=async<T,>(module:'giving'|'finance',plan:(stage:FinanceStage)=>T):Promise<T>=>{
     if(!isAuthenticated || !canAccess(module))throw new Error('Finance staff access is required.');
@@ -921,11 +930,15 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if(financeSaveInFlight.current.has(identity))throw new Error('Another financial entry is being preserved. Try again in a moment.');
     financeSaveInFlight.current.add(identity);
     try{return await writeFinancePlan(givingRef.current,financeStateRef.current,plan,{
-      persist:dbSyncUpsertBatch,retry:preservePendingSync,pending:pendingSyncRecord,normalize:sanitizeRecordForSupabase,
+      persist:async changes=>{await verifyGivingCorrections(existingGivingCorrections(changes));return dbSyncUpsertBatch(changes);},retry:preservePendingSync,pending:pendingSyncRecord,normalize:sanitizeRecordForSupabase,
       current:()=>memberIdentityRef.current===identity,log:logAction,
       apply:changes=>{
         for(const {table,record} of changes){
           if(table==='giving')commitGiving(previous=>[record as GivingRecord,...previous.filter(row=>row.id!==record.id)]);
+          if(table==='department_budgets'){
+            const next=[record as unknown as DepartmentBudget,...financeStateRef.current.budgets.filter(row=>row.id!==record.id)];
+            documentBaseline.current.departmentBudgets=next;commitBudgets(next);
+          }
           if(table==='church_accounts')commitAccounts(previous=>[record as ChurchAccount,...previous.filter(row=>row.id!==record.id)]);
           if(table==='church_finances'){
             const previous=financeStateRef.current.finances.find(row=>row.id===record.id),next=record as ChurchFinanceRecord;
@@ -993,12 +1006,14 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const transferBetweenAccounts=(fromId:string,toId:string,amount:number,notes?:string,requestId?:string)=>
     persistFinance('finance',stage=>transferBetweenAccountsRecord(fromId,toId,amount,notes,stage.setAccounts,stage.setFinances,stage.log,stage.sync,stage.state,requestId));
 
-  const addDepartmentBudget = (data: Omit<DepartmentBudget, 'id' | 'created_at' | 'updated_at'>): DepartmentBudget =>
-    addDepartmentBudgetRecord(data, setDepartmentBudgets, logAction);
-
-  const updateDepartmentBudget = (id: string, updates: Partial<DepartmentBudget>) => {
-    updateDepartmentBudgetRecord(id, updates, setDepartmentBudgets, logAction);
-  };
+  const addDepartmentBudget = (data: Omit<DepartmentBudget, 'id' | 'created_at' | 'updated_at'>,requestId:string=crypto.randomUUID()): Promise<DepartmentBudget> =>
+    persistFinance('finance',stage=>{const record=addDepartmentBudgetRecord(data,stage.setBudgets,stage.log,requestId);stage.sync('department_budgets',record);return record;});
+  const updateDepartmentBudget = (id: string, updates: Partial<DepartmentBudget>):Promise<void> => persistFinance('finance',stage=>{
+    const previous=stage.state.budgets.find(row=>row.id===id);if(!previous)throw new Error('Budget not found. Refresh and try again.');
+    updateDepartmentBudgetRecord(id,updates,stage.setBudgets,stage.log);
+    const record=stage.state.budgets.find(row=>row.id===id)!;
+    stage.sync('department_budgets',{...record,_expected_updated_at:previous.updated_at});
+  });
 
   const resetChurchFinanceData = (_mode: 'reset_balances' | 'wipe_all' = 'reset_balances') => ({
     success:false,message:'Financial history is preserved. Void incorrect receipts or record an adjustment instead of clearing balances.'
@@ -1018,6 +1033,7 @@ export const ChurchDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       throw new Error("This record is already being saved.");
     pledgeSavesInFlight.current.add(lock);
     try {
+      await verifyGivingCorrections(existingGivingCorrections(records));
       const result = await dbSyncUpsertBatch(records);
       if (!result.durable)
         throw new Error(

@@ -1728,3 +1728,97 @@ test('welfare officers can record dues and review relief with MFA, without treas
     assert.equal((await db.query("SELECT has_function_privilege('authenticated','gwcc_private.prepare_welfare_officer_mutation(text,text,jsonb,jsonb)','EXECUTE') ok")).rows[0].ok,false);
   }finally{await db.close();}
 });
+
+test('Giving deposits post once, link existing income without a second credit, protect receipts and retain recovery coverage',async()=>{
+ const db=await setupDatabase();
+ try{await asUser(db,root,async()=>{
+  const date=new Date().toISOString().slice(0,10);
+  await apply(db,[upsert('church_accounts',{id:'deposit-cash',name:'Deposit cash',account_type:'cash_petty',currency:'GHS',is_active:true,current_balance:100})]);
+  await apply(db,[upsert('giving',{id:'deposit-g1',category:'Tithe',amount:40,currency:'GHS',date,payment_method:'cash',status:'completed'}),upsert('giving',{id:'deposit-g2',category:'Offering',amount:60,currency:'GHS',date,payment_method:'cash',status:'completed'})]);
+  const receipts=(await db.query("SELECT id,updated_at FROM public.giving WHERE id LIKE 'deposit-g%' ORDER BY id")).rows;
+  const args=[operation(),JSON.stringify(receipts),'deposit-cash',date,'cash','',null,null];
+  const post=args=>db.query('SELECT public.gwcc_post_giving_deposit($1,$2,$3,$4,$5,$6,$7,$8) result',args);
+  const saved=(await post(args)).rows[0].result;
+  assert.equal(Number(saved.giving_deposit_amount),100);assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='deposit-cash'")).rows[0].current_balance,'200.00');
+  assert.deepEqual((await post(args)).rows[0].result,saved);
+  await assert.rejects(post([operation(),...args.slice(1)]),/already allocated/);
+  await assert.rejects(post([args[0],...args.slice(1,5),'different',null,null]),/reused with different/);
+  await assert.rejects(apply(db,[upsert('giving',{id:'deposit-g1',status:'voided',void_reason:'Synthetic correction'},receipts[0].updated_at)]),/Void the linked treasury income/);
+  await assert.rejects(apply(db,[upsert('church_finances',{id:saved.id,giving_deposit_amount:0},saved.updated_at)]),/deposit totals/);
+  await assert.rejects(apply(db,[upsert('church_finances',{id:saved.id,amount:120},saved.updated_at)]),/linked treasury income/);
+  assert.equal((await db.query('SELECT public.gwcc_giving_deposit_links() result')).rows[0].result.filter(row=>row.active).length,2);
+  const backup=(await db.query("SELECT public.gwcc_backup_create() result")).rows[0].result;
+  const archive=(await db.query('SELECT public.gwcc_backup_export($1) result',[backup])).rows[0].result;
+  assert.equal(JSON.parse(archive.payload_text).tables['public.gwcc_documents'].filter(row=>row.namespace==='giving_deposit_links').length,2);
+  // The protected links use the already-covered document table; no new backup table is omitted.
+  assert.equal((await db.query("SELECT count(*)::int n FROM public.gwcc_documents WHERE namespace='giving_deposit_links'")).rows[0].n,2);
+  await apply(db,[upsert('church_finances',{id:saved.id,status:'voided',void_reason:'Replace the synthetic allocation'},saved.updated_at)]);
+  assert.equal((await db.query('SELECT public.gwcc_giving_deposit_links() result')).rows[0].result.filter(row=>row.active).length,0);
+  await apply(db,[upsert('church_finances',{id:'existing-deposit',transaction_type:'income',account_id:'deposit-cash',account_name:'Deposit cash',category:'Income',title:'Existing collection',amount:150,currency:'GHS',date,payment_method:'cash',status:'completed'})]);
+  const existing=(await db.query("SELECT updated_at FROM public.church_finances WHERE id='existing-deposit'")).rows[0];
+  const before=(await db.query("SELECT current_balance FROM public.church_accounts WHERE id='deposit-cash'")).rows[0].current_balance;
+  const linked=(await post([operation(),JSON.stringify(receipts),'deposit-cash',date,'cash','','existing-deposit',existing.updated_at])).rows[0].result;
+  assert.equal(Number(linked.giving_deposit_amount),100);assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='deposit-cash'")).rows[0].current_balance,before);
+  assert.equal((await db.query("SELECT count(*)::int n FROM public.giving WHERE id LIKE 'deposit-g%' AND status='completed'")).rows[0].n,2);
+ });}finally{await db.close();}
+});
+
+test('Giving deposit validation rolls back stale, duplicate, excessive and unavailable selections and denies non-finance sessions',async()=>{
+ const db=await setupDatabase();try{
+  let args;
+  await asUser(db,root,async()=>{
+   const date=new Date().toISOString().slice(0,10);
+   await apply(db,[upsert('church_accounts',{id:'deposit-bank',name:'Bank',account_type:'bank',currency:'GHS',is_active:true,current_balance:0})]);
+   await apply(db,[upsert('giving',{id:'available-giving',category:'Tithe',amount:10,currency:'GHS',date,payment_method:'bank_transfer'})]);
+   const receipt=(await db.query("SELECT id,updated_at FROM public.giving WHERE id='available-giving'")).rows[0];
+   args=[operation(),JSON.stringify([receipt]),'deposit-bank',date,'bank_transfer','',null,null];
+   const post=a=>db.query('SELECT public.gwcc_post_giving_deposit($1,$2,$3,$4,$5,$6,$7,$8) result',a);
+   await assert.rejects(post([operation(),JSON.stringify([receipt,receipt]),...args.slice(2)]),/distinct confirmed/);
+   await assert.rejects(post([operation(),JSON.stringify([receipt,{id:'missing',updated_at:receipt.updated_at}]),...args.slice(2)]),/changed or is unavailable/);
+   await assert.rejects(post([operation(),JSON.stringify([{...receipt,updated_at:'2020-01-01T00:00:00Z'}]),...args.slice(2)]),/changed or is unavailable/);
+   await assert.rejects(post([operation(),args[1],'missing',...args.slice(3)]),/active GHS/);
+   await apply(db,[upsert('church_finances',{id:'small-income',account_id:'deposit-bank',account_name:'Bank',transaction_type:'income',amount:5,currency:'GHS',date,payment_method:'bank_transfer',category:'Income',title:'Small',status:'completed'})]);
+   const stamp=(await db.query("SELECT updated_at FROM public.church_finances WHERE id='small-income'")).rows[0].updated_at;
+   await assert.rejects(post([operation(),args[1],args[2],args[3],args[4],'','small-income',stamp]),/exceeds the unallocated/);
+   assert.equal((await db.query("SELECT count(*)::int n FROM public.gwcc_documents WHERE namespace='giving_deposit_links'")).rows[0].n,0);
+   assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='deposit-bank'")).rows[0].current_balance,'5.00');
+  });
+  for(const id of [member,other])await asUser(db,id,async()=>{
+   await assert.rejects(db.query('SELECT public.gwcc_giving_deposit_links()'),/finance authorization/);
+   await assert.rejects(db.query('SELECT public.gwcc_post_giving_deposit($1,$2,$3,$4,$5,$6,$7,$8)',args),/finance authorization/);
+  });
+  await asUser(db,root,async()=>{await assert.rejects(db.query('SELECT public.gwcc_giving_deposit_links()'),/finance authorization/);},{aal:'aal1',session_id:root});
+  assert.equal((await db.query("SELECT has_function_privilege('anon','public.gwcc_giving_deposit_links()','EXECUTE') allowed")).rows[0].allowed,false);
+  await db.exec("INSERT INTO public.gwcc_documents(namespace,id,data) VALUES('unrelated-fixture','cleanup','{}');DELETE FROM public.gwcc_documents WHERE namespace='unrelated-fixture';");
+  assert.equal((await db.query("SELECT count(*)::int n FROM public.gwcc_documents WHERE namespace='unrelated-fixture'")).rows[0].n,0);
+ }finally{await db.close();}
+});
+
+test('optional department caps block over-budget payment atomically, allow requests, and free capacity after a documented reversal',async()=>{
+ const date=new Date().toISOString().slice(0,10),year=date.slice(0,4);
+ const db=await setupDatabase({beforeApprovalControls:async db=>{
+  await db.exec(`INSERT INTO public.church_accounts(id,name,account_type,current_balance,opening_balance,currency,is_active) VALUES('budget-bank','Budget bank','bank',1000,1000,'GHS',true);
+   INSERT INTO public.church_finances(id,transaction_type,account_id,account_name,category,title,amount,currency,date,payment_method,department,status) VALUES('historic-budget-spend','expense','budget-bank','Budget bank','Utilities','Historical payment',75,'GHS','${date}','bank_transfer','Facilities','completed');`);
+ }});
+ try{
+  await db.query("UPDATE public.profiles SET role='finance_officer',authorization_reviewed_at=now() WHERE id=$1",[other]);
+  let request;
+  await asUser(db,root,async()=>{
+   await apply(db,[upsert('department_budgets',{id:'strict-budget',department:'Facilities',period:year+' Annual',currency:'GHS',allocated_amount:100,spent_amount:0,enforce_limit:true})]);
+   request=(await apply(db,[upsert('church_finances',{id:'capped-payment',transaction_type:'expense',account_id:'budget-bank',account_name:'Budget bank',category:'Utilities',title:'Capped request',amount:30,currency:'GHS',date,payment_method:'bank_transfer',department:'Facilities',status:'completed'})])).rows[0].result[0].record;
+   assert.equal(request.approval_state,'requested');
+  });
+  await asUser(db,other,async()=>{request=(await db.query("SELECT public.gwcc_finance_approval_action($1,$2,$3,'approve','','') result",[operation(),request.id,request.updated_at])).rows[0].result;});
+  await asUser(db,root,async()=>{
+   await assert.rejects(db.query("SELECT public.gwcc_finance_approval_action($1,$2,$3,'paid','','TEST-PAID')",[operation(),request.id,request.updated_at]),/Budget limit exceeded/);
+   assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='budget-bank'")).rows[0].current_balance,'925.00');
+   assert.equal((await db.query("SELECT approval_state FROM public.church_finances WHERE id='capped-payment'")).rows[0].approval_state,'approved');
+   const stamp=(await db.query("SELECT updated_at FROM public.church_finances WHERE id='historic-budget-spend'")).rows[0].updated_at;
+   await apply(db,[upsert('church_finances',{id:'historic-budget-spend',status:'voided',void_reason:'Reverse the test entry'},stamp)]);
+   const paid=(await db.query("SELECT public.gwcc_finance_approval_action($1,$2,$3,'paid','','TEST-PAID') result",[operation(),request.id,request.updated_at])).rows[0].result;
+   assert.equal(paid.approval_state,'paid');assert.equal((await db.query("SELECT current_balance FROM public.church_accounts WHERE id='budget-bank'")).rows[0].current_balance,'970.00');
+   const budget=(await db.query("SELECT updated_at FROM public.gwcc_documents WHERE namespace='department_budgets' AND id='strict-budget'")).rows[0];
+   await assert.rejects(apply(db,[upsert('department_budgets',{id:'strict-budget',allocated_amount:20},budget.updated_at)]),/below already posted spending/);
+  });
+ }finally{await db.close();}
+});

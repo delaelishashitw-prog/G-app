@@ -15,5 +15,6 @@ export function recordMatchesBudget(record:ChurchFinanceRecord,budget:Department
   const range=budgetPeriodRange(budget.period);
   const date=String(record.date||'').slice(0,10);
   if(!range || date<range.start || date>range.end || record.currency!==budget.currency)return false;
-  return record.budget_id ? record.budget_id===budget.id : record.department?.trim().toLowerCase()===budget.department.trim().toLowerCase();
+  const departmentMatches = record.department?.trim().toLowerCase() === budget.department.trim().toLowerCase();
+  return budget.enforce_limit ? record.budget_id === budget.id || departmentMatches : record.budget_id ? record.budget_id === budget.id : departmentMatches;
 }
