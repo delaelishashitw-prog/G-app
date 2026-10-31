@@ -42,4 +42,12 @@ Printed passes contain the pass alone, with a black-and-white QR code and no fab
 
 Tests decode screenshots of the actual portal and printed QR codes with the independently implemented scanner, decode synthetic camera video, require confirmation, check duplicate clicks and separate services, test legacy and invalid codes, denied/pending camera permission and cleanup, isolate printing, and verify staff permissions and mobile/desktop layout. These tests create no live attendance records and use no physical camera.
 
-Other audit items (the disabled Test Access control, Settings bundle size and Supabase leaked-password protection) remain separate work.
+## Staff access review
+
+The broken Test Access/Simulate controls in staff cards, table rows and dossiers now open a read-only Review Access dialog. It shows the selected profile's role grants, plus suspended, directory-only or administrator-review requirements. Active member profiles do not falsely claim staff approval. The reviewer keeps their own authenticated identity; reviewing a profile performs no sign-in, identity switch, permission change, staff update, message send or audit mutation. Actual sign-in still requires the account owner's verified email and security checks. The intentionally disabled authentication simulation compatibility APIs remain disabled.
+
+The review, permissions matrix and dossier use one complete module-label catalog and the existing `ROLE_PERMISSIONS` grants used by navigation. Missing areas such as Welfare, Giving, Services, AI Assistant, Tasks and Member Portal now appear. Module inclusion is described separately from permission to read individual records or perform actions. Dossiers no longer claim that an active, unreviewed profile is fully authorized to sign in.
+
+Tests cover catalog coverage against all live client role grants, profile requirements, all three launch points, current and protected profiles, root identity/token preservation, zero mutation or authentication requests, non-root restrictions, keyboard focus and mobile/desktop layout. No account, role, database schema or live record changes are needed for this correction.
+
+Other audit items (Settings bundle size and Supabase leaked-password protection) remain separate work.

@@ -1,3 +1,6 @@
+import { useModalFocus } from '../../hooks/useModalFocus';
+import { ACCESS_MODULES } from '../../lib/accessModules';
+import { staffProfileAccessBlockers } from '../../lib/staffAccessReview';
 import React, { useState } from 'react';
 import {
   X,
@@ -29,7 +32,7 @@ interface StaffDossierModalProps {
   onEdit: (user: UserProfile) => void;
   onResetPassword: (user: UserProfile) => void;
   onToggleStatus: (user: UserProfile) => void;
-  onSimulateAccess?: (user: UserProfile) => void;
+  onReviewAccess?: (user: UserProfile) => void;
   isSuperAdmin: boolean;
   currentUserId: string;
 }
@@ -41,11 +44,12 @@ export const StaffDossierModal: React.FC<StaffDossierModalProps> = ({
   onEdit,
   onResetPassword,
   onToggleStatus,
-  onSimulateAccess,
+  onReviewAccess,
   isSuperAdmin,
   currentUserId,
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'permissions' | 'audit'>('overview');
+  const panel = useModalFocus(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -77,6 +81,7 @@ export const StaffDossierModal: React.FC<StaffDossierModalProps> = ({
         return { label: 'Pastoral Directorate', color: 'bg-indigo-100 text-indigo-900 border-indigo-200' };
       case 'administrator':
       case 'finance_officer':
+      case 'welfare_officer':
       case 'data_entry':
         return { label: 'Church Administration', color: 'bg-blue-100 text-blue-900 border-blue-200' };
       case 'ministry_leader':
@@ -88,33 +93,9 @@ export const StaffDossierModal: React.FC<StaffDossierModalProps> = ({
   };
 
   const roleCat = getRoleCategory(user.role);
-  const allowedModules = user.role === 'super_admin' ? [
-    'dashboard', 'members', 'visitors', 'attendance', 'services', 'finance', 'welfare',
-    'giving', 'pledges', 'ministries', 'small_groups', 'events', 'pastoral_care',
-    'prayer_requests', 'communication', 'reports', 'users', 'settings', 'audit_logs'
-  ] : (ROLE_PERMISSIONS[user.role] || []);
-
-  const moduleLabels: Record<string, string> = {
-    dashboard: 'Executive Dashboard & Metrics',
-    members: 'Congregational Membership Directory',
-    visitors: 'Visitors Assimilation & First-Timers',
-    attendance: 'Service Registers & Headcounts',
-    services: 'Service Planning & Duty Rosters',
-    finance: 'Church Treasury & Bank Disbursements',
-    welfare: 'Welfare & Benevolence Relief',
-    giving: 'Member Giving & Tithe Ledger',
-    pledges: 'Sanctuary & Building Campaigns',
-    ministries: 'Departments & Ministries Coordination',
-    small_groups: 'Home Cell Groups & Fellowships',
-    events: 'Church Calendar & Special Events',
-    pastoral_care: 'Pastoral Counseling & Home Visitations',
-    prayer_requests: 'Intercessory Prayer Records',
-    communication: 'Communication drafts',
-    reports: 'Financial & Operational PDF Reports',
-    users: 'Staff Directory & Access Control (RBAC)',
-    settings: 'System Configuration & Cloud Database',
-    audit_logs: 'Immutable Security Audit Trail',
-  };
+  const allowedModules = ROLE_PERMISSIONS[user.role] || [];
+  const moduleLabels: Record<string, string> = Object.fromEntries(ACCESS_MODULES.map(module => [module.id, module.label]));
+  const accessBlockers = staffProfileAccessBlockers(user);
 
   const handlePrintDossier = () => {
     window.print();
@@ -122,7 +103,7 @@ export const StaffDossierModal: React.FC<StaffDossierModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 animate-fade-in my-8 overflow-hidden flex flex-col max-h-[92vh]">
+      <div ref={panel} role="dialog" aria-modal="true" aria-label="Staff dossier" className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 animate-fade-in my-8 overflow-hidden flex flex-col max-h-[92vh]">
         {/* Modal Header */}
         <div className="bg-linear-to-r from-slate-900 via-indigo-950 to-slate-900 p-6 text-white relative shrink-0">
           <button
@@ -230,26 +211,22 @@ export const StaffDossierModal: React.FC<StaffDossierModalProps> = ({
               {/* Account Status Alert Banner */}
               <div
                 className={`p-3.5 rounded-xl border flex items-start gap-3 ${
-                  user.is_active
+                  !accessBlockers.length
                     ? 'bg-emerald-50/60 border-emerald-200 text-emerald-950'
                     : 'bg-rose-50/60 border-rose-200 text-rose-950'
                 }`}
               >
-                {user.is_active ? (
+                {!accessBlockers.length ? (
                   <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
                 ) : (
                   <XCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
                 )}
                 <div className="space-y-0.5">
                   <p className="font-bold">
-                    {user.is_active ? 'Active Staff Account' : 'Suspended Account (Login Blocked)'}
+                    {accessBlockers.length ? 'Profile access requirements' : user.role === 'member' ? 'Active Member Profile' : 'Active and Reviewed Staff Profile'}
                   </p>
                   <p className="text-[11px] text-slate-600">
-                    {user.is_active
-                      ? hasLogin
-                        ? 'This staff member is fully authorized to log into the church management back-office according to their role permissions.'
-                        : 'This staff member is recorded in the directory. System login credentials are not enabled for this record.'
-                      : 'This staff account has been suspended. Back-office login and API actions are revoked while historical records remain attributable.'}
+                    {accessBlockers.length ? accessBlockers.join(' ') : 'The account owner must sign in with their verified email and complete the required security checks.'}
                   </p>
                 </div>
               </div>
@@ -381,8 +358,8 @@ export const StaffDossierModal: React.FC<StaffDossierModalProps> = ({
               {/* Accessible Modules Grid */}
               <div className="space-y-2">
                 <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider flex items-center justify-between">
-                  <span>Authorized Subsystems ({allowedModules.length})</span>
-                  <span className="text-[10px] font-normal text-slate-400">Strictly enforced at route and data levels</span>
+                  <span>Role Application Areas ({allowedModules.length})</span>
+                  <span className="text-[10px] font-normal text-slate-400">Record access and actions are checked separately</span>
                 </h4>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -430,22 +407,17 @@ export const StaffDossierModal: React.FC<StaffDossierModalProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Simulate button for super admin */}
-            {isSuperAdmin && !isProtectedRoot && user.role !== 'super_admin' && onSimulateAccess && (
+            {/* Read-only access review for super admin */}
+            {isSuperAdmin && onReviewAccess && (
               <button
                 onClick={() => {
                   onClose();
-                  onSimulateAccess(user);
+                  onReviewAccess(user);
                 }}
-                disabled={isCurrent}
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition shadow-2xs ${
-                  isCurrent
-                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                    : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 cursor-pointer'
-                }`}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition shadow-2xs bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
               >
                 <Eye className="w-3.5 h-3.5" />
-                <span>Simulate Access</span>
+                <span>Review Access</span>
               </button>
             )}
 
