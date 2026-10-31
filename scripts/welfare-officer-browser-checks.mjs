@@ -58,6 +58,27 @@ export async function checkWelfareOfficer(browser,{origin,settings,sampleMember}
       await page.getByRole('row').filter({has:page.getByText('BEN-OFFICER',{exact:true})}).getByRole('button',{name:'Review',exact:true}).click();
       assert.equal(await review.getByRole('button',{name:'Generate Payment Voucher',exact:true}).count(),0);
       await review.getByRole('button',{name:'Close welfare claim review',exact:true}).click();
+      await page.getByRole('button',{name:/Event Contributions/}).click();
+      await page.getByRole('button',{name:'New Event Appeal',exact:true}).click();
+      const appeal=page.getByRole('heading',{name:'Create Welfare Event Appeal',exact:true}).locator('xpath=ancestor::div[contains(@class,"fixed")][1]');
+      const levy=appeal.getByLabel('Minimum appeal levy (GHS)');
+      assert.equal(await levy.inputValue(),'10.00');assert.equal(await levy.getAttribute('min'),'10');
+      await appeal.getByPlaceholder('e.g. Late Deacon Solomon Ofori - Funeral Benevolence Fund').fill('Synthetic GHc10 appeal');
+      await appeal.getByPlaceholder('Provide a clear, respectful summary for the congregation detailing the need, burial plans, or recovery aid...').fill('Synthetic appeal for the minimum levy check.');
+      await levy.fill('9.99');
+      await appeal.getByRole('button',{name:'Create & Publish Appeal',exact:true}).click();
+      assert.equal(await levy.evaluate(el=>el.checkValidity()),false);assert.equal(data.welfare_events.length,0);
+      await levy.fill('10.00');
+      await Promise.all([page.waitForResponse(response=>response.url().endsWith('/rest/v1/rpc/gwcc_apply_mutations')&&response.request().postDataJSON()?.p_changes?.some(c=>c.table==='welfare_events')),appeal.getByRole('button',{name:'Create & Publish Appeal',exact:true}).click()]);
+      await waitForSync(page);assert.equal(data.welfare_events[0].minimum_contribution,10);
+      await page.getByRole('button',{name:'Record Contribution',exact:true}).click();
+      const contribution=page.getByRole('heading',{name:'Record Welfare Contribution',exact:true}).locator('xpath=ancestor::div[contains(@class,"fixed")][1]');
+      const amount=contribution.getByLabel('Appeal contribution amount (GHS)');
+      assert.equal(await amount.getAttribute('min'),'10');
+      await amount.fill('9.99');assert.equal(await contribution.getByRole('button',{name:'Confirm & Post Contribution',exact:true}).isDisabled(),true);
+      await amount.fill('10.00');
+      await Promise.all([page.waitForResponse(response=>response.url().endsWith('/rest/v1/rpc/gwcc_apply_mutations')&&response.request().postDataJSON()?.p_changes?.some(c=>c.table==='welfare_event_contributions')),contribution.getByRole('button',{name:'Confirm & Post Contribution',exact:true}).click()]);
+      await waitForSync(page);assert.equal(data.welfare_event_contributions[0].amount,10);assert.equal(data.welfare_contributions[0].amount,20);
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Welfare officer mobile overflow');
       for(const path of ['/church-finance','/users','/pastoral-care','/members','/assistant']){
         await page.goto(origin+path);await page.getByRole('heading',{name:'Access Restricted',exact:true}).waitFor();
@@ -65,5 +86,5 @@ export async function checkWelfareOfficer(browser,{origin,settings,sampleMember}
       assert.equal(errors.length,0,errors.join(' | '));assert.ok(requests.length>=2);
     }catch(error){console.log('Welfare officer requests:',JSON.stringify(requests));console.log('Welfare officer failure:',(await page.locator('body').innerText()).slice(-4500));throw error;}finally{await context.close();}
   }
-  console.log('Welfare officer browser checks passed: dedicated landing, dues recording, relief review, finance separation, direct-route denial and mobile/desktop layout.');
+  console.log('Welfare officer browser checks passed: GHc10 appeals and exact receipts, minimum rejection, dedicated landing, dues recording, relief review, finance separation, direct-route denial and mobile/desktop layout.');
 }

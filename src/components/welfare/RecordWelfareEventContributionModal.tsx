@@ -1,3 +1,4 @@
+import { MIN_WELFARE_APPEAL_LEVY } from '../../features/welfare/welfareAppealPolicy';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
@@ -30,7 +31,7 @@ interface RecordWelfareEventContributionModalProps {
   contributionToEdit?: WelfareEventContribution | null;
 }
 
-const QUICK_AMOUNTS = [20, 50, 100, 200, 500, 1000];
+const QUICK_AMOUNTS = [MIN_WELFARE_APPEAL_LEVY, 20, 50, 100, 200, 500, 1000];
 
 export const RecordWelfareEventContributionModal: React.FC<
   RecordWelfareEventContributionModalProps
@@ -87,7 +88,7 @@ export const RecordWelfareEventContributionModal: React.FC<
   }, [welfareEvents, eventId]);
 
   // Mandatory minimum contribution
-  const minRequiredAmount = selectedEvent ? selectedEvent.minimum_contribution || 20.0 : 20.0;
+  const minRequiredAmount = Math.max(MIN_WELFARE_APPEAL_LEVY, selectedEvent?.minimum_contribution || MIN_WELFARE_APPEAL_LEVY);
 
   // Initialize form
   useEffect(() => {
@@ -204,7 +205,7 @@ export const RecordWelfareEventContributionModal: React.FC<
       return;
     }
 
-    // Enforce GH¢20.00 minimum
+    // Enforce this appeal’s levy and the minimum welfare appeal levy
     if (parsedAmount < minRequiredAmount) {
       toastError(
         'Below Minimum Amount',
@@ -456,7 +457,7 @@ export const RecordWelfareEventContributionModal: React.FC<
             )}
           </div>
 
-          {/* Amount with Minimum GH¢20.00 Validation */}
+          {/* Amount validated against the selected appeal minimum */}
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1">
@@ -474,9 +475,10 @@ export const RecordWelfareEventContributionModal: React.FC<
                 type="number"
                 step="0.01"
                 min={minRequiredAmount}
+                aria-label="Appeal contribution amount (GHS)"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder="20.00"
+                placeholder={minRequiredAmount.toFixed(2)}
                 className={`w-full pl-10 pr-3 py-2 text-base font-bold text-slate-900 border rounded-xl focus:ring-2 focus:outline-hidden ${
                   parseFloat(amount) < minRequiredAmount
                     ? 'border-rose-300 bg-rose-50/50 focus:ring-rose-500'

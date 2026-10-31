@@ -1,3 +1,4 @@
+import { MIN_WELFARE_APPEAL_LEVY } from '../features/welfare/welfareAppealPolicy';
 import {COMMUNICATION_ROLES} from './communicationUtils';
 import { WELFARE_FUND_READ_ROLES } from '../features/welfare/welfareFund';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
@@ -811,7 +812,7 @@ export function sanitizeRecordForSupabase(table: string, record: any): any {
         start_date: cleanDate(record.start_date) || new Date().toISOString().split('T')[0],
         end_date: cleanDate(record.end_date) || new Date().toISOString().split('T')[0],
         target_amount: record.target_amount ? Number(record.target_amount) : null,
-        minimum_contribution: Math.max(20.0, Number(record.minimum_contribution) || 20.0),
+        minimum_contribution: Math.max(MIN_WELFARE_APPEAL_LEVY, Number(record.minimum_contribution) || MIN_WELFARE_APPEAL_LEVY),
         status: record.status || 'open',
         created_by: record.created_by || 'Church Administrator',
         created_at: record.created_at || new Date().toISOString(),
@@ -827,7 +828,7 @@ export function sanitizeRecordForSupabase(table: string, record: any): any {
         contributor_name: record.contributor_name || 'Member Contributor',
         contributor_phone: record.contributor_phone || null,
         tithe_number: record.tithe_number || null,
-        amount: Math.max(20.0, Number(record.amount) || 20.0),
+        amount: Math.max(MIN_WELFARE_APPEAL_LEVY, Number(record.amount) || MIN_WELFARE_APPEAL_LEVY),
         payment_date: cleanDate(record.payment_date) || new Date().toISOString().split('T')[0],
         payment_method: record.payment_method || 'mobile_money',
         payment_channel: record.payment_channel || null,

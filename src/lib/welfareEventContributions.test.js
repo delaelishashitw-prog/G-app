@@ -500,7 +500,7 @@ test('6. Sanitizes welfare_events and welfare_event_contributions for Supabase p
     status: 'open',
   });
 
-  assert.equal(sanitizedEvent.minimum_contribution, 20.0);
+  assert.equal(sanitizedEvent.minimum_contribution, 15.0);
   assert.equal(sanitizedEvent.target_amount, 4000.5);
   assert.equal(sanitizedEvent.category, 'sickness_hospitalization');
 
@@ -515,7 +515,20 @@ test('6. Sanitizes welfare_events and welfare_event_contributions for Supabase p
     payment_status: 'confirmed',
   });
 
-  assert.equal(sanitizedContrib.amount, 20.0);
+  assert.equal(sanitizedContrib.amount, 12.5);
   assert.equal(sanitizedContrib.event_id, 'wevt-99');
   assert.equal(sanitizedContrib.payment_status, 'confirmed');
+});
+
+
+test('GH₵10 appeal levy accepts exact and fractional payments without inflating them, and rejects GH₵9.99',()=>{
+ let events=[],contributions=[];
+ const event=createWelfareEvent({title:'Synthetic GH₵10 appeal',category:'other',member_id:'synthetic-member',member_name:'Synthetic Member',description:'Synthetic appeal',start_date:'2026-10-31',end_date:'2026-11-30',minimum_contribution:10,status:'open',created_by:'Synthetic Officer'},change=>{events=typeof change==='function'?change(events):change;},()=>{});
+ assert.equal(event.minimum_contribution,10);
+ const receipt=amount=>({event_id:event.id,member_id:'synthetic-donor',contributor_name:'Synthetic Donor',amount,payment_date:'2026-10-31',payment_method:'cash',payment_status:'confirmed',recorded_by:'Synthetic Officer'});
+ const save=amount=>recordEventContribution(receipt(amount),events,contributions,change=>{contributions=typeof change==='function'?change(contributions):change;},()=>{});
+ assert.equal(save(9.99).success,false);assert.equal(contributions.length,0);
+ assert.equal(save(10).success,true);assert.equal(contributions[0].amount,10);
+ assert.equal(save(12.5).success,true);assert.equal(contributions[0].amount,12.5);
+ for(const amount of [10,12.5])assert.equal(sanitizeRecordForSupabase('welfare_event_contributions',receipt(amount)).amount,amount);
 });

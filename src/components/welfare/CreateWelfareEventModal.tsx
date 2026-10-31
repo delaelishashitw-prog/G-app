@@ -1,3 +1,4 @@
+import { MIN_WELFARE_APPEAL_LEVY } from '../../features/welfare/welfareAppealPolicy';
 import React, { useState, useEffect } from 'react';
 import {
   X,
@@ -95,7 +96,7 @@ export const CreateWelfareEventModal: React.FC<CreateWelfareEventModalProps> = (
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [targetAmount, setTargetAmount] = useState('');
-  const [minimumContribution, setMinimumContribution] = useState('20.00');
+  const [minimumContribution, setMinimumContribution] = useState(MIN_WELFARE_APPEAL_LEVY.toFixed(2));
   const [status, setStatus] = useState<WelfareEventStatus>('open');
 
   // Member search input
@@ -120,7 +121,7 @@ export const CreateWelfareEventModal: React.FC<CreateWelfareEventModalProps> = (
       setStartDate(eventToEdit.start_date);
       setEndDate(eventToEdit.end_date);
       setTargetAmount(eventToEdit.target_amount ? String(eventToEdit.target_amount) : '');
-      setMinimumContribution(String(eventToEdit.minimum_contribution || 20.0));
+      setMinimumContribution(String(eventToEdit.minimum_contribution || MIN_WELFARE_APPEAL_LEVY));
       setStatus(eventToEdit.status);
 
       const memMatch = members.find((m) => m.id === eventToEdit.member_id);
@@ -139,7 +140,7 @@ export const CreateWelfareEventModal: React.FC<CreateWelfareEventModalProps> = (
       setStartDate(today);
       setEndDate(defaultEnd);
       setTargetAmount('');
-      setMinimumContribution('20.00');
+      setMinimumContribution(MIN_WELFARE_APPEAL_LEVY.toFixed(2));
       setStatus('open');
       setMemberSearchTerm('');
     }
@@ -254,10 +255,10 @@ export const CreateWelfareEventModal: React.FC<CreateWelfareEventModalProps> = (
     }
 
     const minContribNum = Number(minimumContribution);
-    if (isNaN(minContribNum) || minContribNum < 20.0) {
+    if (!Number.isFinite(minContribNum) || minContribNum < MIN_WELFARE_APPEAL_LEVY) {
       toastError(
         'Validation Error',
-        'Minimum contribution cannot be less than GH¢ 20.00 per church welfare policy.'
+        `Minimum contribution cannot be less than GH₵ ${MIN_WELFARE_APPEAL_LEVY.toFixed(2)} per church welfare policy.`
       );
       return;
     }
@@ -347,7 +348,7 @@ export const CreateWelfareEventModal: React.FC<CreateWelfareEventModalProps> = (
             <div className="flex items-center gap-2">
               <Check className="w-4 h-4 text-emerald-700 shrink-0" />
               <span>
-                Standard Minimum Contribution: <strong className="font-bold">GH¢ 20.00</strong> per contributor
+                Standard Minimum Contribution: <strong className="font-bold">GH₵ {MIN_WELFARE_APPEAL_LEVY.toFixed(2)}</strong> per contributor
               </span>
             </div>
             <span className="px-2 py-0.5 bg-emerald-200 text-emerald-950 font-black rounded-md text-[11px]">
@@ -606,14 +607,15 @@ export const CreateWelfareEventModal: React.FC<CreateWelfareEventModalProps> = (
                   <DollarSign className="w-3.5 h-3.5 text-emerald-700" />
                   Minimum Contribution (GHS) <span className="text-rose-500">*</span>
                 </span>
-                <span className="text-[11px] text-emerald-800 font-bold">Min GH¢ 20.00</span>
+                <span className="text-[11px] text-emerald-800 font-bold">Min GH₵ {MIN_WELFARE_APPEAL_LEVY.toFixed(2)}</span>
               </label>
               <div className="relative">
                 <span className="absolute left-3 top-2.5 text-xs font-bold text-emerald-700">GH₵</span>
                 <input
                   type="number"
                   step="0.01"
-                  min="20.00"
+                  min={MIN_WELFARE_APPEAL_LEVY}
+                  aria-label="Minimum appeal levy (GHS)"
                   value={minimumContribution}
                   onChange={(e) => setMinimumContribution(e.target.value)}
                   className="w-full pl-10 pr-3 py-2 text-sm font-bold text-slate-900 border border-emerald-300 bg-emerald-50/30 rounded-xl focus:ring-2 focus:ring-emerald-700 focus:outline-hidden"
