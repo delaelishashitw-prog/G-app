@@ -1989,7 +1989,7 @@ export const AttendancePage: React.FC = () => {
         visitors={visitors}
         settings={settings}
         alreadyCheckedInIds={alreadyCheckedInIds}
-        onCheckIn={(type, id) => handleCheckIn(type, id, 'search')}
+        onCheckIn={(type, id, method = 'search') => handleCheckIn(type, id, method)}
         onOpenQuickVisitorModal={() => {
           setIsKioskOpen(false);
           setIsQuickVisitorOpen(true);

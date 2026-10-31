@@ -1,3 +1,4 @@
+import { AttendancePassQr } from '../components/attendance/AttendancePassQr';
 import { ServiceTimetable } from '../components/services/ServiceTimetable';
 import {MemberEventsPanel} from '../components/portal/MemberEventsPanel';
 import {GivingInstructions} from '../components/finance/GivingChannels';
@@ -1725,7 +1726,7 @@ export const MemberPortalPage: React.FC = () => {
                       </div>
                     </div>
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                      ACTIVE
+                      {activeMember.status?.replaceAll('_', ' ').toUpperCase() || 'STATUS UNAVAILABLE'}
                     </span>
                   </div>
 
@@ -1758,23 +1759,17 @@ export const MemberPortalPage: React.FC = () => {
 
                   <div className="bg-black/30 p-3 rounded-2xl border border-white/10 flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-[10px] text-slate-400 uppercase font-semibold">Self-Check-In Pass</p>
-                      <p className="text-xs text-emerald-300 font-bold">Scan at Church Kiosk</p>
+                      <p className="text-[10px] text-slate-400 uppercase font-semibold">Attendance Pass</p>
+                      <p className="text-xs text-emerald-300 font-bold">Staff confirm check-in</p>
                     </div>
                     {/* QR Code Graphic */}
-                    <div className="w-14 h-14 bg-white p-1 rounded-xl shrink-0 flex items-center justify-center">
-                      <img
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(
-                          activeMember.member_id
-                        )}`}
-                        alt="QR Code Pass"
-                        className="w-full h-full object-contain"
-                      />
+                    <div className="w-28 h-28 bg-white p-1 rounded-xl shrink-0 flex items-center justify-center">
+                      <AttendancePassQr member={activeMember} />
                     </div>
                   </div>
 
                   <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-slate-700/60">
-                    <span>Joined: {activeMember.membership_date || 'Jan 2022'}</span>
+                    <span>Joined: {activeMember.membership_date || 'Not recorded'}</span>
                     <span>Accra, Ghana</span>
                   </div>
                 </div>
@@ -3170,13 +3165,13 @@ export const MemberPortalPage: React.FC = () => {
             <div className="bg-gradient-to-br from-slate-900 to-blue-950 text-white p-6 sm:p-8 rounded-3xl border border-blue-500/30 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-md">
               <div className="space-y-2 text-center sm:text-left">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-blue-300 px-2 py-0.5 rounded bg-blue-900/60 border border-blue-500/30 inline-block">
-                  Sunday Morning Check-In Pass
+                  Member Attendance Pass
                 </span>
                 <h3 className="text-xl font-extrabold text-white">
-                  Quick Attendance Scanner
+                  Your Attendance Pass
                 </h3>
                 <p className="text-xs text-slate-300 max-w-md">
-                  Present this digital QR pass to the church attendance kiosk or ushers at the sanctuary entrance for instant check-in.
+                  Show this pass to attendance staff. They select the service and confirm your check-in.
                 </p>
                 <p className="text-xs font-mono font-bold text-amber-300 pt-1">
                   ID: {activeMember.member_id} • {activeMember.first_name} {activeMember.last_name}
@@ -3184,13 +3179,7 @@ export const MemberPortalPage: React.FC = () => {
               </div>
 
               <div className="w-32 h-32 bg-white p-2 rounded-2xl shrink-0 flex items-center justify-center shadow-xl">
-                <img
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
-                    activeMember.member_id
-                  )}`}
-                  alt="Attendance Pass"
-                  className="w-full h-full object-contain"
-                />
+                <AttendancePassQr member={activeMember} />
               </div>
             </div>
 
