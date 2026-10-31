@@ -1,3 +1,4 @@
+import databaseScriptsUrl from '../lib/databaseScripts.json?url';
 import { ServiceTimetable } from '../components/services/ServiceTimetable';
 import {GivingChannelsPanel} from '../components/finance/GivingChannels';
 import React, { useState, useEffect } from 'react';
@@ -52,12 +53,14 @@ import {
   DEFAULT_SUPABASE_URL,
   DEFAULT_SUPABASE_ANON_KEY,
 } from '../lib/supabase';
-import { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA, SQL_FIX_ROSTER_SCHEMA, SQL_FIX_CHURCH_FINANCE_SCHEMA } from '../lib/supabaseSchema';
 import { useAuth } from '../contexts/AuthContext';
 import { PastorSignature } from '../components/common/PastorSignature';
 import { PendingBackupControls } from '../components/PendingBackupControls';
 import {TwoFactorPanel} from '../components/TwoFactorPanel';
 import { BackupRecoveryPanel } from '../components/BackupRecoveryPanel';
+
+type SqlScripts = Record<'SQL_MIGRATION_SCHEMA' | 'SQL_FIX_RLS_SCHEMA' | 'SQL_FIX_WELFARE_SCHEMA' | 'SQL_FIX_ROSTER_SCHEMA' | 'SQL_FIX_CHURCH_FINANCE_SCHEMA', string>;
+const EMPTY_SQL_SCRIPTS: SqlScripts = { SQL_MIGRATION_SCHEMA: '', SQL_FIX_RLS_SCHEMA: '', SQL_FIX_WELFARE_SCHEMA: '', SQL_FIX_ROSTER_SCHEMA: '', SQL_FIX_CHURCH_FINANCE_SCHEMA: '' };
 
 export const SettingsPage: React.FC = () => {
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
@@ -172,6 +175,30 @@ export const SettingsPage: React.FC = () => {
   // Table inspection state
   const [isCheckingTables, setIsCheckingTables] = useState(false);
   const [tableStatus, setTableStatus] = useState<{ ready: boolean; existing: string[]; missing: string[] } | null>(null);
+
+  // Large maintenance scripts are loaded only when the database tools are opened.
+  const [sqlScripts, setSqlScripts] = useState<SqlScripts | null>(null);
+  const [sqlScriptError, setSqlScriptError] = useState('');
+  const [sqlLoadAttempt, setSqlLoadAttempt] = useState(0);
+  const { SQL_MIGRATION_SCHEMA, SQL_FIX_RLS_SCHEMA, SQL_FIX_WELFARE_SCHEMA, SQL_FIX_ROSTER_SCHEMA, SQL_FIX_CHURCH_FINANCE_SCHEMA } = sqlScripts || EMPTY_SQL_SCRIPTS;
+  useEffect(() => {
+    if (activeTab !== 'supabase' || sqlScripts) return;
+    let active = true;
+    const controller = new AbortController();
+    setSqlScriptError('');
+    fetch(databaseScriptsUrl, { signal: controller.signal, cache: 'no-cache' }).then(async response => {
+      if (!response.ok) throw new Error('Script download failed.');
+      const data = await response.json();
+      if (typeof data.migration !== 'string' || !data.migration.trim() || typeof data.repair !== 'string' || !data.repair.trim()) throw new Error('Invalid script data.');
+      if (active) setSqlScripts({
+        SQL_MIGRATION_SCHEMA: data.migration, SQL_FIX_RLS_SCHEMA: data.repair,
+        SQL_FIX_WELFARE_SCHEMA: data.repair, SQL_FIX_ROSTER_SCHEMA: data.repair, SQL_FIX_CHURCH_FINANCE_SCHEMA: data.repair,
+      });
+    }).catch(() => {
+      if (active) setSqlScriptError('Database scripts could not be loaded. Check your connection and retry.');
+    });
+    return () => { active = false; controller.abort(); };
+  }, [activeTab, sqlScripts, sqlLoadAttempt]);
 
   // SQL code viewer state
   const [copiedSql, setCopiedSql] = useState(false);
@@ -449,39 +476,28 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
-  const copySqlToClipboard = () => {
-    navigator.clipboard.writeText(SQL_MIGRATION_SCHEMA);
-    setCopiedSql(true);
-    setTimeout(() => setCopiedSql(false), 2500);
+  const scriptsReady = () => {
+    if (sqlScripts) return true;
+    toastError('Scripts unavailable', sqlScriptError || 'Wait for the database scripts to finish loading.');
+    return false;
   };
-
-  const copyFixSqlToClipboard = () => {
-    navigator.clipboard.writeText(SQL_FIX_RLS_SCHEMA);
-    setCopiedFixSql(true);
-    toastSuccess('Fix Script Copied', 'Paste and run in your Supabase SQL Editor to resolve RLS policies and missing columns.');
-    setTimeout(() => setCopiedFixSql(false), 2500);
+  const copyScript = async (script: string, markCopied: React.Dispatch<React.SetStateAction<boolean>>, title: string) => {
+    if (!scriptsReady()) return;
+    markCopied(false);
+    try {
+      await navigator.clipboard.writeText(script);
+      markCopied(true);
+      toastSuccess(title, 'Review the script in the Supabase SQL Editor before running it.');
+      setTimeout(() => markCopied(false), 2500);
+    } catch {
+      toastError('Copy failed', 'The clipboard could not be updated. Try again or download the full SQL script.');
+    }
   };
-
-  const copyWelfareSqlToClipboard = () => {
-    navigator.clipboard.writeText(SQL_FIX_WELFARE_SCHEMA);
-    setCopiedWelfareSql(true);
-    toastSuccess('Welfare RLS Fix Copied', 'Paste and run in your Supabase SQL Editor to enable writes to welfare_contributions and welfare_claims.');
-    setTimeout(() => setCopiedWelfareSql(false), 2500);
-  };
-
-  const copyRosterSqlToClipboard = () => {
-    navigator.clipboard.writeText(SQL_FIX_ROSTER_SCHEMA);
-    setCopiedRosterSql(true);
-    toastSuccess('Roster Permissions Fix Copied', 'Paste and run in your Supabase SQL Editor to grant permissions on roster_assignments.');
-    setTimeout(() => setCopiedRosterSql(false), 2500);
-  };
-
-  const copyChurchFinanceSqlToClipboard = () => {
-    navigator.clipboard.writeText(SQL_FIX_CHURCH_FINANCE_SCHEMA);
-    setCopiedChurchFinanceSql(true);
-    toastSuccess('Church Finance SQL Copied', 'Paste and run in your Supabase SQL Editor to create church_accounts and church_finances tables with open RLS policies.');
-    setTimeout(() => setCopiedChurchFinanceSql(false), 2500);
-  };
+  const copySqlToClipboard = () => copyScript(SQL_MIGRATION_SCHEMA, setCopiedSql, 'SQL Script Copied');
+  const copyFixSqlToClipboard = () => copyScript(SQL_FIX_RLS_SCHEMA, setCopiedFixSql, 'Schema Fix Copied');
+  const copyWelfareSqlToClipboard = () => copyScript(SQL_FIX_WELFARE_SCHEMA, setCopiedWelfareSql, 'Welfare RLS Fix Copied');
+  const copyRosterSqlToClipboard = () => copyScript(SQL_FIX_ROSTER_SCHEMA, setCopiedRosterSql, 'Roster Permissions Fix Copied');
+  const copyChurchFinanceSqlToClipboard = () => copyScript(SQL_FIX_CHURCH_FINANCE_SCHEMA, setCopiedChurchFinanceSql, 'Church Finance SQL Copied');
 
   const [isRetryingRosterSync, setIsRetryingRosterSync] = useState(false);
 
@@ -498,13 +514,16 @@ export const SettingsPage: React.FC = () => {
   };
 
   const downloadSqlScript = () => {
+    if (!scriptsReady()) return;
     const element = document.createElement('a');
     const file = new Blob([SQL_MIGRATION_SCHEMA], { type: 'text/plain' });
-    element.href = URL.createObjectURL(file);
+    const objectUrl = URL.createObjectURL(file);
+    element.href = objectUrl;
     element.download = '20260923000001_gwcc_initial_schema.sql';
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   };
 
   const isConnected = supabaseStatus === 'connected';
@@ -1257,6 +1276,11 @@ export const SettingsPage: React.FC = () => {
       {/* TAB 4: SUPABASE POSTGRESQL HUB */}
       {activeTab === 'supabase' && (
         <div className="space-y-6">
+          {!sqlScripts && <div role={sqlScriptError ? 'alert' : 'status'} aria-live="polite" className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-700 space-y-2">
+            <p>{sqlScriptError || 'Loading database scripts… Connection settings remain available below.'}</p>
+            {sqlScriptError && <button type="button" onClick={() => setSqlLoadAttempt(attempt => attempt + 1)} className="rounded-lg bg-emerald-900 px-3 py-2 font-bold text-white hover:bg-emerald-800">Retry loading scripts</button>}
+          </div>}
+
           {/* Main Integration Card */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-5">
             {/* Header & Status Pill */}
@@ -1345,7 +1369,8 @@ export const SettingsPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={copySqlToClipboard}
-                    className="px-3.5 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition"
+                    disabled={!sqlScripts}
+                    className="px-3.5 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition disabled:opacity-50"
                   >
                     {copiedSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>{copiedSql ? 'SQL Script Copied!' : 'Copy SQL Migration Script'}</span>
@@ -1392,6 +1417,7 @@ export const SettingsPage: React.FC = () => {
                 <input
                   type="url"
                   required
+                  aria-label="Supabase project URL"
                   placeholder="https://xyzprojectid.supabase.co"
                   value={supabaseUrlInput}
                   onChange={(e) => setSupabaseUrlInput(e.target.value)}
@@ -1408,6 +1434,7 @@ export const SettingsPage: React.FC = () => {
                   <input
                     type={showKey ? 'text' : 'password'}
                     required
+                    aria-label="Supabase public API key"
                     placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                     value={supabaseKeyInput}
                     onChange={(e) => setSupabaseKeyInput(e.target.value)}
@@ -1524,7 +1551,8 @@ export const SettingsPage: React.FC = () => {
                     <button
                       type="button"
                       onClick={copySqlToClipboard}
-                      className="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-2xs transition"
+                      disabled={!sqlScripts}
+                      className="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-2xs transition disabled:opacity-50"
                     >
                       {copiedSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                       <span>{copiedSql ? 'Copied!' : 'Copy SQL Script'}</span>
@@ -1595,6 +1623,7 @@ export const SettingsPage: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => setShowRosterSql(!showRosterSql)}
+                        disabled={!sqlScripts}
                         className="text-[10px] text-amber-800 hover:text-amber-950 underline font-semibold cursor-pointer"
                       >
                         {showRosterSql ? 'Collapse preview' : 'View full script'}
@@ -1610,7 +1639,8 @@ export const SettingsPage: React.FC = () => {
                     <button
                       type="button"
                       onClick={copyRosterSqlToClipboard}
-                      className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                      disabled={!sqlScripts}
+                      className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer disabled:opacity-50"
                     >
                       {copiedRosterSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                       <span>{copiedRosterSql ? 'Roster Fix Copied!' : 'Copy Roster Permissions Fix'}</span>
@@ -1820,6 +1850,7 @@ export const SettingsPage: React.FC = () => {
                             </span>
                             <button
                               type="button"
+                              disabled={!sqlScripts}
                               onClick={() => {
                                 if (syncResult.text.includes('roster_assignments')) {
                                   setShowRosterSql(!showRosterSql);
@@ -1844,7 +1875,8 @@ export const SettingsPage: React.FC = () => {
                             <button
                               type="button"
                               onClick={copyRosterSqlToClipboard}
-                              className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition"
+                              disabled={!sqlScripts}
+                              className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition disabled:opacity-50"
                             >
                               {copiedRosterSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                               <span>{copiedRosterSql ? 'Roster Fix Copied!' : 'Copy Roster Permissions Fix'}</span>
@@ -1853,7 +1885,8 @@ export const SettingsPage: React.FC = () => {
                             <button
                               type="button"
                               onClick={copyWelfareSqlToClipboard}
-                              className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition"
+                              disabled={!sqlScripts}
+                              className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition disabled:opacity-50"
                             >
                               {copiedWelfareSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                               <span>{copiedWelfareSql ? 'Welfare Fix Copied!' : 'Copy Welfare RLS SQL Fix'}</span>
@@ -1893,7 +1926,8 @@ export const SettingsPage: React.FC = () => {
                           <button
                             type="button"
                             onClick={copyFixSqlToClipboard}
-                            className="px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-semibold rounded-xl text-xs transition ml-auto"
+                            disabled={!sqlScripts}
+                            className="px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-semibold rounded-xl text-xs transition ml-auto disabled:opacity-50"
                           >
                             {copiedFixSql ? 'All RLS Copied!' : 'Copy Complete Schema Fix'}
                           </button>
@@ -1930,17 +1964,18 @@ export const SettingsPage: React.FC = () => {
 
           {/* Migration SQL Script Hub */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <Code2 className="w-5 h-5 text-emerald-800" />
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="flex min-w-0 items-center gap-2">
+                <Code2 className="w-5 h-5 shrink-0 text-emerald-800" />
                 <h3 className="font-bold text-slate-900 text-sm">PostgreSQL Schema & SQL Migration Script</h3>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={copyFixSqlToClipboard}
-                  className="px-3 py-1.5 text-xs font-semibold text-amber-900 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 rounded-lg flex items-center gap-1 border border-amber-300 transition"
+                  disabled={!sqlScripts}
+                  className="px-3 py-1.5 text-xs font-semibold text-amber-900 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 rounded-lg flex items-center gap-1 border border-amber-300 transition disabled:opacity-50"
                   title="Copy 1-minute quick script to fix RLS and missing columns"
                 >
                   {copiedFixSql ? <Check className="w-3.5 h-3.5 text-amber-700" /> : <Shield className="w-3.5 h-3.5 text-amber-600" />}
@@ -1950,7 +1985,8 @@ export const SettingsPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={copyChurchFinanceSqlToClipboard}
-                  className="px-3 py-1.5 text-xs font-semibold text-rose-900 hover:text-rose-950 bg-rose-50 hover:bg-rose-100 rounded-lg flex items-center gap-1 border border-rose-300 transition"
+                  disabled={!sqlScripts}
+                  className="px-3 py-1.5 text-xs font-semibold text-rose-900 hover:text-rose-950 bg-rose-50 hover:bg-rose-100 rounded-lg flex items-center gap-1 border border-rose-300 transition disabled:opacity-50"
                   title="Copy SQL for dedicated church_accounts and church_finances tables with RLS"
                 >
                   {copiedChurchFinanceSql ? <Check className="w-3.5 h-3.5 text-rose-700" /> : <Copy className="w-3.5 h-3.5 text-rose-600" />}
@@ -1960,7 +1996,8 @@ export const SettingsPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={copySqlToClipboard}
-                  className="px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 rounded-lg flex items-center gap-1 border border-emerald-200 transition"
+                  disabled={!sqlScripts}
+                  className="px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 rounded-lg flex items-center gap-1 border border-emerald-200 transition disabled:opacity-50"
                 >
                   {copiedSql ? <Check className="w-3.5 h-3.5 text-emerald-700" /> : <Copy className="w-3.5 h-3.5" />}
                   <span>{copiedSql ? 'Copied Full SQL!' : 'Copy Full Schema'}</span>
@@ -1969,7 +2006,8 @@ export const SettingsPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={downloadSqlScript}
-                  className="px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 rounded-lg flex items-center gap-1 border border-slate-200 transition"
+                  disabled={!sqlScripts}
+                  className="px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 rounded-lg flex items-center gap-1 border border-slate-200 transition disabled:opacity-50"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>Download .sql</span>
@@ -2015,10 +2053,11 @@ export const SettingsPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setShowSqlEditor(!showSqlEditor)}
+                disabled={!sqlScripts}
                 className="text-xs font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1"
               >
                 <span>{showSqlEditor ? 'Hide SQL Script Preview' : 'Show SQL Script Preview'}</span>
-                <span className="text-[10px] text-slate-400">({SQL_MIGRATION_SCHEMA.split('\n').length} lines)</span>
+                <span className="text-[10px] text-slate-400">({sqlScripts ? `${SQL_MIGRATION_SCHEMA.split('\n').length} lines` : 'Loading scripts…'})</span>
               </button>
 
               {showSqlEditor && (
