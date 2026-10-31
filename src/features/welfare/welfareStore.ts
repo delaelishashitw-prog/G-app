@@ -1,3 +1,4 @@
+import { MIN_WELFARE_APPEAL_LEVY } from './welfareAppealPolicy';
 import { recordChurchFinance, updateChurchFinance, voidChurchFinance, type FinanceSnapshot } from '../finance/financeStore';
 import { money } from '../../lib/ledgerUtils';
 import type { Dispatch, SetStateAction } from 'react';
@@ -171,7 +172,7 @@ export function createWelfareEvent(
   logAction: (action: string, module: string, details: string, recordId?: string) => void,
   dbSyncUpsert?: (table: string, record: any) => unknown
 ): WelfareEvent {
-  const minContribution = Math.max(20, Number(data.minimum_contribution) || 20);
+  const minContribution = Math.max(MIN_WELFARE_APPEAL_LEVY, Number(data.minimum_contribution) || MIN_WELFARE_APPEAL_LEVY);
   const newEvent: WelfareEvent = {
     ...data,
     id: `wevt-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -325,8 +326,8 @@ export function recordEventContribution(
     };
   }
 
-  // 2. Enforce GH¢20.00 minimum contribution
-  const minRequired = Math.max(20,event.minimum_contribution || 20);
+  // 2. Enforce the appeal-specific levy with the church-wide minimum.
+  const minRequired = Math.max(MIN_WELFARE_APPEAL_LEVY,event.minimum_contribution || MIN_WELFARE_APPEAL_LEVY);
   const numAmount = Math.round((Number(data.amount) || 0) * 100) / 100;
 
   if (!Number.isFinite(numAmount) || numAmount < minRequired) {
@@ -405,7 +406,7 @@ export function updateEventContribution(id:string,updates:Partial<WelfareEventCo
   if(before.payment_status==='voided')throw new Error('A voided contribution cannot be edited.');
   const event=options?.events?.find(row=>row.id===(updates.event_id||before.event_id));
   const next:WelfareEventContribution={...before,...updates,id:before.id,amount:money(updates.amount??before.amount),corrected_by:actor,updated_at:new Date().toISOString()};
-  if(next.amount<Math.max(20,event?.minimum_contribution||20))throw new Error('Contribution is below the required minimum.');
+  if(next.amount<Math.max(MIN_WELFARE_APPEAL_LEVY,event?.minimum_contribution||MIN_WELFARE_APPEAL_LEVY))throw new Error('Contribution is below the required minimum.');
   if(before.finance_transaction_id && updates.finance_linked===false)throw new Error('A posted receipt must be voided rather than unlinked.');
   const state=options?.state;
   const previousReceipt=state?.finances.find(row=>row.id===before.finance_transaction_id);

@@ -1822,3 +1822,28 @@ test('optional department caps block over-budget payment atomically, allow reque
   });
  }finally{await db.close();}
 });
+
+test('welfare appeals default to GHc10, accept exact levy receipts, reject GHc9.99 and preserve higher saved levies',async()=>{
+ const db=await setupDatabase();let higher;try{await asUser(db,root,async()=>{
+  const event={id:'levy-ten',title:'Synthetic levy appeal',category:'other',member_id:'levy-beneficiary',member_name:'Synthetic Beneficiary',description:'Synthetic welfare appeal',start_date:'2026-10-31',end_date:'2026-11-30',status:'open',created_by:'Synthetic Officer'};
+  const saved=(await apply(db,[upsert('welfare_events',event)])).rows[0].result[0].record;
+  assert.equal(Number(saved.minimum_contribution),10);
+  await assert.rejects(apply(db,[upsert('welfare_events',{...event,id:'levy-too-low',minimum_contribution:9.99})]),/minimum_contribution_check/);
+  const receipt={event_id:event.id,member_id:'levy-donor',contributor_name:'Synthetic Donor',payment_date:'2026-10-31',payment_method:'cash',payment_status:'confirmed',recorded_by:'Synthetic Officer',finance_linked:false};
+  await assert.rejects(apply(db,[upsert('welfare_event_contributions',{...receipt,id:'levy-999',amount:9.99})]),/appeal minimum/);
+  for(const amount of [10,12.5]){
+   const row=(await apply(db,[upsert('welfare_event_contributions',{...receipt,id:'levy-'+amount,amount})])).rows[0].result[0].record;
+   assert.equal(Number(row.amount),amount);
+  }
+  higher=(await apply(db,[upsert('welfare_events',{...event,id:'levy-higher',minimum_contribution:25})])).rows[0].result[0].record;
+  await assert.rejects(apply(db,[upsert('welfare_event_contributions',{...receipt,id:'higher-too-low',event_id:higher.id,amount:10})]),/appeal minimum/);
+ });
+  const migration=fs.readFileSync('supabase/migrations/20261031090746_welfare_appeal_minimum_10.sql','utf8');
+  const before=(await db.query("SELECT id,minimum_contribution FROM public.welfare_events WHERE id IN ('levy-ten','levy-higher') ORDER BY id")).rows;
+  await db.exec(migration);
+  assert.deepEqual((await db.query("SELECT id,minimum_contribution FROM public.welfare_events WHERE id IN ('levy-ten','levy-higher') ORDER BY id")).rows,before);
+ await asUser(db,root,async()=>{
+  const lowered=(await apply(db,[upsert('welfare_events',{id:higher.id,minimum_contribution:10},higher.updated_at)])).rows[0].result[0].record;
+  assert.equal(Number(lowered.minimum_contribution),10);
+ });}finally{await db.close();}
+});

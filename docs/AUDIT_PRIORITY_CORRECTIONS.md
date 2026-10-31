@@ -74,3 +74,9 @@ Each department budget has an optional payment limit. Existing budgets remain mo
 Receipt and voucher copy controls await clipboard completion, prevent duplicate clicks, and report permission failures without claiming success. A late response after a receipt closes does not publish a toast for another receipt. Browser checks cover both receipt screens, preserved budget input after storage failure, Giving allocation read failures, existing/new deposits, lost response retries, reload, allocation history and 390/1440px layouts. Database checks cover balance effects, idempotency, stale/duplicate/unavailable receipts, unauthorized sessions, linked receipt protection, backup coverage and atomic payment-limit enforcement. All fixtures are synthetic.
 
 Rollout requires the matching database migration before the frontend. Verify staging and production metadata and financial digests before and after the migration, then release only the exact CI-tested source. No existing balances, receipts, allocations or budget policies are rewritten by the migration.
+
+## Welfare appeal minimum levy
+
+New welfare appeals default to GH₵10.00. The appeal form, contribution form, store, cloud sanitizer and database enforce the same floor. Exact GH₵10.00 and fractional amounts above it retain their actual value. An appeal with a higher saved levy keeps that requirement until edited; the migration preserves all existing appeal and receipt values. Monthly welfare dues are unchanged.
+
+Boundary tests cover GH₵9.99 rejection, GH₵10.00 acceptance, fractional receipts, existing higher levies and migration replay. Synthetic mobile and desktop checks create an appeal and record its GH₵10.00 contribution. Apply `20261031090746_welfare_appeal_minimum_10.sql` before deploying the matching frontend.
