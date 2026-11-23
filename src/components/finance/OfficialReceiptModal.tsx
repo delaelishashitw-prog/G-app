@@ -4,6 +4,7 @@ import { Printer, Copy, Check, X, ShieldCheck } from 'lucide-react';
 import { GivingRecord, ChurchSettings } from '../../types/database.types';
 import { formatGHS, numberToCedisWords } from '../../lib/currencyUtils';
 import { PastorSignature } from '../common/PastorSignature';
+import { ReceiptPrintPortal } from './ReceiptPrintPortal';
 
 interface OfficialReceiptModalProps {
   record: GivingRecord;
@@ -44,8 +45,8 @@ Thank you for your generous stewardship!`;
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto print:bg-transparent print:p-0 print:static print:overflow-visible">
-      <div className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-4 print:shadow-none print:border-none print:m-0 print:max-w-none print:w-full">
+    <ReceiptPrintPortal>
+      <div data-receipt-print-dialog data-receipt-printable={canIssue} role="dialog" aria-modal="true" aria-label="Church giving receipt" className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-4 print:shadow-none print:border-none print:m-0 print:max-w-none print:w-full">
         {/* Top Control Bar (Hidden during print) */}
         <div className="no-print px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -86,7 +87,7 @@ Thank you for your generous stewardship!`;
 
         {/* Printable Receipt Paper Body */}
         {!canIssue && <p role="status" className="p-6 text-sm text-amber-900 bg-amber-50">{record.status==='voided'?'This giving entry was voided. An official receipt cannot be issued.':'Awaiting cloud confirmation. An official receipt will be available after the church database confirms this giving entry.'}</p>}
-        <div className={`${canIssue?'':'hidden'} p-6 sm:p-8 space-y-5 text-slate-900 bg-white relative print:p-0`}>
+        <div data-receipt-print-paper className={`${canIssue?'':'hidden'} p-6 sm:p-8 space-y-5 text-slate-900 bg-white relative print:p-0`}>
           {/* Watermark Logo Seal in background */}
           <div className="absolute inset-0 flex items-center justify-center opacity-[0.03] pointer-events-none select-none">
             <img src="/assets/logo.png" alt="GWCC Seal" className="w-72 h-72 object-contain" />
@@ -216,7 +217,7 @@ Thank you for your generous stewardship!`;
           </div>
 
           {/* Signatures & Seal Section */}
-          <div className="pt-4 border-t border-slate-200 grid grid-cols-2 gap-6 text-[10px]">
+          <div data-receipt-print-signatures className="pt-4 border-t border-slate-200 grid grid-cols-2 gap-6 text-[10px]">
             <div className="text-center">
               <div className="h-8 border-b border-dashed border-slate-400 mx-auto w-4/5 mb-1.5"></div>
               <span className="font-bold text-slate-800 block">Church Treasurer / Steward</span>
@@ -237,6 +238,6 @@ Thank you for your generous stewardship!`;
           </div>
         </div>
       </div>
-    </div>
+    </ReceiptPrintPortal>
   );
 };

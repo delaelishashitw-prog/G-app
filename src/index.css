@@ -129,6 +129,47 @@
   }
 }
 
+/* Receipts and vouchers print as standalone documents, without the ledger or footer. */
+@media print {
+  body.receipt-print-open > :not([data-receipt-print-root]) {
+    display: none !important;
+  }
+
+  [data-receipt-print-root],
+  [data-receipt-print-dialog] {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: white !important;
+    backdrop-filter: none !important;
+    transform: none !important;
+  }
+
+  [data-receipt-print-paper] {
+    padding: 0 !important;
+    overflow-wrap: anywhere;
+  }
+
+  [data-receipt-printable="false"] [data-receipt-print-paper] {
+    display: none !important;
+  }
+
+  [data-receipt-print-signatures] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
+
 /* The directory is a body portal so only the full paper document is printed. */
 @media print {
   body.member-directory-print-open > :not([data-member-directory-print-root]) { display: none !important; }

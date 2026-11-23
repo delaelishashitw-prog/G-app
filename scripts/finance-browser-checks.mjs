@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {watchSyncStatus,waitForSync,retrySyncOrAwait} from './sync-browser-utils.mjs';
 import {accountEffect} from '../src/lib/ledgerUtils.ts';
+import {checkStandaloneReceiptPrint,checkUnpostedReceiptPrint} from './receipt-print-browser-checks.mjs';
 
 const modal=(page,title)=>page.getByRole('heading',{name:title,exact:true}).locator('xpath=ancestor::div[contains(@class,"fixed")][1]');
 async function download(page,name){
@@ -100,6 +101,7 @@ export async function checkChurchFinance(browser,{origin,settings}){
     await income.locator('button[type="submit"]').click();
     await page.getByText('Income awaiting confirmation',{exact:true}).waitFor();
     await page.getByText('Synthetic finance cloud unavailable',{exact:true}).first().waitFor();
+    await checkUnpostedReceiptPrint(page);
     await page.getByRole('button',{name:'Close receipt or voucher',exact:true}).click();
     setReject(false);await retrySyncOrAwait(page);
     assert.equal(data.church_finances.filter(row=>row.title==='Durable device income').length,1);
@@ -111,9 +113,11 @@ export async function checkChurchFinance(browser,{origin,settings}){
     await page.getByRole('button',{name:'Save Giving Record',exact:true}).click();
     await page.getByText('Receipt awaiting confirmation',{exact:true}).waitFor();
     assert.equal(await page.getByRole('button',{name:'Print / PDF',exact:true}).isDisabled(),true);
+    await checkUnpostedReceiptPrint(page);
     assert.equal(await page.getByText('Awaiting cloud confirmation. An official receipt will be available after the church database confirms this giving entry.',{exact:true}).isVisible(),true);
     setReject(false);await page.evaluate(()=>window.dispatchEvent(new Event('online')));await waitForSync(page);
     await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Print / PDF'&&!button.disabled));
+    await checkStandaloneReceiptPrint(page);
     assert.equal(data.giving.filter(row=>row.donor_name==='Synthetic giving donor').length,1);
     await checkClipboard(page,page.getByRole('button',{name:'Copy',exact:true}));
     assert.deepEqual(durability.errors,[]);
@@ -157,7 +161,9 @@ export async function checkChurchFinance(browser,{origin,settings}){
     await dialog.getByRole('button',{name:'Record payment as paid',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});
     assert.equal(data.church_accounts[0].current_balance,980.25);assert.equal(actions.filter(action=>action.p_action==='paid').length,2);assert.deepEqual(actions.at(-1),actions.at(-2));
     await page.getByLabel('Include paid, rejected, cancelled and voided requests',{exact:true}).check();await review.getByText('SYNTHETIC-BANK-20',{exact:true}).waitFor();
-    await review.getByRole('button',{name:'View payment voucher',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Copy receipt or voucher',exact:true}).isDisabled(),false);await page.getByRole('button',{name:'Close receipt or voucher',exact:true}).click();
+    await review.getByRole('button',{name:'View payment voucher',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Copy receipt or voucher',exact:true}).isDisabled(),false);
+    await checkStandaloneReceiptPrint(page);
+    await page.getByRole('button',{name:'Close receipt or voucher',exact:true}).click();
     setReject(true);
     await page.getByRole('button',{name:'Record Income',exact:true}).click();
     const income=modal(page,'Record Church Income');await income.getByLabel('Revenue Title / Purpose *',{exact:true}).fill('Pending browser receipt');await income.getByLabel('Amount (GH₵) *',{exact:true}).fill('12.34');await income.locator('button[type="submit"]').click();
@@ -169,6 +175,7 @@ export async function checkChurchFinance(browser,{origin,settings}){
     await page.getByRole('button',{name:/Income & Expense Ledger/}).click();
     await page.getByRole('row').filter({has:page.getByText('Pending browser receipt',{exact:true})}).getByRole('button',{name:'Print Official Church Income Receipt',exact:true}).click();
     await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent.includes('Print Receipt')&&!button.disabled));
+    await checkStandaloneReceiptPrint(page);
     assert.match(data.church_finances.find(row=>row.title==='Pending browser receipt').reference_no,new RegExp(`^INC-${year}-`));
     await checkClipboard(page,page.getByRole('button',{name:'Copy receipt or voucher',exact:true}));
     await page.getByRole('button',{name:'Close receipt or voucher',exact:true}).click();
@@ -206,7 +213,13 @@ export async function checkChurchFinance(browser,{origin,settings}){
     assert.equal(data.church_accounts[0].current_balance,992.59);
     const overflow=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,elements:[...document.querySelectorAll('body *')].filter(element=>element.getBoundingClientRect().right>innerWidth+2&&!element.closest('.overflow-x-auto')).slice(0,15).map(element=>({tag:element.tagName,class:element.className,right:Math.round(element.getBoundingClientRect().right),width:Math.round(element.getBoundingClientRect().width),text:element.textContent.slice(0,90)}))}));
     assert.ok(overflow.scroll<=overflow.width+2,`Mobile finance page overflows: ${JSON.stringify(overflow)}`);
-    for(const button of await page.getByRole('button',{name:'Dismiss toast',exact:true}).all())await button.click();
+    await page.getByRole('button',{name:/Income & Expense Ledger/}).click();
+    await page.getByRole('row').filter({has:page.getByText('Pending browser receipt',{exact:true})}).getByRole('button',{name:'Print Official Church Income Receipt',exact:true}).click();
+    await checkStandaloneReceiptPrint(page);
+    await page.getByRole('button',{name:'Close receipt or voucher',exact:true}).click();
+    assert.equal(await page.evaluate(()=>document.body.classList.contains('receipt-print-open')),false);
+    await page.getByRole('button',{name:'Approvals & Payments',exact:true}).click();
+    await page.getByRole('button',{name:'Dismiss toast',exact:true}).evaluateAll(buttons=>buttons.forEach(button=>button.click()));
     await page.evaluate(()=>window.scrollTo(0,0));
     if(process.env.FINANCE_QA_SCREENSHOT_DIR){await page.screenshot({path:`${process.env.FINANCE_QA_SCREENSHOT_DIR}/finance-approvals-mobile.png`,fullPage:true});await page.setViewportSize({width:1440,height:1000});await page.waitForFunction(()=>parseFloat(getComputedStyle(document.querySelector('main').parentElement).paddingLeft)>0);await page.screenshot({path:`${process.env.FINANCE_QA_SCREENSHOT_DIR}/finance-approvals-desktop.png`,fullPage:true});}
     console.info('Church finance browser checks passed: independent approval, own-request blocking, interrupted payment confirmation with immutable retry, exactly-once posting, authenticated history,  CSV/PDF filters and escaping, exact cents, unposted requests, pending receipt confirmation, explicit cash accounts and witnesses, duplicate counts, historical budget usage, reconciliation and mobile layout.');

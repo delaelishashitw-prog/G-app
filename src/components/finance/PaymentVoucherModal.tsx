@@ -5,6 +5,7 @@ import { ExpenseRecord, ChurchFinanceRecord, ChurchSettings } from '../../types/
 import { formatGHS, numberToCedisWords } from '../../lib/currencyUtils';
 import {verifiedApprover} from '../../lib/financeApprovals';
 import {financeReference} from '../../lib/financeViewUtils';
+import { ReceiptPrintPortal } from './ReceiptPrintPortal';
 
 interface PaymentVoucherModalProps {
   record: ExpenseRecord | ChurchFinanceRecord | any;
@@ -66,8 +67,8 @@ Notes: ${record.notes || 'None'}`;
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto print:bg-transparent print:p-0 print:static print:overflow-visible">
-      <div className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-4 print:shadow-none print:border-none print:m-0 print:max-w-none print:w-full">
+    <ReceiptPrintPortal>
+      <div data-receipt-print-dialog data-receipt-printable={canIssue} role="dialog" aria-modal="true" aria-label={isIncome ? 'Church income receipt' : 'Church payment voucher'} className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-4 print:shadow-none print:border-none print:m-0 print:max-w-none print:w-full">
         {record.approval_state&&<div className="p-4 text-xs bg-slate-50 text-slate-700 break-words">Requested by {record.requested_by||'Awaiting cloud identity'} · Approved by {record.approved_by_id?record.approved_by:'Awaiting independent approval'}<br/>Payment recorded by {record.paid_by||'Awaiting payment'} · {record.payment_reference||'No payment reference'}</div>}
         {/* Top Control Bar (Hidden during print) */}
         <div className={`no-print px-5 py-3.5 ${isIncome ? 'bg-emerald-950' : 'bg-rose-950'} text-white flex items-center justify-between gap-3`}>
@@ -111,7 +112,7 @@ Notes: ${record.notes || 'None'}`;
         {!canIssue&&<p role="status" className="bg-amber-50 text-amber-950 border-b border-amber-200 p-4 text-sm font-semibold">{pending?'Awaiting cloud confirmation. Printing and copying become available after this receipt is confirmed.':'This transaction is not posted. A payment receipt cannot be issued yet.'}</p>}
         {record.status==='voided'&&<p className="p-3 text-rose-800 font-bold text-center border-b">VOIDED — retained for audit</p>}
         {/* Printable Voucher Paper Body */}
-        <div className="p-6 sm:p-8 space-y-5 text-slate-900 bg-white relative print:p-0">
+        <div data-receipt-print-paper className="p-6 sm:p-8 space-y-5 text-slate-900 bg-white relative print:p-0">
           {/* Header & Letterhead */}
           <div className={`flex items-start justify-between pb-4 border-b-2 ${isIncome ? 'border-emerald-800' : 'border-rose-900'} gap-4`}>
             <div className="flex items-center gap-3">
@@ -203,7 +204,7 @@ Notes: ${record.notes || 'None'}`;
           </div>
 
           {/* Authorization Grid */}
-          <div className="pt-4 border-t border-slate-200 grid grid-cols-3 gap-4 text-[10px]">
+          <div data-receipt-print-signatures className="pt-4 border-t border-slate-200 grid grid-cols-3 gap-4 text-[10px]">
             <div className="text-center">
               <div className="h-8 border-b border-dashed border-slate-400 mx-auto w-4/5 mb-1.5"></div>
               <span className="font-bold text-slate-800 block">Prepared By</span>
@@ -226,6 +227,6 @@ Notes: ${record.notes || 'None'}`;
           </div>
         </div>
       </div>
-    </div>
+    </ReceiptPrintPortal>
   );
 };
