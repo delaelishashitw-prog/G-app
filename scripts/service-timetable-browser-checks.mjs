@@ -15,7 +15,7 @@ export async function checkServiceTimetable(browser, { origin, settings, sampleM
   let failReads = false, readGate = null, memberWrites = 0, serviceWrites = 0;
   const errors = [], contexts = [];
   const newPage = async (role, width = 390, timeZone = 'Pacific/Auckland') => {
-    const context = await browser.newContext({ viewport: { width, height: 1000 }, timezoneId: timeZone });
+    const context = await browser.newContext({ viewport: { width, height: 1000 }, timezoneId: timeZone, reducedMotion: 'reduce' });
     contexts.push(context);
     const id = role === 'member' ? '77777777-7777-4777-8777-777777777777' : '88888888-8888-4888-8888-888888888888';
     const user = { id, email: `${role}@example.test`, aud: 'authenticated', role: 'authenticated', email_confirmed_at: clock.toISOString(), app_metadata: { provider: 'email' }, user_metadata: {} };
@@ -64,7 +64,10 @@ export async function checkServiceTimetable(browser, { origin, settings, sampleM
     });
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
-    await page.clock.install({ time: clock });
+    // Admin edits need a Ghana date, while their save/debounce timers should run natively.
+    // Only the member boundary checks below need control over timer progression.
+    if (role === 'member') await page.clock.install({ time: clock });
+    else await page.clock.setFixedTime(clock);
     return page;
   };
   const gathering = page => page.getByRole('region', { name: 'Next church gathering', exact: true });
@@ -82,10 +85,11 @@ export async function checkServiceTimetable(browser, { origin, settings, sampleM
     await admin.locator('[data-service-id="friday"]').getByTitle('Edit service details', { exact: true }).click();
     const form = admin.getByRole('dialog', { name: 'Edit Church Service', exact: true });
     await form.getByLabel('Service start time (GMT)', { exact: true }).fill('19:00');
-    const confirmation = admin.waitForResponse(response => response.url().endsWith('/rpc/gwcc_apply_mutations')
-      && response.request().postDataJSON()?.p_changes?.some(change => change.table === 'services' && change.record?.start_time === '19:00'));
-    await form.getByRole('button', { name: /Save|Update/ }).click();
-    await confirmation;
+    await Promise.all([
+      admin.waitForResponse(response => response.url().endsWith('/rpc/gwcc_apply_mutations')
+        && response.request().postDataJSON()?.p_changes?.some(change => change.table === 'services' && change.record?.start_time === '19:00')),
+      form.getByRole('button', { name: /Save|Update/ }).click(),
+    ]);
     await waitForSync(admin);
     assert.equal(tables.services.find(row => row.id === 'friday').start_time, '19:00');
     assert.equal(serviceWrites, 1);
