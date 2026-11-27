@@ -15,6 +15,16 @@ export function effectiveEventStatus(event: ChurchEvent, now = Date.now()): Chur
   if (now >= eventInstant(event.start_date, event.start_time)) return 'ongoing';
   return 'upcoming';
 }
+/** Show TODAY only for a confirmed program actually scheduled for Ghana's current date. */
+export function eventIsScheduledToday(event: ChurchEvent, now = Date.now()): boolean {
+  const today = new Date(now).toISOString().slice(0, 10);
+  const status = effectiveEventStatus(event, now);
+  return (status === 'upcoming' || status === 'ongoing') &&
+    event._sync_status !== 'pending' &&
+    event.start_date <= today &&
+    (event.end_date || event.start_date) >= today;
+}
+
 export function canMemberRsvp(event: ChurchEvent, now = Date.now()) {
   return event.requires_registration === true && ['upcoming', 'ongoing'].includes(effectiveEventStatus(event, now));
 }
