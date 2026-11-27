@@ -61,6 +61,8 @@ import { assessWelfareStanding, classifyWelfareEligibility, welfareEligibilityLa
 import { WelfareStandingNotice } from '../components/welfare/WelfareStandingNotice';
 import { AddWelfareFundsModal, WelfareFundReceiptsPanel } from '../components/welfare/WelfareFundReceipts';
 import { WELFARE_FUND_WRITE_ROLES } from '../features/welfare/welfareFund';
+import { welfareClaimsCsv, welfareDuesCsv } from '../features/welfare/welfareCsv';
+import { downloadCsvFile } from '../lib/financeViewUtils';
 
 export const WelfarePage: React.FC = () => {
   const {
@@ -305,40 +307,7 @@ export const WelfarePage: React.FC = () => {
       warning('Export Notice', 'No claims to export');
       return;
     }
-    const headers = [
-      'Claim ID',
-      'Date Submitted',
-      'Member Name',
-      'Phone',
-      'Category',
-      'Emergency Level',
-      'Title',
-      'Amount Requested (GHS)',
-      'Amount Approved (GHS)',
-      'Status',
-      'Disbursement Voucher',
-    ];
-    const rows = filteredClaims.map((c) => [
-      c.claim_number,
-      c.date_submitted,
-      `"${c.member_name.replace(/"/g, '""')}"`,
-      c.member_phone || '',
-      c.category,
-      c.emergency_level,
-      `"${c.title.replace(/"/g, '""')}"`,
-      c.amount_requested.toFixed(2),
-      (c.amount_approved || 0).toFixed(2),
-      c.status,
-      c.disbursement_voucher_no || '',
-    ]);
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `welfare_claims_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsvFile(welfareClaimsCsv(filteredClaims), `welfare_claims_${new Date().toISOString().split('T')[0]}.csv`);
     success('Export Successful', `Exported ${filteredClaims.length} welfare claims`);
   };
 
@@ -347,34 +316,7 @@ export const WelfarePage: React.FC = () => {
       warning('Export Notice', 'No dues records to export');
       return;
     }
-    const headers = [
-      'Receipt Ref',
-      'Date',
-      'Member Name',
-      'Tithe No',
-      'Month Applicable',
-      'Payment Channel',
-      'Amount (GHS)',
-      'Recorded By',
-    ];
-    const rows = filteredDues.map((d) => [
-      d.reference_no || '',
-      d.date,
-      `"${d.member_name.replace(/"/g, '""')}"`,
-      d.tithe_number || '',
-      d.month,
-      d.payment_channel || d.payment_method,
-      d.amount.toFixed(2),
-      `"${d.recorded_by.replace(/"/g, '""')}"`,
-    ]);
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `welfare_dues_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsvFile(welfareDuesCsv(filteredDues), `welfare_dues_${new Date().toISOString().split('T')[0]}.csv`);
     success('Export Successful', `Exported ${filteredDues.length} dues receipts`);
   };
 
